@@ -1723,13 +1723,13 @@ export const dataStore = {
   getHostSettings(): HostSettings {
     const v095Entry: ChangelogEntry = {
       version: '0.9.5 Alfa',
-      date: '2026-10-19',
-      title: 'WeRoll 0.9.5 Alfa • Paneles Dinámicos por Rol, Control Reversible de Publicación en Foro y Rediseño Compacto Responsive',
+      date: '2026-10-20',
+      title: 'WeRoll 0.9.5 Alfa • Compresión Inteligente de Avatares, Respaldo Maestro Total Ampliado & Paneles Duales para Administradores',
       changes: [
-        'Unificación de Sección de Amigos: Consolidación de Amigos, Agregar Amigo y Usuario@ID en un solo panel unificado con botones directos para Copiar ID, Agregar y Actualizar.',
-        'Paneles según Rol en la Barra Superior: Para administradores se despliega el Panel de Administración General (usuarios, bodega de backups, ajustes del servidor); para moderadores el Panel de Moderación Comunitaria; y para clientes el botón de Feedback.',
-        'Moderación de Foro Reversible y Restricción Admin: Exclusividad de publicación en "Actualizaciones de la App" para administradores y control de permisos de foro entre "Permitido" y "Negado".',
-        'Rediseño Compacto y Ajuste Responsive de Cuadros: Optimización visual de los contenedores de Personajes, World Sheets, Amigos y Búsqueda para encajar limpiamente sin desbordes en móviles y PC.',
+        'Compresión y Escalado Automático de Avatares: Optimización avanzada en cliente y servidor (max 512x512, WebP/JPEG ~40-80 KB) para garantizar que las fotos y retratos de personajes se guarden con fluidez en LocalStorage y se sincronicen sin errores en la bóveda y respaldos maestros.',
+        'Respaldo Maestro Total y en la Nube Ampliado: Inclusión exhaustiva de mensajes entre amigos (friendMessages), mensajes privados al DM (dmMessages), foro comunitario y comentarios en los respaldos maestros JSON y sincronización automática continua.',
+        'Acceso Dual para Administradores (Admin + Moderación): El rol de Administrador ahora visualiza y accede simultáneamente al botón y panel de Administración General y al Panel de Moderación Comunitaria desde la barra superior y el lobby.',
+        'Unificación de Sección de Amigos y Rediseño Compacto: Consolidación de Amigos, Agregar Amigo y Usuario@ID con botones directos para Copiar ID, Agregar y Actualizar, adaptado con diseño responsivo impecable.',
       ],
     };
 
