@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-cinzel: 'Cinzel', serif;
+    --font-medieval: 'MedievalSharp', cursive;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  h1, h2, h3, .font-cinzel {
+    font-family: 'Cinzel', serif;
+  }
+}
+
+/* Custom parchment & scrollbar accents */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #17181c;
+}
+::-webkit-scrollbar-thumb {
+  background: #3f3529;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #594936;
+}
+
+.parchment-bg {
+  background-color: #1a1714;
+  background-image: radial-gradient(#2c241c 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.gold-glow {
+  text-shadow: 0 0 12px rgba(217, 119, 6, 0.4);
+}
+

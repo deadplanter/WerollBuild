@@ -1,0 +1,396 @@
+import React, { useState } from 'react';
+import { KeyRound, Lock, Tag, CheckCircle, AlertCircle, Save, Mail, HelpCircle, X, Shield, Copy, Check } from 'lucide-react';
+import { AuthSessionUser } from '../auth/RoleSelectionModal';
+
+interface UserSecurityModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  authUser: AuthSessionUser;
+  onRefreshAuthStatus?: () => Promise<void>;
+}
+
+export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
+  isOpen,
+  onClose,
+  authUser,
+  onRefreshAuthStatus,
+}) => {
+  const currentTagId = authUser.userTagId || '123';
+  const myFullTag = `${authUser.displayName}@${currentTagId}`;
+
+  // Tag ID state
+  const [newTagId, setNewTagId] = useState<string>(currentTagId);
+  const [isUpdatingTagId, setIsUpdatingTagId] = useState<boolean>(false);
+  const [userTagStatusMsg, setUserTagStatusMsg] = useState<string>('');
+  const [userTagErrorMsg, setUserTagErrorMsg] = useState<string>('');
+  const [copiedTag, setCopiedTag] = useState<boolean>(false);
+
+  // Change Password state
+  const [userOldPassword, setUserOldPassword] = useState<string>('');
+  const [userNewPassword, setUserNewPassword] = useState<string>('');
+  const [userConfirmPassword, setUserConfirmPassword] = useState<string>('');
+  const [isUpdatingUserPass, setIsUpdatingUserPass] = useState<boolean>(false);
+  const [userPassStatusMsg, setUserPassStatusMsg] = useState<string>('');
+  const [userPassErrorMsg, setUserPassErrorMsg] = useState<string>('');
+
+  // Forgot password request state
+  const [userForgotNote, setUserForgotNote] = useState<string>('');
+  const [isRequestingForgot, setIsRequestingForgot] = useState<boolean>(false);
+  const [userForgotMsg, setUserForgotMsg] = useState<string>('');
+
+  if (!isOpen) return null;
+
+  const handleCopyTag = () => {
+    navigator.clipboard.writeText(myFullTag);
+    setCopiedTag(true);
+    setTimeout(() => setCopiedTag(false), 2000);
+  };
+
+  const handleUserChangeTagId = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUserTagStatusMsg('');
+    setUserTagErrorMsg('');
+    const clean = newTagId.replace(/^@+/, '').trim().slice(0, 3);
+    if (!clean) {
+      setUserTagErrorMsg('El ID debe tener al menos 1 carácter alfanumérico.');
+      return;
+    }
+
+    setIsUpdatingTagId(true);
+    try {
+      const res = await fetch(`/api/users/${authUser.id}/tag-id`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          newTagId: clean,
+          currentDisplayName: authUser.displayName,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setUserTagErrorMsg(data.error || 'No se pudo actualizar el ID.');
+        return;
+      }
+
+      setUserTagStatusMsg(data.message || '¡ID actualizado con éxito!');
+      if (onRefreshAuthStatus) {
+        await onRefreshAuthStatus();
+      }
+    } catch (err: any) {
+      setUserTagErrorMsg('Error al conectar con el servidor.');
+    } finally {
+      setIsUpdatingTagId(false);
+    }
+  };
+
+  const handleUserChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUserPassStatusMsg('');
+    setUserPassErrorMsg('');
+
+    if (userNewPassword !== userConfirmPassword) {
+      setUserPassErrorMsg('La nueva contraseña y su confirmación no coinciden.');
+      return;
+    }
+    if (userNewPassword.length < 3) {
+      setUserPassErrorMsg('La nueva contraseña debe tener al menos 3 caracteres.');
+      return;
+    }
+
+    setIsUpdatingUserPass(true);
+    try {
+      const res = await fetch(`/api/users/${authUser.id}/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: userOldPassword,
+          newPassword: userNewPassword,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setUserPassErrorMsg(data.error || 'No se pudo cambiar la contraseña.');
+        return;
+      }
+
+      setUserPassStatusMsg(data.message || '¡Contraseña actualizada con éxito!');
+      setUserOldPassword('');
+      setUserNewPassword('');
+      setUserConfirmPassword('');
+    } catch (err) {
+      setUserPassErrorMsg('Error al conectar con el servidor.');
+    } finally {
+      setIsUpdatingUserPass(false);
+    }
+  };
+
+  const handleUserRequestForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsRequestingForgot(true);
+    try {
+      const res = await fetch('/api/auth/request-password-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: authUser.email,
+          note: userForgotNote.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setUserForgotMsg(data.message || 'Solicitud de restablecimiento enviada al Administrador.');
+      } else {
+        setUserForgotMsg(data.error || 'No se pudo enviar la solicitud.');
+      }
+    } catch (e) {
+      setUserForgotMsg('Error al conectar con el servidor.');
+    } finally {
+      setIsRequestingForgot(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="bg-[#14151b] border border-amber-800/80 rounded-3xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl animate-in zoom-in-95 overflow-hidden">
+        {/* Header */}
+        <div className="bg-[#181920] border-b border-stone-800 p-5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-950/70 border border-amber-600/70 flex items-center justify-center text-amber-300">
+              <KeyRound className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-cinzel font-black text-base text-amber-200">
+                  Seguridad & Contraseña
+                </h3>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-950 border border-amber-700/60 text-amber-300 font-bold">
+                  {myFullTag}
+                </span>
+              </div>
+              <p className="text-xs text-stone-400">
+                Ajusta tu ID único (@ID) para amigos y actualiza tus credenciales de forma segura.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-stone-800 text-stone-400 hover:text-stone-200 transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-[#101115]">
+          {/* Section 1: Username & Tag ID */}
+          <form
+            onSubmit={handleUserChangeTagId}
+            className="bg-[#161720] border border-stone-800 rounded-2xl p-5 shadow space-y-3"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800/80 pb-3">
+              <h4 className="font-cinzel font-bold text-sm text-stone-200 flex items-center gap-2">
+                <Tag className="w-4 h-4 text-emerald-400" />
+                Mi Nombre de Usuario e Identificador (@ID)
+              </h4>
+              <button
+                type="button"
+                onClick={handleCopyTag}
+                className="font-mono text-xs px-2.5 py-1 rounded-lg bg-emerald-950/90 border border-emerald-700 text-emerald-300 font-bold flex items-center gap-1.5 hover:bg-emerald-900 transition"
+                title="Copiar etiqueta completa"
+              >
+                {copiedTag ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{myFullTag}</span>
+              </button>
+            </div>
+
+            <p className="text-xs text-stone-400 leading-relaxed">
+              Comparte tu nombre seguido de <span className="font-mono text-amber-300">@</span> y tu ID de hasta 3 caracteres (ej: <span className="font-mono text-stone-200">{myFullTag}</span>) para que otros jugadores puedan agregarte en Amigos.
+            </p>
+
+            {userTagStatusMsg && (
+              <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-600 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{userTagStatusMsg}</span>
+              </div>
+            )}
+
+            {userTagErrorMsg && (
+              <div className="p-3 rounded-xl bg-red-950/80 border border-red-700 text-red-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{userTagErrorMsg}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              <div className="sm:col-span-6">
+                <label className="block text-[11px] font-cinzel font-bold uppercase text-stone-400 mb-1">
+                  Nombre de Usuario
+                </label>
+                <input
+                  type="text"
+                  value={authUser.displayName}
+                  readOnly
+                  disabled
+                  className="w-full bg-[#111216] border border-stone-800 rounded-xl px-3 py-2 text-stone-300 text-xs font-medium cursor-not-allowed select-all"
+                />
+              </div>
+
+              <div className="sm:col-span-6">
+                <label className="block text-[11px] font-cinzel font-bold uppercase text-amber-300 mb-1">
+                  Tu ID (1 a 3 Caracteres)
+                </label>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center bg-[#111216] border border-stone-700 focus-within:border-amber-500 rounded-xl px-2.5 py-1.5 flex-1">
+                    <span className="font-mono font-bold text-amber-400 mr-1 text-xs">@</span>
+                    <input
+                      type="text"
+                      maxLength={3}
+                      value={newTagId}
+                      onChange={(e) =>
+                        setNewTagId(
+                          e.target.value.replace(/^@+/, '').replace(/\s+/g, '').slice(0, 3)
+                        )
+                      }
+                      placeholder="123"
+                      required
+                      className="w-full bg-transparent text-amber-200 font-mono font-bold text-xs outline-none uppercase"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isUpdatingTagId}
+                    className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-cinzel font-bold text-xs shadow transition flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    {isUpdatingTagId ? 'Guardando...' : 'Guardar'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </form>
+
+          {/* Section 2: Change Password */}
+          <form
+            onSubmit={handleUserChangePassword}
+            className="bg-[#161720] border border-stone-800 rounded-2xl p-5 shadow space-y-3"
+          >
+            <h4 className="font-cinzel font-bold text-sm text-stone-200 flex items-center gap-2 border-b border-stone-800/80 pb-3">
+              <Lock className="w-4 h-4 text-amber-400" />
+              Cambiar mi Contraseña
+            </h4>
+
+            {userPassStatusMsg && (
+              <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-600 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{userPassStatusMsg}</span>
+              </div>
+            )}
+
+            {userPassErrorMsg && (
+              <div className="p-3 rounded-xl bg-red-950/80 border border-red-700 text-red-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{userPassErrorMsg}</span>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-[11px] font-cinzel font-bold uppercase text-stone-400 mb-1">
+                Contraseña Actual
+              </label>
+              <input
+                type="password"
+                value={userOldPassword}
+                onChange={(e) => setUserOldPassword(e.target.value)}
+                placeholder="Tu contraseña actual..."
+                required
+                className="w-full bg-[#121316] border border-stone-700 focus:border-amber-500 rounded-xl px-3 py-2 text-stone-100 text-xs font-mono outline-none transition"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-cinzel font-bold uppercase text-stone-400 mb-1">
+                  Nueva Contraseña
+                </label>
+                <input
+                  type="password"
+                  value={userNewPassword}
+                  onChange={(e) => setUserNewPassword(e.target.value)}
+                  placeholder="Mínimo 3 caracteres..."
+                  required
+                  className="w-full bg-[#121316] border border-stone-700 focus:border-amber-500 rounded-xl px-3 py-2 text-stone-100 text-xs font-mono outline-none transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-cinzel font-bold uppercase text-stone-400 mb-1">
+                  Confirmar Nueva Contraseña
+                </label>
+                <input
+                  type="password"
+                  value={userConfirmPassword}
+                  onChange={(e) => setUserConfirmPassword(e.target.value)}
+                  placeholder="Repite la nueva contraseña..."
+                  required
+                  className="w-full bg-[#121316] border border-stone-700 focus:border-amber-500 rounded-xl px-3 py-2 text-stone-100 text-xs font-mono outline-none transition"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="submit"
+                disabled={isUpdatingUserPass}
+                className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-cinzel font-bold text-xs shadow-lg transition flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Save className="w-3.5 h-3.5" />
+                {isUpdatingUserPass ? 'Guardando...' : 'Actualizar Contraseña'}
+              </button>
+            </div>
+          </form>
+
+          {/* Section 3: Reset Request / Help */}
+          <div className="bg-[#161720] border border-stone-800 rounded-2xl p-5 shadow space-y-3">
+            <h4 className="font-cinzel font-bold text-sm text-stone-200 flex items-center gap-2 border-b border-stone-800/80 pb-3">
+              <HelpCircle className="w-4 h-4 text-blue-400" />
+              ¿Olvidaste tu contraseña o requieres reseteo?
+            </h4>
+            <p className="text-xs text-stone-400 leading-relaxed">
+              Si no recuerdas tu contraseña actual para cambiarla, envía una solicitud formal de restablecimiento al Administrador del servidor.
+            </p>
+
+            {userForgotMsg ? (
+              <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-600 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{userForgotMsg}</span>
+              </div>
+            ) : (
+              <form onSubmit={handleUserRequestForgot} className="space-y-2 pt-1">
+                <input
+                  type="text"
+                  value={userForgotNote}
+                  onChange={(e) => setUserForgotNote(e.target.value)}
+                  placeholder="Nota o motivo para el Administrador (opcional)..."
+                  className="w-full bg-[#121316] border border-stone-700 rounded-xl px-3 py-2 text-stone-200 text-xs outline-none focus:border-amber-500 transition"
+                />
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={isRequestingForgot}
+                    className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-300 font-cinzel font-bold text-xs border border-amber-800/60 shadow transition flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    {isRequestingForgot ? 'Enviando...' : 'Solicitar Reseteo'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

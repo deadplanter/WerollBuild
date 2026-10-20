@@ -1,0 +1,1131 @@
+import type { Character5e, DMWorkspace, SkillKey, AbilityKey } from '../types/dnd.ts';
+
+export interface ClassDefinition {
+  name: string;
+  hitDie: string;
+  primaryAbility: string;
+  savingThrows: AbilityKey[];
+  armorProficiencies: string[];
+  weaponProficiencies: string[];
+  description: string;
+  keyFeatures: { name: string; level: number; desc: string }[];
+}
+
+export const SRD_CLASSES: Record<string, ClassDefinition> = {
+  Bárbaro: {
+    name: 'Bárbaro',
+    hitDie: 'd12',
+    primaryAbility: 'Fuerza',
+    savingThrows: ['str', 'con'],
+    armorProficiencies: ['Armaduras ligeras', 'Armaduras medias', 'Escudos'],
+    weaponProficiencies: ['Armas simples', 'Armas marciales'],
+    description: 'Un fiero combatiente tribal que entra en una furia berserker devastadora.',
+    keyFeatures: [
+      { name: 'Furia (Rage)', level: 1, desc: 'Ventaja en pruebas/salvaciones de FUE, daño extra (+2) a ataques con arma cuerpo a cuerpo con FUE, y resistencia a daño cortante, contundente y perforante.' },
+      { name: 'Defensa sin Armadura', level: 1, desc: 'Sin armadura, tu CA es 10 + mod DES + mod CON. Puedes usar escudo.' },
+      { name: 'Ataque Temerario (Reckless Attack)', level: 2, desc: 'Puedes atacar con ventaja en tu primer ataque de FUE del turno; pero todos los ataques contra ti tienen ventaja hasta tu siguiente turno.' },
+      { name: 'Sentido del Peligro', level: 2, desc: 'Ventaja en tiradas de salvación de Destreza contra efectos que puedas ver (trampas, conjuros).' },
+    ],
+  },
+  Bardo: {
+    name: 'Bardo',
+    hitDie: 'd8',
+    primaryAbility: 'Carisma',
+    savingThrows: ['dex', 'cha'],
+    armorProficiencies: ['Armaduras ligeras'],
+    weaponProficiencies: ['Armas simples', 'Ballesta de mano', 'Espada corta', 'Espada ropera'],
+    description: 'Un maestro de la narración, la música y la hechicería que teje magia a través de las palabras.',
+    keyFeatures: [
+      { name: 'Inspiración de Bardo (d6)', level: 1, desc: 'Como acción adicional, das un dado de inspiración (d6) a un aliado en 60 pies. Puede sumarlo a una prueba, ataque o salvación en los próximos 10 minutos.' },
+      { name: 'Lanzamiento de Conjuros', level: 1, desc: 'Usa Carisma para lanzar conjuros de bardo. Conoce una cantidad fija de conjuros sin necesidad de prepararlos.' },
+      { name: 'Aprendiz de Mucho (Jack of All Trades)', level: 2, desc: 'Añades la mitad de tu bonificador de competencia (redondeado hacia abajo) a cualquier prueba de característica que no incluya tu competencia.' },
+      { name: 'Canción de Descanso', level: 2, desc: 'Tú y tus aliados recuperan 1d6 PG extra al gastar Dados de Golpe durante un descanso corto.' },
+      { name: 'Pericia (Expertise)', level: 3, desc: 'Duplica tu bonificador de competencia en dos habilidades elegidas.' },
+    ],
+  },
+  Clérigo: {
+    name: 'Clérigo',
+    hitDie: 'd8',
+    primaryAbility: 'Sabiduría',
+    savingThrows: ['wis', 'cha'],
+    armorProficiencies: ['Armaduras ligeras', 'Armaduras medias', 'Escudos'],
+    weaponProficiencies: ['Armas simples'],
+    description: 'Un campeón sacerdotal que empuña magia divina consagrada al servicio de los dioses.',
+    keyFeatures: [
+      { name: 'Dominio Divino', level: 1, desc: 'Elige un dominio (Vida, Guerra, Luz, Tempestad, Conocimiento, etc.) que otorga conjuros adicionales y competencias.' },
+      { name: 'Canalizar Divinidad (1/descanso)', level: 2, desc: 'Expulsar Muertos Vivientes (huyen durante 1 minuto si fallan salvación de SAB) o el rasgo especial de tu dominio.' },
+      { name: 'Lanzamiento Ritual', level: 1, desc: 'Puedes lanzar cualquier conjuro de clérigo preparado como ritual si tiene la etiqueta ritual.' },
+    ],
+  },
+  Druida: {
+    name: 'Druida',
+    hitDie: 'd8',
+    primaryAbility: 'Sabiduría',
+    savingThrows: ['int', 'wis'],
+    armorProficiencies: ['Armaduras ligeras (no metálicas)', 'Armaduras medias (no metálicas)', 'Escudos'],
+    weaponProficiencies: ['Clavas', 'Dagas', 'Dardos', 'Jabalinas', 'Mazas', 'Cimitarras', 'Hondas', 'Bastones'],
+    description: 'Un sacerdote de la naturaleza primordial que comulga con las bestias y los elementos.',
+    keyFeatures: [
+      { name: 'Forma Salvaje (Wild Shape)', level: 2, desc: 'Como acción, te transformas en una bestia que hayas visto dos veces por descanso corto. Asumes los PG y estadísticas físicas de la bestia.' },
+      { name: 'Círculo Druídico', level: 2, desc: 'Elige el Círculo de la Tierra (magia y recuperación mística) o Círculo de la Luna (formas salvajes de combate como osos y lobos temibles).' },
+    ],
+  },
+  Guerrero: {
+    name: 'Guerrero',
+    hitDie: 'd10',
+    primaryAbility: 'Fuerza o Destreza',
+    savingThrows: ['str', 'con'],
+    armorProficiencies: ['Todas las armaduras', 'Escudos'],
+    weaponProficiencies: ['Armas simples', 'Armas marciales'],
+    description: 'Un maestro táctico de las armas, la disciplina militar y la supervivencia marcial.',
+    keyFeatures: [
+      { name: 'Estilo de Combate', level: 1, desc: 'Elige Duelo (+2 daño a una mano), Defensa (+1 CA), Tiro con Arco (+2 ataque a distancia), o Gran Arma.' },
+      { name: 'Tomar Aliento (Second Wind)', level: 1, desc: 'Acción adicional para recuperar 1d10 + nivel de Guerrero PG. 1 uso por descanso corto o largo.' },
+      { name: 'Oleada de Acción (Action Surge)', level: 2, desc: 'En tu turno, realiza 1 acción adicional en combate. 1 uso por descanso corto o largo.' },
+      { name: 'Arquetipo Marcial', level: 3, desc: 'Campeón (crítico en 19 o 20), Maestro de Batalla (maniobras con dados d8) o Caballero Arcano (magia).' },
+    ],
+  },
+  Monje: {
+    name: 'Monje',
+    hitDie: 'd8',
+    primaryAbility: 'Destreza y Sabiduría',
+    savingThrows: ['str', 'dex'],
+    armorProficiencies: ['Ninguna'],
+    weaponProficiencies: ['Armas simples', 'Espadas cortas'],
+    description: 'Un atleta místico que canaliza la energía invisible del Ki a través de golpes desarmados.',
+    keyFeatures: [
+      { name: 'Defensa sin Armadura', level: 1, desc: 'Sin armadura ni escudo, tu CA es 10 + mod DES + mod SAB.' },
+      { name: 'Artes Marciales', level: 1, desc: 'Usa DES para ataques y daño desarmado. El daño base es 1d4. Si atacas con golpe desarmado, puedes dar otro como acción adicional.' },
+      { name: 'Puntos de Ki', level: 2, desc: 'Gasta Ki para Ráfaga de Golpes (2 ataques desarmados extras), Defensa Paciente (Esquivar de acción adicional), o Paso del Viento (Correr o Destrabarse).' },
+      { name: 'Movimiento sin Armadura', level: 2, desc: '+10 pies de velocidad mientras no lleves armadura.' },
+      { name: 'Desviar Proyectiles', level: 3, desc: 'Usa reacción para reducir el daño de un proyectil en 1d10 + mod DES + nivel. Si baja a 0, puedes atraparlo y relanzarlo.' },
+    ],
+  },
+  Paladín: {
+    name: 'Paladín',
+    hitDie: 'd10',
+    primaryAbility: 'Fuerza y Carisma',
+    savingThrows: ['wis', 'cha'],
+    armorProficiencies: ['Todas las armaduras', 'Escudos'],
+    weaponProficiencies: ['Armas simples', 'Armas marciales'],
+    description: 'Un guerrero santo que liga su alma a un juramento sagrado inquebrantable.',
+    keyFeatures: [
+      { name: 'Sentido Divino', level: 1, desc: 'Detecta celestiales, infernales y muertos vivientes a menos de 60 pies.' },
+      { name: 'Imposición de Manos', level: 1, desc: 'Reserva de curación igual a tu nivel x 5 PG. Puedes gastar 5 puntos para curar una enfermedad o veneno.' },
+      { name: 'Castigo Divino (Divine Smite)', level: 2, desc: 'Al impactar con arma cuerpo a cuerpo, gasta un espacio de conjuro para infligir 2d8 daño radiante (+1d8 por nivel de espacio superior, +1d8 extra contra infernales/muertos vivientes).' },
+      { name: 'Juramento Sagrado', level: 3, desc: 'Devoción, Venganza o Antiguos. Otorga conjuros del juramento y Canalizar Divinidad sagrado.' },
+    ],
+  },
+  Explorador: {
+    name: 'Explorador',
+    hitDie: 'd10',
+    primaryAbility: 'Destreza y Sabiduría',
+    savingThrows: ['str', 'dex'],
+    armorProficiencies: ['Armaduras ligeras', 'Armaduras medias', 'Escudos'],
+    weaponProficiencies: ['Armas simples', 'Armas marciales'],
+    description: 'Un cazador salvaje y rastreador letal que domina los confines del mundo civilizado.',
+    keyFeatures: [
+      { name: 'Enemigo Predilecto', level: 1, desc: 'Ventaja en pruebas de Sabiduría (Supervivencia) para rastrear y pruebas de Inteligencia para recordar información sobre ellos.' },
+      { name: 'Explorador Natural', level: 1, desc: 'Elige un terreno bio: terreno difícil no ralentiza al grupo, no puedes perderte por medios no mágicos, y alerta al forrajear.' },
+      { name: 'Consciencia Primigenia', level: 3, desc: 'Gasta un espacio de conjuro para detectar aberraciones, celestiales, dragones, elementales, hadas o muertos vivientes en 1 milla.' },
+    ],
+  },
+  Pícaro: {
+    name: 'Pícaro',
+    hitDie: 'd8',
+    primaryAbility: 'Destreza',
+    savingThrows: ['dex', 'int'],
+    armorProficiencies: ['Armaduras ligeras'],
+    weaponProficiencies: ['Armas simples', 'Ballesta de mano', 'Espada corta', 'Espada ropera'],
+    description: 'Un especialista en infiltración, trampas, sigilo y ataques furtivos devastadores.',
+    keyFeatures: [
+      { name: 'Pericia (Expertise)', level: 1, desc: 'Duplica tu bonificador de competencia en dos habilidades o herramientas de ladrón.' },
+      { name: 'Ataque Furtivo (Sneak Attack)', level: 1, desc: '1d6 daño adicional una vez por turno si atacas con arma sutil o a distancia teniendo ventaja, o si un aliado está a 5 pies del objetivo sin que tengas desventaja. Aumenta con niveles (2d6 a nivel 3).' },
+      { name: 'Acción Astuta (Cunning Action)', level: 2, desc: 'Puedes realizar Correr, Destrabarse o Esconderse como Acción Adicional en cada uno de tus turnos.' },
+      { name: 'Arquetipo de Pícaro', level: 3, desc: 'Ladrón (manos rápidas, trepar), Asesino (crítico sorpresa mortal) o Embaucador Arcano (magia de ilusionismo).' },
+    ],
+  },
+  Hechicero: {
+    name: 'Hechicero',
+    hitDie: 'd6',
+    primaryAbility: 'Carisma',
+    savingThrows: ['con', 'cha'],
+    armorProficiencies: ['Ninguna'],
+    weaponProficiencies: ['Dagas', 'Dardos', 'Hondas', 'Bastones', 'Ballestas ligeras'],
+    description: 'Un portador de magia innata forjada en su sangre o bendecida por eventos cósmicos.',
+    keyFeatures: [
+      { name: 'Origen Hechicero', level: 1, desc: 'Linaje Dracónico (piel escamosa CA 13+DES, +1 PG/nivel) o Magia Salvaje (oleadas de magia caótica con d20).' },
+      { name: 'Fuente de Magia', level: 2, desc: 'Puntos de Hechicería para convertir en espacios de conjuro o alimentar Metamagia.' },
+      { name: 'Metamagia', level: 3, desc: 'Modifica conjuros: Conjuro Acelerado (lanzar como acción adicional), Conjuro Duplicado (dos objetivos), Conjuro Sutil (sin componentes verbales ni somáticos).' },
+    ],
+  },
+  Brujo: {
+    name: 'Brujo',
+    hitDie: 'd8',
+    primaryAbility: 'Carisma',
+    savingThrows: ['wis', 'cha'],
+    armorProficiencies: ['Armaduras ligeras'],
+    weaponProficiencies: ['Armas simples'],
+    description: 'Un buscador de secretos prohibidos que selló un pacto con un ser de poder sobrenatural.',
+    keyFeatures: [
+      { name: 'Patrón de Otro Mundo', level: 1, desc: 'Archihada, Infernal (recuperas PG temporales al matar), o el Primigenio (telepatía).' },
+      { name: 'Magia del Pacto', level: 1, desc: 'Pocos espacios de conjuro pero todos se lanzan siempre al máximo nivel disponible y se recuperan en descansos cortos.' },
+      { name: 'Invocaciones Sobrenaturales', level: 2, desc: 'Poderes permanentes como Descarga Agónica (+mod CAR a daño de Descarga Sobrenatural), Visión del Diablo (ver en oscuridad mágica 120 pies).' },
+      { name: 'Don del Pacto', level: 3, desc: 'Pacto de la Cadena (familiar mejorado), Pacto de la Espada (arma mágica convocable), o Pacto del Tomo (3 trucos de cualquier clase).' },
+    ],
+  },
+  Mago: {
+    name: 'Mago',
+    hitDie: 'd6',
+    primaryAbility: 'Inteligencia',
+    savingThrows: ['int', 'wis'],
+    armorProficiencies: ['Ninguna'],
+    weaponProficiencies: ['Dagas', 'Dardos', 'Hondas', 'Bastones', 'Ballestas ligeras'],
+    description: 'Un erudito supremo de lo arcano que memoriza y cataloga los conjuros en su libro de conjuros.',
+    keyFeatures: [
+      { name: 'Libro de Conjuros', level: 1, desc: 'Contiene 6 conjuros de nivel 1. Puedes copiar nuevos conjuros encontrados por 50 po y 2 horas por nivel de conjuro.' },
+      { name: 'Recuperación Arcana', level: 1, desc: 'En un descanso corto, recuperas espacios de conjuro gastados con un nivel combinado igual a hasta la mitad de tu nivel de mago.' },
+      { name: 'Tradición Arcana', level: 2, desc: 'Escuela de magia especializada: Evocación (esculpir conjuros sin dañar aliados), Abjuración (escudo arcano), Nigromancia, Adivinación (dados del Portento).' },
+    ],
+  },
+};
+
+export const SRD_RACES = [
+  { name: 'Humano', speed: 30, description: '+1 a todas las características o dote inicial en variante humana.' },
+  { name: 'Elfo (Alto)', speed: 30, description: 'Visión en la oscuridad 60 ft, sentidos agudos (Percepción), linaje feérico (inmune a sueño mágico), truco de mago adicional.' },
+  { name: 'Elfo (del Bosque)', speed: 35, description: 'Velocidad 35 pies, máscara de la naturaleza (esconderse en follaje ligero), armas élficas.' },
+  { name: 'Elfo (Drow)', speed: 30, description: 'Visión en la oscuridad superior 120 ft, sensibilidad a la luz solar, magia drow (Luces Danzantes, Fuego Feérico, Oscuridad).' },
+  { name: 'Enano (de las Colinas)', speed: 25, description: '+1 PG extra por cada nivel, resistencia a veneno, visión en la oscuridad 60 ft, afinidad con la piedra.' },
+  { name: 'Enano (de la Montaña)', speed: 25, description: '+2 a Fuerza, competencia con armadura ligera y media, armas enanas.' },
+  { name: 'Mediano (Piesligeros)', speed: 25, description: 'Afortunado (si sacas un 1 en d20, repites el dado), valiente (ventaja contra asustado), sigiloso tras criaturas grandes.' },
+  { name: 'Mediano (Fornido)', speed: 25, description: 'Resistencia a veneno y ventaja contra ser envenenado.' },
+  { name: 'Tiflin', speed: 30, description: 'Resistencia al fuego, visión en la oscuridad 60 ft, magia infernal (Taumaturgia, Reprensión Infernal, Oscuridad).' },
+  { name: 'Dracónido', speed: 30, description: 'Arma de aliento dracónica (cono o línea elemental) y resistencia al daño correspondiente a su color.' },
+  { name: 'Gnomo (de las Rocas)', speed: 25, description: 'Astucia gnoma (ventaja en salvaciones INT/SAB/CAR contra magia), inventos y mecanismos pequeños.' },
+  { name: 'Semielfo', speed: 30, description: '+2 Carisma, +1 a otras dos características, 2 habilidades a elección, linaje feérico, visión en la oscuridad.' },
+  { name: 'Semiorco', speed: 30, description: 'Resistencia incansable (la primera vez que caes a 0 PG quedas a 1 PG), ataques salvajes (tiras un dado de daño extra en críticos).' },
+];
+
+export const SKILL_METADATA: Record<SkillKey, { nameEs: string; ability: AbilityKey; description: string; dcExamples: string }> = {
+  acrobatics: {
+    nameEs: 'Acrobacias',
+    ability: 'dex',
+    description: 'Mantener el equilibrio en superficies resbaladizas, cuerdas flojas, piruetas o escapar de apresamientos.',
+    dcExamples: 'CD 10: Caminar por tablón balanceándose. CD 15: Voltereta sobre hielo. CD 20: Cruzar cable bajo lluvia.',
+  },
+  animalHandling: {
+    nameEs: 'Manejo de Animales',
+    ability: 'wis',
+    description: 'Tranquilizar a una montura asustada, entender intenciones de una bestia salvaje o guiar animales de tiro.',
+    dcExamples: 'CD 10: Calmar perro guardián. CD 15: Montar criatura salvaje no domada. CD 20: Convencer a oso hambriento.',
+  },
+  arcana: {
+    nameEs: 'Conocimiento Arcano',
+    ability: 'int',
+    description: 'Recordar tradiciones sobre conjuros, objetos mágicos, símbolos eldritch, planos de existencia e historia mágica.',
+    dcExamples: 'CD 10: Reconocer un truco común. CD 15: Identificar escuela de un sello. CD 20: Conocer debilidad de un gólem.',
+  },
+  athletics: {
+    nameEs: 'Atletismo',
+    ability: 'str',
+    description: 'Escalar acantilados, nadar contra corrientes impetuosas, saltar abismos o derribar/agarrar a un rival en combate.',
+    dcExamples: 'CD 10: Saltar zanja de 10 pies. CD 15: Escalar muro húmedo sin cuerda. CD 20: Nadar en marejada de tormenta.',
+  },
+  deception: {
+    nameEs: 'Engaño',
+    ability: 'cha',
+    description: 'Ocultar la verdad de manera verbal o no verbal: mentiras descaradas, disfraces, engañar a guardias.',
+    dcExamples: 'Opuesta contra Perspicacia (Insight) del rival.',
+  },
+  history: {
+    nameEs: 'Historia',
+    ability: 'int',
+    description: 'Recordar acontecimientos del pasado, linajes nobles, guerras antiguas, reyes y ciudades perdidas.',
+    dcExamples: 'CD 10: Conocer al rey actual. CD 15: La causa de una guerra hace un siglo. CD 20: El nombre del fundador del imperio.',
+  },
+  insight: {
+    nameEs: 'Perspicacia',
+    ability: 'wis',
+    description: 'Determinar los motivos reales de un individuo, detectar mentiras o predecir las intenciones de una persona.',
+    dcExamples: 'Opuesta contra la tirada de Engaño (Deception) del interlocutor.',
+  },
+  intimidation: {
+    nameEs: 'Intimidación',
+    ability: 'cha',
+    description: 'Influir en alguien mediante amenazas abiertas, posturas hostiles o demostraciones de poder físico o mágico.',
+    dcExamples: 'CD 10: Forzar a un delator cobarde. CD 15: Asustar a un guardia novato. CD 20: Doblegar a un capitán prisionero.',
+  },
+  investigation: {
+    nameEs: 'Investigación',
+    ability: 'int',
+    description: 'Deducir la ubicación de pistas ocultas, examinar mecanismos de trampas, buscar puertas secretas o resolver enigmas.',
+    dcExamples: 'CD 10: Hallar cajón falso simple. CD 15: Descifrar cómo desactivar un disparador. CD 20: Descubrir cámara secreta invisible.',
+  },
+  medicine: {
+    nameEs: 'Medicina',
+    ability: 'wis',
+    description: 'Estabilizar a un aliado moribundo a 0 PG (CD 10), diagnosticar venenos, enfermedades o determinar causas de muerte.',
+    dcExamples: 'CD 10: Estabilizar personaje a 0 PG sin botiquín. CD 15: Reconocer veneno de mantícora.',
+  },
+  nature: {
+    nameEs: 'Naturaleza',
+    ability: 'int',
+    description: 'Recordar conocimientos sobre flora, fauna, clima, estaciones, terrenos y venenos botánicos.',
+    dcExamples: 'CD 10: Identificar una baya venenosa. CD 15: Conocer el hábitat de un basilisco. CD 20: Predecir terremoto.',
+  },
+  perception: {
+    nameEs: 'Percepción',
+    ability: 'wis',
+    description: 'Detectar olores, sonidos lejanos, emboscadas o enemigos ocultos en sombras. Tu Percepción Pasiva es 10 + mod + comp.',
+    dcExamples: 'Opuesta contra la tirada de Sigilo (Stealth) del enemigo o CD de la trampa oculta.',
+  },
+  performance: {
+    nameEs: 'Interpretación',
+    ability: 'cha',
+    description: 'Deleitar a un público con música, danza, teatro, poesía o comedia para ganar favores o monedas.',
+    dcExamples: 'CD 10: Canción de taberna decente. CD 15: Conmover a nobles de la corte. CD 20: Actuación legendaria para un rey.',
+  },
+  persuasion: {
+    nameEs: 'Persuasión',
+    ability: 'cha',
+    description: 'Influir en una persona de manera diplomática, cortés, convincente o mediante elocuencia sin recurrir a amenazas.',
+    dcExamples: 'CD 10: Pedir audiencia con un alcalde. CD 15: Negociar descuento o salvoconducto. CD 20: Forjar una alianza entre clanes rivales.',
+  },
+  religion: {
+    nameEs: 'Religión',
+    ability: 'int',
+    description: 'Conocimiento sobre deidades, dogmas, órdenes sacerdotales, rituales sagrados, símbolos y cultos secretos.',
+    dcExamples: 'CD 10: Reconocer el símbolo de Pelor o Tiamat. CD 15: Conocer el tabú de una secta. CD 20: Ritos ancestrales de lichdom.',
+  },
+  sleightOfHand: {
+    nameEs: 'Juego de Manos',
+    ability: 'dex',
+    description: 'Robar carteras, ocultar objetos pequeños en la manga, forzar cerraduras o manipular objetos con destreza digital.',
+    dcExamples: 'Opuesta contra la Percepción Pasiva de la víctima u observadores.',
+  },
+  stealth: {
+    nameEs: 'Sigilo',
+    ability: 'dex',
+    description: 'Ocultarse de enemigos, moverse sin hacer ruido a través de sombras y eludir guardias y centinelas.',
+    dcExamples: 'Opuesta contra la Percepción Pasiva o activa del vigilante.',
+  },
+  survival: {
+    nameEs: 'Supervivencia',
+    ability: 'wis',
+    description: 'Seguir huellas en el fango, forrajear comida y agua dulce, guiar al grupo por desiertos o evitar arenas movedizas.',
+    dcExamples: 'CD 10: Rastrear huellas en nieve. CD 15: Encontrar comida para 4 personas en páramo. CD 20: Guiar en tormenta de arena.',
+  },
+};
+
+export const ABILITY_LABELS: Record<AbilityKey, { nameEs: string; abbr: string }> = {
+  str: { nameEs: 'Fuerza', abbr: 'FUE' },
+  dex: { nameEs: 'Destreza', abbr: 'DES' },
+  con: { nameEs: 'Constitución', abbr: 'CON' },
+  int: { nameEs: 'Inteligencia', abbr: 'INT' },
+  wis: { nameEs: 'Sabiduría', abbr: 'SAB' },
+  cha: { nameEs: 'Carisma', abbr: 'CAR' },
+};
+
+export const SRD_CONDITIONS = [
+  {
+    id: 'cond-blinded',
+    name: 'Cegado (Blinded)',
+    effect: '• Falla automáticamente tiradas que requieran vista.\n• Las tiradas de ataque contra la criatura tienen Ventaja.\n• Las tiradas de ataque de la criatura tienen Desventaja.',
+  },
+  {
+    id: 'cond-charmed',
+    name: 'Hechizado (Charmed)',
+    effect: '• Una criatura hechizada no puede atacar al encantador ni elegirlo como objetivo de efectos dañinos o mágicos nocivos.\n• El encantador tiene Ventaja en cualquier prueba de característica para interactuar socialmente con la criatura.',
+  },
+  {
+    id: 'cond-deafened',
+    name: 'Ensordecido (Deafened)',
+    effect: '• No puede oír y falla automáticamente cualquier prueba de característica que requiera el sentido del oído.',
+  },
+  {
+    id: 'cond-frightened',
+    name: 'Asustado (Frightened)',
+    effect: '• Desventaja en pruebas de característica y tiradas de ataque mientras la fuente de su temor esté dentro de su línea de visión.\n• No puede acercarse voluntariamente hacia la fuente de su miedo.',
+  },
+  {
+    id: 'cond-grappled',
+    name: 'Agarrado (Grappled)',
+    effect: '• La velocidad de la criatura apresada se reduce a 0 y no puede beneficiarse de ningún bonificador a su velocidad.\n• La condición termina si quien apresa queda incapacitado o si un efecto desplaza a la criatura fuera de su alcance (como una onda expansiva o empujón).',
+  },
+  {
+    id: 'cond-incapacitated',
+    name: 'Incapacitado (Incapacitated)',
+    effect: '• Una criatura incapacitada no puede realizar ninguna Acción ni Reacción.',
+  },
+  {
+    id: 'cond-invisible',
+    name: 'Invisible (Invisible)',
+    effect: '• Imposible de ver sin magia o sentidos especiales. Se considera pesadamente oculta para propósitos de esconderse.\n• Sus tiradas de ataque tienen Ventaja.\n• Los ataques en su contra tienen Desventaja.',
+  },
+  {
+    id: 'cond-paralyzed',
+    name: 'Paralizado (Paralyzed)',
+    effect: '• La criatura queda Incapacitada y no puede moverse ni hablar.\n• Falla automáticamente tiradas de salvación de Fuerza y Destreza.\n• Las tiradas de ataque contra la criatura tienen Ventaja.\n• Cualquier ataque que impacte a la criatura es un Golpe Crítico automático si el atacante está a 5 pies.',
+  },
+  {
+    id: 'cond-petrified',
+    name: 'Petrificado (Petrified)',
+    effect: '• Transformada en sustancia inanimada sólida (usualmente piedra). Su peso se multiplica por diez y deja de envejecer.\n• Queda Incapacitada, no puede moverse ni hablar y es inconsciente de su entorno.\n• Ataques contra ella tienen Ventaja. Falla salvaciones de FUE y DES.\n• Gana Resistencia a todo el daño y es Inmune a veneno y enfermedades.',
+  },
+  {
+    id: 'cond-poisoned',
+    name: 'Envenenado (Poisoned)',
+    effect: '• Una criatura envenenada tiene Desventaja en todas las tiradas de ataque y en las pruebas de característica.',
+  },
+  {
+    id: 'cond-prone',
+    name: 'Derribado (Prone)',
+    effect: '• Su único movimiento posible es arrastrarse (cuesta 1 pie adicional por cada pie recorrido) a menos que se levante.\n• Levantarse cuesta la mitad de su velocidad total de la ronda.\n• La criatura tiene Desventaja en sus propias tiradas de ataque.\n• Las tiradas de ataque contra ella tienen Ventaja si el atacante está a 5 pies; si está más lejos, tienen Desventaja.',
+  },
+  {
+    id: 'cond-restrained',
+    name: 'Restringido (Restrained)',
+    effect: '• Su velocidad se vuelve 0 y no puede beneficiarse de bonificaciones de velocidad.\n• Las tiradas de ataque contra la criatura tienen Ventaja.\n• Las tiradas de ataque de la criatura tienen Desventaja.\n• La criatura tiene Desventaja en tiradas de salvación de Destreza.',
+  },
+  {
+    id: 'cond-stunned',
+    name: 'Aturdido (Stunned)',
+    effect: '• Queda Incapacitada, no puede moverse y solo puede balbucear con dificultad.\n• Falla automáticamente tiradas de salvación de Fuerza y Destreza.\n• Las tiradas de ataque contra ella tienen Ventaja.',
+  },
+  {
+    id: 'cond-unconscious',
+    name: 'Inconsciente (Unconscious)',
+    effect: '• Queda Incapacitada, no puede moverse ni hablar y cae derribada al suelo soltando lo que sostiene.\n• Falla automáticamente salvaciones de Fuerza y Destreza.\n• Ataques en su contra tienen Ventaja y cualquier impacto a 5 pies es un Golpe Crítico automático.',
+  },
+  {
+    id: 'cond-exhaustion',
+    name: 'Agotamiento / Fatiga (Exhaustion)',
+    effect: 'Efectos acumulativos por nivel:\n1. Desventaja en pruebas de característica.\n2. Velocidad reducida a la mitad.\n3. Desventaja en tiradas de ataque y salvaciones.\n4. Puntos de golpe máximos reducidos a la mitad.\n5. Velocidad reducida a 0.\n6. Muerte instantánea.\nUn descanso largo con comida reduce el agotamiento en 1 nivel.',
+  },
+];
+
+export const SRD_COMPREHENSIVE_RULES = [
+  // CATEGORY: COMBAT
+  {
+    id: 'comb-1',
+    category: 'combate',
+    title: 'Estructura del Turno y la Ronda',
+    description: 'Un combate se divide en Rondas (aproximadamente 6 segundos en el mundo del juego). En cada ronda, cada criatura actúa en orden según su tirada de Iniciativa (1d20 + modificador de Destreza).\n\nEn tu turno tienes:\n1. **Movimiento:** Puedes moverte hasta tu velocidad. Puedes dividir tu movimiento antes y después de tu acción.\n2. **Una Acción:** Tu acción principal del turno (Atacar, Conjurar, Correr, etc.).\n3. **Una Acción Adicional (Bonus Action):** Solo disponible si una habilidad, dote o conjuro explícitamente lo permite (ej. Furia del Bárbaro, Acción Astuta del Pícaro, o conjuros como Paso Brumoso).\n4. **Una Reacción:** Solo una por ronda en respuesta a un desencadenante (ej. Ataque de Oportunidad, Escudo Mágico o Preparar Acción). Se renueva al inicio de tu siguiente turno.',
+  },
+  {
+    id: 'comb-2',
+    category: 'combate',
+    title: 'Acciones Estándar en Combate',
+    description: '• **Atacar:** Realiza un ataque cuerpo a cuerpo o a distancia con arma o desarmado.\n• **Lanzar un Conjuro:** Si el tiempo de lanzamiento es de 1 Acción.\n• **Correr (Dash):** Ganas movimiento extra igual a tu velocidad para el turno actual.\n• **Destrabarse (Disengage):** Tu movimiento no provoca ataques de oportunidad durante el resto de tu turno.\n• **Esquivar (Dodge):** Hasta el inicio de tu próximo turno, los ataques contra ti tienen Desventaja si puedes ver al atacante, y tienes Ventaja en salvaciones de Destreza.\n• **Ayudar (Help):** Otorgas Ventaja a un aliado en su próxima prueba de característica o en su próximo ataque contra una criatura a 5 pies de ti.\n• **Esconderse (Hide):** Realizas una prueba de Destreza (Sigilo) superando la Percepción Pasiva de los enemigos para volverte no detectado.\n• **Preparar Acción (Ready):** Eliges una circunstancia desencadenante y la acción que tomarás como Reacción cuando ocurra.\n• **Buscar (Search):** Dedicas tu atención a encontrar algo oculto (prueba de Percepción o Investigación).\n• **Usar un Objeto:** Interactuar con un segundo objeto complejo (como beber una poción, abrir un cofre cerrado con llave, encender una linterna).',
+  },
+  {
+    id: 'comb-3',
+    category: 'combate',
+    title: 'Ataques de Oportunidad y Alcance',
+    description: '• Se desencadena cuando una criatura hostil que puedes ver se mueve fuera de tu alcance cuerpo a cuerpo (generalmente 5 pies, o 10 pies con armas de alcance como alabardas).\n• Consume tu **Reacción** de la ronda.\n• Interrumpe el movimiento de la criatura justo antes de que abandone tu alcance.\n• **Excepciones:** No se provoca ataque de oportunidad si la criatura realiza la acción de **Destrabarse (Disengage)**, o si es teletransportada o movida a la fuerza sin usar su propio movimiento (por ejemplo, empujada con una prueba de Atletismo o un conjuro como Onda Atronadora).',
+  },
+  {
+    id: 'comb-4',
+    category: 'combate',
+    title: 'Cobertura (Cover) en Combate',
+    description: 'Los obstáculos físicos brindan protección contra ataques y conjuros:\n\n• **Cobertura Media (+2 a CA y salvaciones de DES):** Si al menos la mitad del cuerpo está protegido (ej. muro bajo, tronco grueso, otra criatura enemiga o aliada).\n• **Cobertura Tres Cuartos (+5 a CA y salvaciones de DES):** Si tres cuartas partes del cuerpo están cubiertas (ej. reja levadiza, aspillera de flechas, esquina de un muro de piedra).\n• **Cobertura Total:** La criatura no puede ser el objetivo directo de un ataque ni de un conjuro que requiera línea de visión directa.',
+  },
+  {
+    id: 'comb-5',
+    category: 'combate',
+    title: 'Tiradas de Salvación contra Muerte y Daño Masivo',
+    description: '• Al llegar a 0 PG caes inconsciente y comienzas a hacer Tiradas de Muerte al inicio de cada uno de tus turnos (1d20 limpio sin modificadores):\n  - **10 o más:** Éxito. Con 3 éxitos te estabilizas a 0 PG.\n  - **9 o menos:** Fracaso. Con 3 fracasos el personaje muere.\n  - **1 Natural:** Cuenta como dos fracasos inmediatos.\n  - **20 Natural:** Recuperas la conciencia de inmediato con 1 PG.\n• **Daño estando a 0 PG:** Cada impacto recibido a 0 PG cuenta como un fracaso automático (si es crítico, cuenta como dos fracasos).\n• **Muerte Instantánea por Daño Masivo:** Si el daño sobrante después de reducirte a 0 PG iguala o supera tus Puntos de Golpe máximos, mueres de forma instantánea sin tiradas de salvación.',
+  },
+  {
+    id: 'comb-6',
+    category: 'combate',
+    title: 'Acciones Especiales: Agarrar (Grapple) y Empujar (Shove)',
+    description: 'Si tienes la acción de Atacar, puedes reemplazar uno de tus ataques con una maniobra:\n\n• **Agarrar:** Prueba opuesta de tu Fuerza (Atletismo) contra la Fuerza (Atletismo) o Destreza (Acrobacias) del rival. Si tienes éxito, el rival queda en condición Agarrado (Velocidad 0).\n• **Empujar:** Prueba opuesta similar. Si ganas, puedes derribar al rival dejándolo en condición Derribado (Prone), o empujarlo 5 pies lejos de ti.',
+  },
+  {
+    id: 'comb-7',
+    category: 'combate',
+    title: 'Golpe No Letal (Noquear Criaturas)',
+    description: 'Cuando reduces a un monstruo o enemigo a 0 PG con un ataque con arma cuerpo a cuerpo, puedes declarar en el momento del impacto que el golpe es **no letal**. La criatura cae Inconsciente y estabilizada a 0 PG en vez de morir. No aplica a ataques a distancia ni a conjuros mágicos de daño de área.',
+  },
+  {
+    id: 'comb-8',
+    category: 'combate',
+    title: 'Descansos Cortos y Largos (Rests)',
+    description: '• **Descanso Corto (Short Rest):** Mínimo 1 hora de reposo ligero (comer, vendar heridas, leer). Puedes gastar Dados de Golpe para curarte (tiras el dado de golpe de tu clase + tu mod de Constitución por cada dado gastado).\n• **Descanso Largo (Long Rest):** 8 horas (al menos 6 de sueño y no más de 2 de guardia ligera). Recuperas todos tus Puntos de Golpe perdidos y la mitad de tus Dados de Golpe máximos. Solo puedes beneficiarte de un descanso largo cada 24 horas.',
+  },
+
+  // CATEGORY: MAGIA
+  {
+    id: 'mag-1',
+    category: 'magia',
+    title: 'Reglas de Concentración',
+    description: 'Algunos conjuros requieren mantener la concentración para seguir activos:\n• Solo puedes concentrarte en **un único conjuro a la vez**.\n• Lanzar otro conjuro que requiera concentración rompe inmediatamente la anterior.\n• **Recibir daño durante la concentración:** Debes hacer una tirada de salvación de Constitución con **CD igual a 10 o la mitad del daño recibido**, lo que sea más alto. Si recibes daño de varias fuentes (ej. flecha y fuego), tiras por cada una.\n• Quedar Incapacitado o muerto rompe la concentración automáticamente.',
+  },
+  {
+    id: 'mag-2',
+    category: 'magia',
+    title: 'Componentes de los Conjuros (V, S, M)',
+    description: '• **Verbal (V):** Requiere entonación mística con voz audible. Si estás amordazado o en una zona de silencio mágico, no puedes lanzarlo.\n• **Somático (S):** Requiere movimientos precisos con al menos una mano libre.\n• **Material (M):** Requiere objetos específicos. Puedes sustituirlos con una Bolsa de Componentes o un Foco Arcano (varita, orbe, bastón, símbolo sagrado), a menos que el conjuro consuma el componente o tenga un coste en oro explícito (ej. diamante de 300 po para Revivir).',
+  },
+  {
+    id: 'mag-3',
+    category: 'magia',
+    title: 'Conjuros con Tiempo de Acción Adicional',
+    description: 'Si lanzas un conjuro con tiempo de lanzamiento de **Acción Adicional** (como *Palabra de Curación*, *Paso Brumoso* o *Marca del Cazador*):\n• Durante ese mismo turno no puedes lanzar ningún otro conjuro, **excepto un Truco (Cantrip)** con tiempo de lanzamiento de 1 Acción.\n• No puedes lanzar dos conjuros de nivel 1 o superior en el mismo turno salvo que tengas la dote o rasgo marcial de *Oleada de Acción (Action Surge)*.',
+  },
+  {
+    id: 'mag-4',
+    category: 'magia',
+    title: 'Lanzamiento Ritual',
+    description: 'Ciertas clases (Mago, Clérigo, Druida, Bardo) o dotes permiten lanzar conjuros con la etiqueta ritual sin consumir espacios de conjuro. Requiere invertir 10 minutos adicionales sobre el tiempo de lanzamiento original.',
+  },
+
+  // CATEGORY: EQUIPO
+  {
+    id: 'eq-1',
+    category: 'equipo',
+    title: 'Categorías de Armaduras y Escudos',
+    description: '• **Armadura Ligera:** Cuero tachonado (CA 12 + mod DES). Permite sumar todo tu modificador de Destreza a la CA.\n• **Armadura Media:** Cota de escamas o Coraza (CA 14 + mod DES máx +2). Si tienes DES 14 (+2), tu CA es 16.\n• **Armadura Pesada:** Cota de malla (CA 16) o Armadura completa de placas (CA 18). No suma Destreza. Requiere Fuerza mínima (FUE 13 o 15) o reduce tu velocidad en 10 pies. Otorga desventaja en pruebas de Sigilo.\n• **Escudo:** Otorga +2 a la CA mientras esté empuñado en una mano.',
+  },
+];
+
+export const SRD_COMBAT_RULES = SRD_COMPREHENSIVE_RULES.filter((r) => r.category === 'combate');
+
+export interface WeaponDefinition {
+  name: string;
+  category: 'Simple' | 'Marcial';
+  rangeType: 'Cuerpo a cuerpo' | 'A distancia';
+  damage: string;
+  damageType: string;
+  weight: number;
+  properties: string[];
+}
+
+export const SRD_WEAPONS: WeaponDefinition[] = [
+  // Armas Simples Cuerpo a Cuerpo
+  { name: 'Daga', category: 'Simple', rangeType: 'Cuerpo a cuerpo', damage: '1d4', damageType: 'Perforante', weight: 1, properties: ['Sutil', 'Arrojadiza (alcance 20/60)', 'Ligera'] },
+  { name: 'Bastón (Quarterstaff)', category: 'Simple', rangeType: 'Cuerpo a cuerpo', damage: '1d6', damageType: 'Contundente', weight: 4, properties: ['Versátil (1d8)'] },
+  { name: 'Hacha de mano', category: 'Simple', rangeType: 'Cuerpo a cuerpo', damage: '1d6', damageType: 'Cortante', weight: 2, properties: ['Ligera', 'Arrojadiza (alcance 20/60)'] },
+  { name: 'Jabalina', category: 'Simple', rangeType: 'Cuerpo a cuerpo', damage: '1d6', damageType: 'Perforante', weight: 2, properties: ['Arrojadiza (alcance 30/120)'] },
+  { name: 'Maza', category: 'Simple', rangeType: 'Cuerpo a cuerpo', damage: '1d6', damageType: 'Contundente', weight: 4, properties: [] },
+  { name: 'Lanza', category: 'Simple', rangeType: 'Cuerpo a cuerpo', damage: '1d6', damageType: 'Perforante', weight: 3, properties: ['Arrojadiza (alcance 20/60)', 'Versátil (1d8)'] },
+  // Armas Simples a Distancia
+  { name: 'Ballesta ligera', category: 'Simple', rangeType: 'A distancia', damage: '1d8', damageType: 'Perforante', weight: 5, properties: ['Munición (alcance 80/320)', 'Recarga', 'A dos manos'] },
+  { name: 'Arco corto', category: 'Simple', rangeType: 'A distancia', damage: '1d6', damageType: 'Perforante', weight: 2, properties: ['Munición (alcance 80/320)', 'A dos manos'] },
+  // Armas Marciales Cuerpo a Cuerpo
+  { name: 'Espada larga (Longsword)', category: 'Marcial', rangeType: 'Cuerpo a cuerpo', damage: '1d8', damageType: 'Cortante', weight: 3, properties: ['Versátil (1d10)'] },
+  { name: 'Espadón (Greatsword)', category: 'Marcial', rangeType: 'Cuerpo a cuerpo', damage: '2d6', damageType: 'Cortante', weight: 6, properties: ['Pesada', 'A dos manos'] },
+  { name: 'Espada corta (Shortsword)', category: 'Marcial', rangeType: 'Cuerpo a cuerpo', damage: '1d6', damageType: 'Perforante', weight: 2, properties: ['Sutil', 'Ligera'] },
+  { name: 'Estoque / Ropera (Rapier)', category: 'Marcial', rangeType: 'Cuerpo a cuerpo', damage: '1d8', damageType: 'Perforante', weight: 2, properties: ['Sutil'] },
+  { name: 'Cimitarra (Scimitar)', category: 'Marcial', rangeType: 'Cuerpo a cuerpo', damage: '1d6', damageType: 'Cortante', weight: 3, properties: ['Sutil', 'Ligera'] },
+  { name: 'Gran hacha (Greataxe)', category: 'Marcial', rangeType: 'Cuerpo a cuerpo', damage: '1d12', damageType: 'Cortante', weight: 7, properties: ['Pesada', 'A dos manos'] },
+  { name: 'Martillo de guerra (Warhammer)', category: 'Marcial', rangeType: 'Cuerpo a cuerpo', damage: '1d8', damageType: 'Contundente', weight: 2, properties: ['Versátil (1d10)'] },
+  { name: 'Alabarda (Halberd)', category: 'Marcial', rangeType: 'Cuerpo a cuerpo', damage: '1d10', damageType: 'Cortante', weight: 6, properties: ['Pesada', 'Alcance (10 pies)', 'A dos manos'] },
+  // Armas Marciales a Distancia
+  { name: 'Arco largo (Longbow)', category: 'Marcial', rangeType: 'A distancia', damage: '1d8', damageType: 'Perforante', weight: 2, properties: ['Munición (alcance 150/600)', 'Pesada', 'A dos manos'] },
+  { name: 'Ballesta pesada', category: 'Marcial', rangeType: 'A distancia', damage: '1d10', damageType: 'Perforante', weight: 18, properties: ['Munición (alcance 100/400)', 'Pesada', 'Recarga', 'A dos manos'] },
+  { name: 'Ballesta de mano', category: 'Marcial', rangeType: 'A distancia', damage: '1d6', damageType: 'Perforante', weight: 3, properties: ['Munición (alcance 30/120)', 'Ligera', 'Recarga'] },
+];
+
+export interface ArmorDefinition {
+  name: string;
+  category: 'Ligera' | 'Media' | 'Pesada' | 'Escudo';
+  ac: string;
+  strengthReq?: number;
+  stealthDisadvantage?: boolean;
+  weight: number;
+  cost: string;
+}
+
+export const SRD_ARMORS: ArmorDefinition[] = [
+  // Ligeras
+  { name: 'Acolchada (Padded)', category: 'Ligera', ac: '11 + Mod DES', stealthDisadvantage: true, weight: 8, cost: '5 po' },
+  { name: 'Cuero (Leather)', category: 'Ligera', ac: '11 + Mod DES', weight: 10, cost: '10 po' },
+  { name: 'Cuero tachonado (Studded Leather)', category: 'Ligera', ac: '12 + Mod DES', weight: 13, cost: '45 po' },
+  // Medias
+  { name: 'Pieles (Hide)', category: 'Media', ac: '12 + Mod DES (máx +2)', weight: 12, cost: '10 po' },
+  { name: 'Camisote de malla (Chain Shirt)', category: 'Media', ac: '13 + Mod DES (máx +2)', weight: 20, cost: '50 po' },
+  { name: 'Cota de escamas (Scale Mail)', category: 'Media', ac: '14 + Mod DES (máx +2)', stealthDisadvantage: true, weight: 45, cost: '50 po' },
+  { name: 'Coraza (Breastplate)', category: 'Media', ac: '14 + Mod DES (máx +2)', weight: 20, cost: '400 po' },
+  { name: 'Semiplacas (Half Plate)', category: 'Media', ac: '15 + Mod DES (máx +2)', stealthDisadvantage: true, weight: 40, cost: '750 po' },
+  // Pesadas
+  { name: 'Cota de anillas (Ring Mail)', category: 'Pesada', ac: '14', stealthDisadvantage: true, weight: 40, cost: '30 po' },
+  { name: 'Cota de malla (Chain Mail)', category: 'Pesada', ac: '16', strengthReq: 13, stealthDisadvantage: true, weight: 55, cost: '75 po' },
+  { name: 'Bandas (Splint)', category: 'Pesada', ac: '17', strengthReq: 15, stealthDisadvantage: true, weight: 60, cost: '200 po' },
+  { name: 'Placas completas (Full Plate)', category: 'Pesada', ac: '18', strengthReq: 15, stealthDisadvantage: true, weight: 65, cost: '1500 po' },
+  // Escudo
+  { name: 'Escudo (Shield)', category: 'Escudo', ac: '+2 a la CA', weight: 6, cost: '10 po' },
+];
+
+export interface SpellDefinition {
+  name: string;
+  level: number;
+  school: string;
+  castingTime: string;
+  range: string;
+  duration: string;
+  components: string;
+  description: string;
+}
+
+export const SRD_COMMON_SPELLS: SpellDefinition[] = [
+  { name: 'Descarga Sobrenatural (Eldritch Blast)', level: 0, school: 'Evocación', castingTime: '1 Acción', range: '120 pies', duration: 'Instantáneo', components: 'V, S', description: 'Rayo de energía crepitante hacia una criatura. Ataque con conjuro a distancia. Impacto: 1d10 daño de fuerza. Dispara rayos adicionales a niveles 5, 11 y 17.' },
+  { name: 'Rayo de Escarcha (Ray of Frost)', level: 0, school: 'Evocación', castingTime: '1 Acción', range: '60 pies', duration: 'Instantáneo', components: 'V, S', description: 'Rayo azul blanquecino de frío glacial. Ataque de conjuro a distancia: 1d8 daño de frío y reduce la velocidad del objetivo en 10 pies hasta tu siguiente turno.' },
+  { name: 'Ilusión Menor (Minor Illusion)', level: 0, school: 'Ilusión', castingTime: '1 Acción', range: '30 pies', duration: '1 minuto', components: 'S, M (un vellón de lana)', description: 'Creas un sonido ilusorio o la imagen visual estática de un objeto no mayor a un cubo de 5 pies. La ilusión no emite calor ni olor.' },
+  { name: 'Luz (Light)', level: 0, school: 'Evocación', castingTime: '1 Acción', range: 'Toque', duration: '1 hora', components: 'V, M (una luciérnaga o musgo fosforescente)', description: 'Tocas un objeto. Emite luz brillante en 20 pies y luz tenue en otros 20 pies del color que decidas.' },
+  { name: 'Proyectil Mágico (Magic Missile)', level: 1, school: 'Evocación', castingTime: '1 Acción', range: '120 pies', duration: 'Instantáneo', components: 'V, S', description: 'Creas tres dardos de fuerza mágica brillante. Cada dardo impacta automáticamente (sin tirada de ataque) a cualquier criatura visible e inflige 1d4 + 1 daño de fuerza.' },
+  { name: 'Curar Heridas (Cure Wounds)', level: 1, school: 'Evocación', castingTime: '1 Acción', range: 'Toque', duration: 'Instantáneo', components: 'V, S', description: 'Tocas a una criatura. Recupera Puntos de Golpe iguales a 1d8 + tu modificador de característica para lanzar conjuros.' },
+  { name: 'Palabra de Curación (Healing Word)', level: 1, school: 'Evocación', castingTime: '1 Acción Adicional', range: '60 pies', duration: 'Instantáneo', components: 'V', description: 'Susurras una palabra de invocación a una criatura que puedas ver. Recupera 1d4 + mod PG. Ideal para levantar aliados caídos a 0 PG.' },
+  { name: 'Escudo (Shield)', level: 1, school: 'Abjuración', castingTime: '1 Reacción (al ser impactado por un ataque o proyectil mágico)', range: 'Personal', duration: '1 ronda', components: 'V, S', description: 'Una barrera invisible de fuerza te protege. Sumas +5 a tu CA hasta el inicio de tu siguiente turno, incluyendo el ataque desencadenante, y no sufres daño de Proyectil Mágico.' },
+  { name: 'Paso Brumoso (Misty Step)', level: 2, school: 'Conjuración', castingTime: '1 Acción Adicional', range: 'Personal', duration: 'Instantáneo', components: 'V', description: 'Rodeado de neblina plateada, te teletransportas instantáneamente hasta 30 pies a un espacio desocupado que puedas ver.' },
+  { name: 'Rayo Abrasador (Scorching Ray)', level: 2, school: 'Evocación', castingTime: '1 Acción', range: '120 pies', duration: 'Instantáneo', components: 'V, S', description: 'Creas 3 rayos de fuego y los arrojas a objetivos en alcance. Haz un ataque con conjuro a distancia por cada rayo. Cada impacto inflige 2d6 daño de fuego.' },
+  { name: 'Bola de Fuego (Fireball)', level: 3, school: 'Evocación', castingTime: '1 Acción', range: '150 pies', duration: 'Instantáneo', components: 'V, S, M (una bolita de guano de murciélago y azufre)', description: 'Un haz brillante surge de tu dedo y detona en un rugido ígneo de 20 pies de radio. Cada criatura hace salvación de DES: 8d6 daño de fuego si falla, o la mitad si supera.' },
+  { name: 'Contrahechizo (Counterspell)', level: 3, school: 'Abjuración', castingTime: '1 Reacción (cuando ves a una criatura en 60 pies lanzando un conjuro)', range: '60 pies', duration: 'Instantáneo', components: 'S', description: 'Intentas interrumpir a una criatura en el proceso de lanzar un conjuro. Si el conjuro es de nivel 3 o menor, falla automáticamente y no surte efecto. Si es de nivel superior, prueba de característica CD 10 + nivel del conjuro.' },
+];
+
+export const SAMPLE_CHARACTER: Character5e = {
+  id: 'char-sample-valeros',
+  name: 'Valeros del Alba',
+  playerName: 'Jugador 1',
+  password: '', // Unlocked by default
+  race: 'Humano',
+  subrace: 'Variante',
+  characterClass: 'Guerrero',
+  subclass: 'Maestro de Batalla',
+  level: 3,
+  experience: 900,
+  background: 'Soldado',
+  alignment: 'Legal Bueno',
+  avatarUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=400&auto=format&fit=crop&q=80',
+  maxHp: 28,
+  currentHp: 28,
+  tempHp: 0,
+  armorClass: 18,
+  initiativeBonus: 1,
+  speed: 30,
+  hitDiceTotal: '3d10',
+  hitDiceUsed: 0,
+  deathSaves: { successes: 0, failures: 0 },
+  inspiration: true,
+  abilities: {
+    str: { score: 16, proficientSave: true },
+    dex: { score: 12, proficientSave: false },
+    con: { score: 14, proficientSave: true },
+    int: { score: 10, proficientSave: false },
+    wis: { score: 13, proficientSave: false },
+    cha: { score: 10, proficientSave: false },
+  },
+  skills: {
+    acrobatics: 'none',
+    animalHandling: 'none',
+    arcana: 'none',
+    athletics: 'expertise',
+    deception: 'none',
+    history: 'none',
+    insight: 'none',
+    intimidation: 'proficient',
+    investigation: 'none',
+    medicine: 'none',
+    nature: 'none',
+    perception: 'proficient',
+    performance: 'none',
+    persuasion: 'none',
+    religion: 'none',
+    sleightOfHand: 'none',
+    stealth: 'none',
+    survival: 'proficient',
+  },
+  customSkills: [
+    {
+      id: 'athletics',
+      skillKey: 'athletics',
+      name: 'Atletismo',
+      ability: 'str',
+      proficiency: 'expertise',
+      description: 'Escalar acantilados, nadar contra corrientes impetuosas, saltar abismos o derribar/agarrar a un rival en combate.',
+    },
+    {
+      id: 'intimidation',
+      skillKey: 'intimidation',
+      name: 'Intimidación',
+      ability: 'cha',
+      proficiency: 'proficient',
+      description: 'Influir en alguien mediante amenazas abiertas, posturas hostiles o demostraciones de poder físico o mágico.',
+    },
+    {
+      id: 'perception',
+      skillKey: 'perception',
+      name: 'Percepción',
+      ability: 'wis',
+      proficiency: 'proficient',
+      description: 'Detectar olores, sonidos lejanos, emboscadas o enemigos ocultos en sombras. Tu Percepción Pasiva es 10 + mod + comp.',
+    },
+    {
+      id: 'survival',
+      skillKey: 'survival',
+      name: 'Supervivencia',
+      ability: 'wis',
+      proficiency: 'proficient',
+      description: 'Seguir huellas en el fango, forrajear comida y agua dulce, guiar al grupo por desiertos o evitar arenas movedizas.',
+    },
+  ],
+  armorProficiencies: ['Todas las armaduras', 'Escudos'],
+  weaponProficiencies: ['Armas simples', 'Armas marciales'],
+  toolProficiencies: ['Juego de cartas', 'Vehículos (terrestres)'],
+  languages: ['Común', 'Enano'],
+  attacks: [
+    {
+      id: 'atk-1',
+      name: 'Espada Larga (a 1 mano)',
+      type: 'melee',
+      attackBonus: 5,
+      damageDice: '1d8+3',
+      damageType: 'Cortante',
+      notes: 'Versátil (1d10 a dos manos)',
+    },
+    {
+      id: 'atk-2',
+      name: 'Jabalina',
+      type: 'ranged',
+      attackBonus: 5,
+      damageDice: '1d6+3',
+      damageType: 'Perforante',
+      range: '30/120 pies',
+    },
+  ],
+  spellSlots: [],
+  spells: [],
+  inventory: [
+    {
+      id: 'inv-w-1',
+      name: 'Espada Larga del Alba',
+      quantity: 1,
+      weight: 3,
+      equipped: true,
+      category: 'Arma',
+      rarity: 'Poco común',
+      description: 'Espada marcial templada con pomo de bronce solar. Versátil y equilibrada.',
+      weaponAttacks: [
+        {
+          id: 'wa-1',
+          name: 'Corte Principal (1 Mano)',
+          description: 'Tajo rápido con potenciador de estilo Duelo (+2 al daño).',
+          dice: '1d8',
+          bonus: 2,
+          damageType: 'Cortante',
+          attackType: 'melee',
+          range: '5 pies',
+        },
+        {
+          id: 'wa-2',
+          name: 'Mandoble Versátil (2 Manos)',
+          description: 'Golpe descendente a dos manos sin potenciador adicional.',
+          dice: '1d10',
+          bonus: 0,
+          damageType: 'Cortante',
+          attackType: 'melee',
+          range: '5 pies',
+        },
+      ],
+    },
+    {
+      id: 'inv-w-2',
+      name: 'Jabalina de Guerra',
+      quantity: 3,
+      weight: 2,
+      equipped: true,
+      category: 'Arma',
+      rarity: 'Común',
+      description: 'Jabalina equilibrada para lanzar a media distancia o usar en melé.',
+      weaponAttacks: [
+        {
+          id: 'wa-3',
+          name: 'Lanzamiento de Jabalina',
+          description: 'Ataque arrojadizo perforante (alcance 30/120 pies).',
+          dice: '1d6',
+          bonus: 0,
+          damageType: 'Perforante',
+          attackType: 'ranged',
+          range: '30/120 pies',
+        },
+      ],
+    },
+    {
+      id: 'inv-1',
+      name: 'Cota de Malla',
+      quantity: 1,
+      weight: 55,
+      equipped: true,
+      category: 'Armadura',
+      description: 'Armadura pesada. CA 16. Desventaja en Sigilo.',
+    },
+    {
+      id: 'inv-2',
+      name: 'Escudo de Acero del Grifo',
+      quantity: 1,
+      weight: 6,
+      equipped: true,
+      category: 'Armadura',
+      description: '+2 a la CA mientras esté empuñado.',
+    },
+    {
+      id: 'inv-3',
+      name: 'Poción de Curación',
+      quantity: 2,
+      weight: 1,
+      category: 'Objeto Común',
+      rarity: 'Común',
+      description: 'Restaura 2d4 + 2 Puntos de Golpe como Acción.',
+    },
+    {
+      id: 'inv-4',
+      name: 'Mochila de Explorador',
+      quantity: 1,
+      weight: 12,
+      category: 'Objeto Común',
+      description: 'Saco de dormir, yesquero, 10 antorchas, 10 raciones, odre.',
+    },
+  ],
+  currency: { cp: 14, sp: 25, ep: 0, gp: 48, pp: 0 },
+  featuresAndTraits: [
+    {
+      id: 'feat-1',
+      name: 'Estilo de Combate: Duelo',
+      source: 'Clase',
+      description: 'Cuando empuñas un arma cuerpo a cuerpo en una mano y ninguna otra, ganas +2 al daño.',
+    },
+    {
+      id: 'feat-2',
+      name: 'Tomar Aliento (Second Wind)',
+      source: 'Clase',
+      description: 'Acción adicional para recuperar 1d10 + nivel de Guerrero PG. 1 uso por descanso corto/largo.',
+    },
+    {
+      id: 'feat-3',
+      name: 'Oleada de Acción (Action Surge)',
+      source: 'Clase',
+      description: 'En tu turno puedes realizar una acción adicional. 1 uso por descanso corto/largo.',
+    },
+    {
+      id: 'feat-4',
+      name: 'Maniobras de Batalla (4 dados d8)',
+      source: 'Clase',
+      description: 'Ataque de Derribo, Golpe Amenazante, Maniobra de Parada.',
+    },
+  ],
+  personalityTraits: 'Siempre mantengo la compostura ante el peligro y cuento historias de viejas batallas junto al fuego.',
+  ideals: 'Responsabilidad: Hago lo que debo para proteger a quienes no pueden luchar.',
+  bonds: 'Mis compañeros de armas son mi verdadera familia. Nunca abandonaré a un aliado herido.',
+  flaws: 'Tiendo a subestimar a los monstruos mágicos y prefiero resolver las cosas con acero.',
+  backstory: 'Ex-sargento de la guardia fronteriza que se convirtió en aventurero tras sobrevivir a una incursión de gnolls.',
+  notes: 'Buscando pistas sobre el colgante con el símbolo del dragón de obsidiana.',
+  playerJournal: [
+    {
+      id: 'pj-1',
+      sessionNumber: 1,
+      title: 'Llegada a la Taberna del Jabalí Saltarín',
+      date: '12 de Mirtul, 1492 CV',
+      realDate: '2026-10-20',
+      summary: 'Defendimos la caravana de suministros de una emboscada de trasgos en el camino real.',
+      notes: 'Gromm el tabernero nos habló de ruidos extraños debajo de la bodega. Sospecho que el gremio local oculta un pasadizo.',
+      tags: ['Aventura', 'Pistas'],
+    },
+  ],
+};
+
+export const SAMPLE_DM_WORKSPACE: DMWorkspace = {
+  dmPassword: '', // No password set initially, DM can set one
+  folders: [
+    'Campamento del Valle',
+    'Ciudad Olvidada',
+    'Ciudad Olvidada / Taberna del Jabalí',
+    'Ciudad Olvidada / Taberna del Jabalí / Sótano Secreto',
+  ],
+  currentQuest: 'Investigar los túneles secretos bajo la Taberna del Jabalí Saltarín y recuperar el cargamento robado.',
+  quickNotification: '',
+  dmLiveMessage: '⚔️ ¡Aventureros en posición! Prepárense para descender a los túneles subterráneos.',
+  favoritesSRD: ['comb-1', 'comb-2', 'comb-3', 'comb-5'],
+  customItemsAndSpells: [
+    {
+      id: 'dm-cis-1',
+      name: 'Mandoble del Vengador Carmesí',
+      kind: 'item',
+      rarity: 'Muy Raro',
+      category: 'Arma',
+      whoHasIt: 'Gromm Rompehuesos (oculta tras la barra)',
+      whereFound: 'En las ruinas de la Fortaleza de los Enanos Rojos',
+      description: 'Una hoja forjada con meteorito que resuena con un zumbido carmesí cuando hay orcos o gigantes a 120 pies.',
+      properties: '2d6+2 daño cortante. En golpe secundario, desata una llamarada de 1d8 daño de fuego.',
+      dmSecrets: 'Tiene una maldición leve: si el portador huye de un combate, el arma le inflige 1d10 daño psíquico.',
+      folder: 'Ciudad Olvidada / Taberna del Jabalí',
+      weaponAttacks: [
+        {
+          id: 'dm-wa-1',
+          name: 'Tajo Carmesí',
+          description: 'Corte pesado de dos manos con hoja de meteorito.',
+          dice: '2d6',
+          bonus: 2,
+          damageType: 'Cortante',
+          attackType: 'melee',
+          range: '5 pies',
+        },
+        {
+          id: 'dm-wa-2',
+          name: 'Ataque de Fuego',
+          description: 'Descarga ígnea canalizada al blandir las runas del arma.',
+          dice: '1d8',
+          bonus: 0,
+          damageType: 'Fuego',
+          attackType: 'melee',
+          range: '10 pies',
+        },
+      ],
+    },
+    {
+      id: 'dm-cis-2',
+      name: 'Vórtice de Ceniza Sombría',
+      kind: 'spell',
+      rarity: 'Raro',
+      category: 'Conjuro Nivel 4 (Nigromancia)',
+      whoHasIt: 'Pergamino arcano en posesión de Lady Aurelia',
+      whereFound: 'Biblioteca Prohibida de la Torre de Marfil',
+      description: 'Invoca un remolino de cenizas ardientes y espíritus en un radio de 20 pies.',
+      properties: 'Alcance 60 pies. Concentración hasta 1 minuto. Salvación de CON: 4d8 daño necrótico y ceguera 1 turno.',
+      dmSecrets: 'Fue creado por el archimago Vael antes del cataclismo.',
+      folder: 'Ciudad Olvidada',
+    },
+  ],
+  combatSummaries: [
+    {
+      id: 'cs-1',
+      name: 'Escaramuza en el Cruce de Phandalin',
+      date: '10 de Mirtul, 1492 CV',
+      roundsCount: 4,
+      participants: ['Valeros', 'Goblin Líder', 'Goblin 1', 'Goblin 2'],
+      notes: 'Valeros derribó al líder tras recibir 8 puntos de daño. Los dos arqueros huyeron hacia el bosque.',
+      logEvents: [
+        { id: 'le-1', round: 1, turn: 'Valeros', note: 'Ataque con espada larga: 19 impacto, 9 daño.', timestamp: Date.now() - 3600000 },
+        { id: 'le-2', round: 2, turn: 'Goblin Líder', note: 'Disparo de arco corto a Valeros por 5 de daño.', timestamp: Date.now() - 3000000 },
+        { id: 'le-3', round: 4, turn: 'Valeros', note: 'Crítico de espadazo final. Combate terminado.', timestamp: Date.now() - 2000000 },
+      ],
+    },
+  ],
+  npcs: [
+    {
+      id: 'npc-1',
+      name: 'Gromm Rompehuesos',
+      folder: 'Taberna del Jabalí',
+      race: 'Semiorco',
+      occupation: 'Tabernero y ex-mercenario',
+      attitude: 'Amistoso',
+      location: 'Taberna del Jabalí Saltarín',
+      appearance: 'Cicatriz en el ojo izquierdo, mandíbula ancha, siempre limpia un vaso sucio.',
+      personality: 'Gruñón pero de buen corazón. No tolera peleas en su local.',
+      secretOrHook: 'Esconde a un mensajero real perseguido en la bodega de vinos.',
+      notes: 'Le debe favores al gremio de ladrones de Neverwinter.',
+      evolution: 'Tras el asalto de trasgos, ofreció cerveza gratis a Valeros de por vida.',
+      stats: { hp: 45, ac: 13, cr: '2', notes: 'Golpe desarmado +5 (1d6+3)' },
+      avatarUrl: 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?w=400&auto=format&fit=crop&q=80',
+    },
+    {
+      id: 'npc-2',
+      name: 'Lady Aurelia Vael',
+      folder: 'Ciudadela Olvidada',
+      race: 'Alta Elfa',
+      occupation: 'Archivera Real y Hechicera',
+      attitude: 'Desconfiado',
+      location: 'Torre de Marfil',
+      appearance: 'Túnicas de seda zafiro, cabello plateado recogido con horquillas de plata.',
+      personality: 'Cálculo frío, habla pausada, no confía en aventureros sin linaje.',
+      secretOrHook: 'Investiga un portal sellado debajo de la biblioteca que empieza a vibrar.',
+      notes: 'Posee la llave de rubí que abre la cripta de los reyes.',
+      evolution: 'Siente creciente respeto por los aventureros tras verlos resistir a la quimera.',
+      stats: { hp: 32, ac: 15, cr: '4', notes: 'Conjuros de nivel 4 disponibles' },
+      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
+    },
+  ],
+  monsters: [
+    {
+      id: 'mon-1',
+      name: 'Goblin Explorador',
+      size: 'Pequeño',
+      type: 'Humanoide (trasgoide)',
+      alignment: 'Neutral Maligno',
+      cr: '1/4',
+      ac: 15,
+      hp: 7,
+      maxHp: 7,
+      speed: '30 pies',
+      str: 8,
+      dex: 14,
+      con: 10,
+      int: 10,
+      wis: 8,
+      cha: 8,
+      skills: 'Sigilo +6',
+      traits: [{ name: 'Escape Ágil', description: 'Puede Destrabarse o Esconderse como acción adicional.' }],
+      actions: [
+        { id: 'm-atk-1', name: 'Cimitarra', type: 'melee', toHit: 4, damage: '1d6+2', damageType: 'Cortante', description: 'Ataque cuerpo a cuerpo' },
+        { id: 'm-atk-2', name: 'Arco Corto', type: 'ranged', toHit: 4, damage: '1d6+2', damageType: 'Perforante', description: 'Alcance 80/320 pies' },
+      ],
+      folder: 'Campamento del Valle',
+      notes: 'Tienden a emboscar desde árboles y arbustos densos.',
+    },
+    {
+      id: 'mon-2',
+      name: 'Esqueleto Guerrero',
+      size: 'Mediano',
+      type: 'Muerto viviente',
+      alignment: 'Legal Maligno',
+      cr: '1/4',
+      ac: 13,
+      hp: 13,
+      maxHp: 13,
+      speed: '30 pies',
+      str: 10,
+      dex: 14,
+      con: 15,
+      int: 6,
+      wis: 8,
+      cha: 5,
+      traits: [{ name: 'Vulnerabilidad Contundente', description: 'Recibe doble daño de armas contundentes como mazas o martillos.' }],
+      actions: [
+        { id: 'm-atk-3', name: 'Espada Corta', type: 'melee', toHit: 4, damage: '1d6+2', damageType: 'Cortante' },
+        { id: 'm-atk-4', name: 'Arco Corto', type: 'ranged', toHit: 4, damage: '1d6+2', damageType: 'Perforante' },
+      ],
+      folder: 'Ciudadela Olvidada',
+      notes: 'Obedecen al nigromante del sarcófago central.',
+    },
+    {
+      id: 'mon-3',
+      name: 'Dragón Rojo Joven',
+      size: 'Grande',
+      type: 'Dragón',
+      alignment: 'Caótico Maligno',
+      cr: '10',
+      ac: 18,
+      hp: 178,
+      maxHp: 178,
+      speed: '40 pies, volar 80 pies',
+      str: 23,
+      dex: 10,
+      con: 21,
+      int: 14,
+      wis: 11,
+      cha: 19,
+      traits: [{ name: 'Inmunidad al Fuego', description: 'Inmune a daño por fuego.' }],
+      actions: [
+        { id: 'm-atk-5', name: 'Mordisco', type: 'melee', toHit: 10, damage: '2d10+6', damageType: 'Perforante + 1d6 Fuego' },
+        { id: 'm-atk-6', name: 'Garra', type: 'melee', toHit: 10, damage: '2d6+6', damageType: 'Cortante' },
+        { id: 'm-atk-7', name: 'Aliento de Fuego (Recarga 5-6)', type: 'ranged', toHit: 0, damage: '16d6', damageType: 'Fuego', description: 'Cono de 30 pies. Salvación DES CD 17 mitad daño.' },
+      ],
+      folder: 'Ciudadela Olvidada',
+      notes: 'Custodia el tesoro real en lo alto de la torre en ruinas.',
+    },
+  ],
+  customItems: [
+    {
+      id: 'item-1',
+      name: 'Anillo de Protección +1',
+      quantity: 1,
+      weight: 0.1,
+      category: 'Mágico',
+      rarity: 'Raro',
+      attunement: true,
+      description: 'Otorga +1 a la Clase de Armadura y +1 a todas las tiradas de salvación.',
+    },
+    {
+      id: 'item-2',
+      name: 'Espada de Fuego Solar',
+      quantity: 1,
+      weight: 3,
+      category: 'Arma',
+      rarity: 'Muy Raro',
+      attunement: true,
+      description: 'Emite luz brillante en 15 pies. Inflige 2d6 daño radiante adicional contra muertos vivientes.',
+    },
+  ],
+  locations: [
+    {
+      id: 'loc-1',
+      name: 'Taberna del Jabalí Saltarín',
+      region: 'Tierras Bajas de Phandalin',
+      type: 'Taberna',
+      description: 'Un mesón cálido de dos plantas con vigas de roble ahumado y aroma a guiso de ciervo.',
+      secretsForDm: 'Tienen un túnel secreto tras los barriles que conecta con las viejas catacumbas mineras.',
+      notes: 'La cerveza es fuerte pero barata. Lugar de encuentro habitual.',
+      evolution: 'Una ventana quedó rota tras la última pelea de taberna con los mercenarios.',
+      pointsOfInterest: ['La Chimenea Central', 'La Bodega de Vinos', 'La Mesa del Rincón de los Cazadores'],
+      mapImageUrl: 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?w=600&auto=format&fit=crop&q=80',
+      folder: 'Taberna del Jabalí',
+    },
+    {
+      id: 'loc-2',
+      name: 'Catacumbas de la Ciudadela Olvidada',
+      region: 'Montañas Espinazo del Mundo',
+      type: 'Mazmorra',
+      description: 'Pasillos milenarios de piedra caliza con trampas de púas oxidadas y jeroglíficos enanos.',
+      secretsForDm: 'La estatua del rey enano sostiene una gema que abre la cámara del tesoro si se pronuncia "Khazad".',
+      notes: 'Humedad constante, antorchas apagadas por el viento subterráneo.',
+      evolution: 'Los jugadores desactivaron la trampa del corredor este con una palanca.',
+      pointsOfInterest: ['El Pasillo de las Estatuas Gemelas', 'El Pozo de los Sacrificios', 'La Cripta Real'],
+      folder: 'Ciudadela Olvidada',
+    },
+  ],
+  campaignLogs: [
+    {
+      id: 'log-1',
+      sessionNumber: 1,
+      title: 'El Encuentro en la Posada del Cruce',
+      date: '12 de Mirtul, 1492 CV',
+      realDate: '2026-10-10',
+      summary: 'El grupo se conoció en la posada cuando una banda de trasgos intentó asaltar la caravana del mercader.',
+      publicNotes: 'Lograron salvar al carromato y obtuvieron una recompensa de 20 po de manos de Barthen.',
+      privateNotes: 'Barthen no les contó que la caja fuerte del fondo contiene un mapa hacia la Forja de Conjuros.',
+      tags: ['Combate', 'Inicio', 'Trasgos'],
+      folder: 'Campamento del Valle',
+    },
+  ],
+  activeEncounter: {
+    id: 'enc-1',
+    name: 'Emboscada en el Sendero del Bosque',
+    round: 1,
+    currentTurnIndex: 0,
+    isActive: true,
+    combatNotes: 'Valeros está en la línea frontal defendiendo el carromato.',
+    combatLog: [],
+    combatants: [
+      {
+        id: 'c-1',
+        name: 'Valeros (Guerrero)',
+        initiative: 17,
+        hp: 28,
+        maxHp: 28,
+        ac: 18,
+        isPlayer: true,
+        conditions: [],
+      },
+      {
+        id: 'c-2',
+        name: 'Goblin Líder (Flecha)',
+        initiative: 15,
+        hp: 12,
+        maxHp: 12,
+        ac: 15,
+        isPlayer: false,
+        conditions: [],
+      },
+      {
+        id: 'c-3',
+        name: 'Goblin 1',
+        initiative: 11,
+        hp: 7,
+        maxHp: 7,
+        ac: 15,
+        isPlayer: false,
+        conditions: [],
+      },
+    ],
+  },
+};

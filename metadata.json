@@ -1,0 +1,8 @@
+{
+  "name": "WeRoll",
+  "description": "Hoja de personaje digital 5E, tirador de dados con ventaja y desventaja, suite completa de DM con gestión de NPCs, enemigos, mapas y campaña, compendio SRD y oráculo con Gemini Flash.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
