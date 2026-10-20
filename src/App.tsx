@@ -1290,8 +1290,8 @@ export default function App() {
               </button>
             )}
 
-            {/* Admin Panel (for admin) / Moderator Panel (for moderator) / Feedback (for normal players) */}
-            {(authUser?.appRole === 'admin' || authUser?.role === 'admin') ? (
+            {/* Admin Panel (for admin) */}
+            {(authUser?.appRole === 'admin' || authUser?.role === 'admin') && (
               <button
                 onClick={() => setIsAdminModalOpen(true)}
                 className="p-1.5 sm:p-2 rounded-xl bg-blue-950/70 hover:bg-blue-900 border border-blue-700/70 text-blue-300 hover:text-white transition flex items-center justify-center shadow-sm"
@@ -1299,7 +1299,10 @@ export default function App() {
               >
                 <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-400" />
               </button>
-            ) : (authUser?.appRole === 'moderator' || authUser?.role === 'moderator') ? (
+            )}
+
+            {/* Moderator Panel (for moderator or admin) */}
+            {((authUser?.appRole === 'admin' || authUser?.role === 'admin') || (authUser?.appRole === 'moderator' || authUser?.role === 'moderator')) && (
               <button
                 onClick={() => setIsModeratorModalOpen(true)}
                 className="p-1.5 sm:p-2 rounded-xl bg-purple-950/70 hover:bg-purple-900 border border-purple-700/70 text-purple-300 hover:text-white transition flex items-center justify-center shadow-sm"
@@ -1307,7 +1310,10 @@ export default function App() {
               >
                 <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400" />
               </button>
-            ) : (
+            )}
+
+            {/* Feedback (for normal players) */}
+            {!((authUser?.appRole === 'admin' || authUser?.role === 'admin') || (authUser?.appRole === 'moderator' || authUser?.role === 'moderator')) && (
               <button
                 onClick={() => setIsFeedbackOpen(true)}
                 className="p-1.5 sm:p-2 rounded-xl bg-amber-950/60 hover:bg-amber-900 border border-amber-800/60 text-amber-300 hover:text-amber-100 transition flex items-center justify-center shadow-sm"
@@ -1962,6 +1968,7 @@ export default function App() {
           isOpen={isModeratorModalOpen}
           onClose={() => setIsModeratorModalOpen(false)}
           authUser={authUser}
+          onSwitchToAdminPanel={() => setIsAdminModalOpen(true)}
         />
       )}
     </div>

@@ -1972,8 +1972,8 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
             </button>
           )}
 
-          {/* Button: Moderator Panel (Solo Moderador) */}
-          {isModeratorRole && !isAdmin && (
+          {/* Button: Moderator Panel (Moderador o Administrador) */}
+          {isModerator && (
             <button
               onClick={() => {
                 if (onOpenModeratorPanel) onOpenModeratorPanel();

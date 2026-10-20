@@ -16,6 +16,7 @@ import type {
   FriendDirectMessage,
   ForumCategory,
   ForumFlair,
+  PlayerMessageToDM,
 } from '../types/dnd.ts';
 import {
   validateUniqueUserIdentity,
@@ -1646,6 +1647,55 @@ export const dataStore = {
     }
   },
 
+  // --- DM / DUNGEON MASTER PRIVATE MESSAGES VAULT ---
+  getDmMessages(): PlayerMessageToDM[] {
+    const fromFile = readJSON<PlayerMessageToDM[]>('dm_messages.json', []);
+    const worlds = this.getWorldSheets();
+    const map = new Map<string, PlayerMessageToDM>();
+    for (const m of fromFile) {
+      if (m && m.id) map.set(m.id, m);
+    }
+    for (const w of worlds) {
+      if (Array.isArray(w.workspace?.playerMessages)) {
+        for (const m of w.workspace.playerMessages) {
+          if (m && m.id && !map.has(m.id)) map.set(m.id, m);
+        }
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+  },
+
+  saveDmMessage(msg: PlayerMessageToDM): void {
+    const list = this.getDmMessages();
+    const idx = list.findIndex((m) => m.id === msg.id);
+    if (idx >= 0) {
+      list[idx] = msg;
+    } else {
+      list.unshift(msg);
+    }
+    writeJSON('dm_messages.json', list.slice(0, 500));
+    this.markMutation(`Mensaje privado al DM: ${msg.characterName || 'Personaje'} (${msg.playerName || 'Jugador'})`);
+  },
+
+  markDmMessageRead(messageId: string): void {
+    const list = this.getDmMessages();
+    const target = list.find((m) => m.id === messageId);
+    if (target) {
+      target.readByDm = true;
+      writeJSON('dm_messages.json', list);
+    }
+  },
+
+  deleteDmMessage(messageId: string): void {
+    let list = this.getDmMessages();
+    const initialLen = list.length;
+    list = list.filter((m) => m.id !== messageId);
+    if (list.length < initialLen) {
+      writeJSON('dm_messages.json', list);
+      this.markMutation(`Mensaje para DM eliminado: ${messageId}`);
+    }
+  },
+
   // --- FORUM PERMISSION MANAGEMENT (MODERATOR / ADMIN) ---
   setUserForumPostingPermission(userId: string, allowed: boolean): UserAccount | null {
     const users = this.getUsers();
@@ -2098,6 +2148,7 @@ export const dataStore = {
       forumPosts: this.getForumPosts(),
       forumComments: readJSON<ForumComment[]>('forum_comments.json', []),
       friendMessages: readJSON<FriendDirectMessage[]>('friend_messages.json', []),
+      dmMessages: this.getDmMessages(),
     };
   },
 
@@ -2284,6 +2335,13 @@ export const dataStore = {
           writeJSON('friend_messages.json', payload.friendMessages);
         } else if (shouldReplaceCleanly) {
           writeJSON('friend_messages.json', []);
+        }
+
+        // 10. Restore DM / Dungeon Master Private Messages
+        if (Array.isArray(payload.dmMessages)) {
+          writeJSON('dm_messages.json', payload.dmMessages);
+        } else if (shouldReplaceCleanly) {
+          writeJSON('dm_messages.json', []);
         }
 
         const curMeta = this.getSyncMetadata();

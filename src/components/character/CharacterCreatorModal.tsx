@@ -4,6 +4,7 @@ import { Character5e, AbilityKey, SkillKey, CustomSkillEntry } from '../../types
 import { SRD_CLASSES, SRD_RACES, ABILITY_LABELS, SKILL_METADATA } from '../../data/srd';
 import { calculateModifier, calculateProficiencyBonus, getSpanishAbilityLabel } from '../../utils/dnd-math';
 import { EntityAvatar } from '../common/EntityAvatar';
+import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 
 interface CharacterCreatorModalProps {
   isOpen: boolean;
@@ -93,16 +94,21 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   const finalRace = isCustomRace ? (customRaceName.trim() || 'Raza Personalizada') : race;
   const finalClass = isCustomClass ? (customClassName.trim() || 'Aventurero') : characterClass;
 
-  const handleAvatarFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const dataUrl = evt.target?.result as string;
-      if (dataUrl) setAvatarUrl(dataUrl);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const optimized = await compressImageFileToDataUrl(file, 512, 0.85);
+      if (optimized) setAvatarUrl(optimized);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const dataUrl = evt.target?.result as string;
+        if (dataUrl) setAvatarUrl(dataUrl);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleAiGenerate = async () => {

@@ -24,6 +24,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { EntityAvatar } from './EntityAvatar';
+import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 
 export interface AvatarCustomizerModalProps {
   isOpen: boolean;
@@ -121,7 +122,9 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
 
   const activePrefabs = PREFAB_ICONS_BY_CATEGORY[category] || PREFAB_ICONS_BY_CATEGORY.player;
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [isProcessingImg, setIsProcessingImg] = useState<boolean>(false);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -130,13 +133,23 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const dataUrl = evt.target?.result as string;
-      setCustomUrl(dataUrl);
+    setIsProcessingImg(true);
+    try {
+      const optimizedDataUrl = await compressImageFileToDataUrl(file, 512, 0.85);
+      setCustomUrl(optimizedDataUrl);
       setLogoType('custom');
-    };
-    reader.readAsDataURL(file);
+    } catch (err: any) {
+      console.warn('Fallback al lector directo de imagen:', err);
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const dataUrl = evt.target?.result as string;
+        setCustomUrl(dataUrl);
+        setLogoType('custom');
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      setIsProcessingImg(false);
+    }
   };
 
   const handleSave = () => {

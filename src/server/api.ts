@@ -51,9 +51,19 @@ function getOrCreateRoom(code: string): RoomState {
     const matchingWorld = dataStore
       .getWorldSheets()
       .find((w) => normalizeRoomIdentifier(w.roomCode || w.name) === normalizeRoomIdentifier(normCode));
-    const persistedMessages = Array.isArray(matchingWorld?.workspace?.playerMessages)
+    const workspaceMsgs = Array.isArray(matchingWorld?.workspace?.playerMessages)
       ? matchingWorld!.workspace.playerMessages!
       : [];
+    const storeDmMsgs = dataStore
+      .getDmMessages()
+      .filter((m) => normalizeRoomIdentifier(m.roomCode) === normalizeRoomIdentifier(normCode));
+    
+    // Merge without duplicates
+    const msgMap = new Map<string, PlayerMessageToDM>();
+    for (const m of [...workspaceMsgs, ...storeDmMsgs]) {
+      if (m && m.id) msgMap.set(m.id, m);
+    }
+    const persistedMessages = Array.from(msgMap.values()).sort((a, b) => b.createdAt - a.createdAt);
 
     rooms[normCode] = {
       roomCode: normCode,
@@ -1432,7 +1442,10 @@ apiRouter.post('/session/room/:roomCode/player-message', (req, res) => {
     }
     room.lastUpdated = Date.now();
 
-    // Persist into matching WorldSheet workspace if one exists
+    // Persist into dataStore vault (ensures inclusion in cloud backups & master export)
+    dataStore.saveDmMessage(builtMsg);
+
+    // Also persist into matching WorldSheet workspace if one exists
     const allWorlds = dataStore.getWorldSheets();
     const matchingWorld = allWorlds.find(
       (w) => normalizeRoomIdentifier(w.roomCode || w.name) === normalizeRoomIdentifier(normCode)
@@ -1464,6 +1477,7 @@ apiRouter.post('/session/room/:roomCode/player-message/:messageId/read', (req, r
   if (msg) {
     msg.readByDm = true;
     room.lastUpdated = Date.now();
+    dataStore.markDmMessageRead(req.params.messageId);
   }
   res.json({ success: true, playerMessages: room.playerMessages });
 });
@@ -1473,6 +1487,7 @@ apiRouter.delete('/session/room/:roomCode/player-message/:messageId', (req, res)
   const room = getOrCreateRoom(normCode);
   room.playerMessages = room.playerMessages.filter((m) => m.id !== req.params.messageId);
   room.lastUpdated = Date.now();
+  dataStore.deleteDmMessage(req.params.messageId);
 
   const allWorlds = dataStore.getWorldSheets();
   const matchingWorld = allWorlds.find(
@@ -1603,6 +1618,12 @@ apiRouter.post('/vault/sheets', (req, res) => {
 
   // Also rotate backup
   dataStore.addRotatingBackup(character, email, reason as any);
+
+  // Trigger cloud autoBackup immediately in background so images & sheet data sync
+  performAutoBackupTrigger(
+    undefined,
+    `Ficha/Avatar de jugador actualizado: ${character.name || 'Personaje'} (${email})`
+  ).catch(() => {});
 
   res.json({ success: true, sheetId: character.id });
 });
