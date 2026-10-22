@@ -1467,6 +1467,24 @@ export const dataStore = {
   getForumPosts(category?: string, roleFilter?: string, query?: string): ForumPost[] {
     const defaultPosts: ForumPost[] = [
       {
+        id: 'post-update-110',
+        category: 'app-updates',
+        title: 'WeRoll 1.1 Beta • Modo Mapa en Vivo, Proyección en Tiempo Real y Cartas Tarot 2×2',
+        content: '¡Llega WeRoll 1.1 Beta! Esta versión introduce el nuevo Modo Mapa en Vivo con proyección compartida en tiempo real desde la pantalla del DM hacia todos los jugadores (álbum de lugares y mapas del atlas), cuadrícula compacta 2×2 de Cartas de Jugadores en mesa sin desplazamiento vertical, altura refinada estilo Tarot para los Mazos de Juego y El Rincón del Aventurero, límite táctico de 8 monstruos en combate, selector estilo baraja en el creador de personajes y caja de dados multi-tirada (1 a 6 dados).',
+        authorEmail: 'admin@weroll.app',
+        authorName: 'Administrador Supremo',
+        authorTagId: 'adm',
+        authorFullTag: 'Administrador Supremo@adm',
+        authorPlayerType: 'both',
+        authorAppRole: 'admin',
+        flair: 'Actualización',
+        createdAt: 1792686400000,
+        upvotes: 54,
+        upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
+        commentsCount: 4,
+        pinned: true,
+      },
+      {
         id: 'post-update-100',
         category: 'app-updates',
         title: 'WeRoll 1.0 Beta • Rework Visual del Lobby, Pantalla del DM y Modo Online/Offline',
@@ -1482,7 +1500,7 @@ export const dataStore = {
         upvotes: 45,
         upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
         commentsCount: 5,
-        pinned: true,
+        pinned: false,
       },
       {
         id: 'post-update-095',
@@ -1652,7 +1670,7 @@ export const dataStore = {
     if (!posts || posts.length === 0) {
       posts = defaultPosts;
       writeJSON('forum_posts.json', posts);
-    } else if (!posts.some((p) => p.id === 'post-update-100')) {
+    } else if (!posts.some((p) => p.id === 'post-update-110')) {
       posts = [defaultPosts[0], ...posts.map((p) => (p.pinned ? { ...p, pinned: false } : p))];
       writeJSON('forum_posts.json', posts);
     }
@@ -2021,6 +2039,21 @@ export const dataStore = {
 
   // --- PERSISTENT HOST SETTINGS & CHANGELOG ---
   getHostSettings(): HostSettings {
+    const v11BetaEntry: ChangelogEntry = {
+      version: '1.1 Beta',
+      date: '2026-10-22',
+      title: 'WeRoll 1.1 Beta • Modo Mapa en Vivo & Proyección Compartida, Cartas Tarot 2×2 en Mesa, Rediseño de Mazos y Límite de Combate',
+      changes: [
+        'Modo Mapa en Vivo & Proyección Compartida: Botón de acceso al mapa en sala en vivo para DM y jugadores, permitiendo al DM proyectar instantáneamente fotos del álbum y mapas del atlas con actualización inmediata en el mapa de todos los jugadores.',
+        'Cuadrícula Compacta 2×2 en Cartas de Jugadores (Modo Mapa): Visualización simultánea de al menos 4 cartas Tarot de compañeros en mesa sin necesidad de desplazarse verticalmente, aprovechando el ancho extendido de pantalla (1920px).',
+        'Rediseño Equilibrado de Mazos de Juego: Proporción estilo Tarot clásica (altura intermedia 240px) para las cartas de acciones, habilidades y conjuros, equilibrando la geometría con El Rincón del Aventurero.',
+        'Iconografía Simbólica y Tooltips de Alineamiento: Insignia visual con código cromático (bueno/neutral/malvado) y figuras simbólicas (espiral, balanza, orbe) con mensaje emergente explicativo al pasar el cursor.',
+        'Selector Estilo Baraja en el Creador de Personajes: Alternancia fluida entre fichas creadas con flechas de navegación izquierda/derecha sin saturar la vista.',
+        'Control Táctico de Encuentros (Máximo 8 Enemigos): Tope estricto de hasta 8 monstruos simultáneos en el gestor de combate del DM, con panel dedicado de aliados conectados.',
+        'Caja de Dados Multi-Tirada (1 a 6 dados): Selector de cantidad de dados poliédricos estándar (d4, d6, d8, d10, d12, d20, d100) en el visor de mesa y pantalla del DM.',
+      ],
+    };
+
     const v10BetaEntry: ChangelogEntry = {
       version: '1.0 Beta',
       date: '2026-10-21',
@@ -2126,7 +2159,7 @@ export const dataStore = {
 
     const defaultSettings: HostSettings = {
       headerTitle: 'WeRoll',
-      headerSubtitle: 'Companion & DM Suite v1.0 Beta',
+      headerSubtitle: 'Companion & DM Suite v1.1 Beta',
       headerLogoIcon: 'shield',
       aiModel: 'gemini-flash-lite-latest',
       moderatorPassword: 'admin',
@@ -2139,18 +2172,26 @@ export const dataStore = {
         enabled: true,
         title: 'Comunicado del Administrador',
         message:
-          '¡Bienvenido a WeRoll 5E v1.0 Beta! Rework visual del Lobby y Pantalla del DM, Modo Online/Offline para World Sheets y avisos en vivo.',
+          '¡Bienvenido a WeRoll 5E v1.1 Beta! Modo Mapa en Vivo con proyección en tiempo real, cartas Tarot compactas 2x2 y mazos de juego rediseñados.',
         type: 'info',
         updatedAt: Date.now(),
       },
       developerNotice: {
         enabled: true,
-        title: 'WeRoll • Novedades v1.0 Beta',
+        title: 'WeRoll • Novedades v1.1 Beta',
         content:
-          '¡Versión 1.0 Beta disponible! Rework visual completo del Lobby y Pantalla del DM, Modo Online/Offline para World Sheets, avisos pop-up en vivo e imagen de perfil de jugador.',
-        version: '1.0 Beta',
+          '¡Versión 1.1 Beta disponible! Modo Mapa en Vivo sincronizado en tiempo real (proyección de mapas y fotos del álbum del DM hacia los jugadores), cartas Tarot compactas 2x2 en mesa, proporción áurea en Mazos de Juego y límite táctico de 8 monstruos.',
+        version: '1.1 Beta',
+      },
+      developerAnnouncement: {
+        enabled: true,
+        title: 'WeRoll • Novedades v1.1 Beta',
+        content:
+          '¡Versión 1.1 Beta disponible! Modo Mapa en Vivo sincronizado en tiempo real (proyección de mapas y fotos del álbum del DM hacia los jugadores), cartas Tarot compactas 2x2 en mesa, proporción áurea en Mazos de Juego y límite táctico de 8 monstruos.',
+        version: '1.1 Beta',
       },
       changelog: [
+        v11BetaEntry,
         v10BetaEntry,
         v095Entry,
         v09Entry,
@@ -2254,10 +2295,20 @@ export const dataStore = {
       finalChangelog[v10Idx] = v10BetaEntry;
     }
 
+    const v11Idx = finalChangelog.findIndex(
+      (entry) => entry.version && entry.version.toLowerCase().includes('1.1')
+    );
+    if (v11Idx === -1) {
+      finalChangelog = [v11BetaEntry, ...finalChangelog];
+    } else {
+      finalChangelog[v11Idx] = v11BetaEntry;
+    }
+
     const finalHeaderSubtitle =
       !current.headerSubtitle ||
       /v0\.(1|2|3|4|5|6|65|8|9|95)\b/i.test(current.headerSubtitle) ||
-      current.headerSubtitle.includes('0.9')
+      current.headerSubtitle.includes('0.9') ||
+      current.headerSubtitle.includes('1.0')
         ? defaultSettings.headerSubtitle
         : current.headerSubtitle;
 
@@ -2269,15 +2320,22 @@ export const dataStore = {
       developerNotice: {
         ...defaultSettings.developerNotice!,
         ...(current.developerNotice || {}),
-        version: '1.0 Beta',
-        title: 'WeRoll • Novedades v1.0 Beta',
+        version: '1.1 Beta',
+        title: 'WeRoll • Novedades v1.1 Beta',
+        content: defaultSettings.developerNotice!.content,
+      },
+      developerAnnouncement: {
+        enabled: true,
+        version: '1.1 Beta',
+        title: 'WeRoll • Novedades v1.1 Beta',
+        content: defaultSettings.developerNotice!.content,
       },
       adminGreeting: current.adminGreeting
         ? {
             ...defaultSettings.adminGreeting!,
             ...current.adminGreeting,
             message:
-              current.adminGreeting.message && current.adminGreeting.message.includes('0.9')
+              current.adminGreeting.message && (current.adminGreeting.message.includes('0.9') || current.adminGreeting.message.includes('1.0'))
                 ? defaultSettings.adminGreeting!.message
                 : current.adminGreeting.message,
           }
