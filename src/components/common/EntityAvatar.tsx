@@ -27,7 +27,12 @@ import {
 export interface EntityAvatarProps {
   avatarType?: 'icon' | 'custom';
   customUrl?: string;
+  avatarCustomUrl?: string;
+  legacyAvatarUrl?: string;
   iconId?: string;
+  avatarIcon?: string;
+  name?: string;
+  category?: 'npc' | 'monster' | 'location' | 'character';
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   className?: string;
   iconClassName?: string;
@@ -36,16 +41,25 @@ export interface EntityAvatarProps {
 }
 
 export const EntityAvatar: React.FC<EntityAvatarProps> = ({
-  avatarType = 'icon',
+  avatarType,
   customUrl,
-  iconId = 'anonymous',
+  avatarCustomUrl,
+  legacyAvatarUrl,
+  iconId,
+  avatarIcon,
+  category,
   size = 'md',
   className = '',
   iconClassName = '',
   onClick,
   title,
 }) => {
-  const isCustom = avatarType === 'custom' && Boolean(customUrl);
+  const resolvedUrl = customUrl || avatarCustomUrl || legacyAvatarUrl;
+  const resolvedIcon =
+    iconId ||
+    avatarIcon ||
+    (category === 'monster' ? 'skull' : category === 'location' ? 'gem' : 'anonymous');
+  const isCustom = (avatarType === 'custom' || Boolean(resolvedUrl)) && Boolean(resolvedUrl);
 
   const containerSizes = {
     xs: 'w-6 h-6 rounded-lg text-xs',
@@ -130,7 +144,7 @@ export const EntityAvatar: React.FC<EntityAvatarProps> = ({
     }
   };
 
-  const IconComp = getIconComponent(iconId);
+  const IconComp = getIconComponent(resolvedIcon);
 
   const containerClass = `relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-gradient-to-br from-amber-700/80 via-amber-900 to-stone-900 border border-amber-500/70 text-amber-200 shadow-md ${
     containerSizes[size]
@@ -140,7 +154,7 @@ export const EntityAvatar: React.FC<EntityAvatarProps> = ({
     <div className={containerClass} onClick={onClick} title={title}>
       {isCustom ? (
         <img
-          src={customUrl}
+          src={resolvedUrl}
           alt="Avatar"
           className="w-full h-full object-cover rounded-inherit"
           onError={(e) => {

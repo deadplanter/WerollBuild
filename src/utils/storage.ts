@@ -138,6 +138,7 @@ export interface AuthSessionUser {
   displayName: string;
   userTagId?: string;
   fullTag?: string;
+  avatarUrl?: string;
   friends?: string[];
   role: UserRole;
   playerType?: PlayerType;
@@ -193,7 +194,14 @@ export function loadUserRole(): UserRole | null {
   if (typeof window === 'undefined') return null;
   try {
     const role = localStorage.getItem(STORAGE_KEYS.USER_ROLE) as UserRole | null;
-    if (role === 'player' || role === 'dm' || role === 'both' || role === 'moderator' || role === 'admin') {
+    if (
+      role === 'player' ||
+      role === 'dm' ||
+      role === 'both' ||
+      role === 'moderator' ||
+      role === 'creator' ||
+      role === 'admin'
+    ) {
       return role;
     }
     return null;
@@ -278,8 +286,28 @@ export function loadDMWorkspace(): DMWorkspace {
       campaignLogs: Array.isArray(parsed.campaignLogs) ? parsed.campaignLogs : SAMPLE_DM_WORKSPACE.campaignLogs,
       combatSummaries: Array.isArray(parsed.combatSummaries) ? parsed.combatSummaries : (SAMPLE_DM_WORKSPACE.combatSummaries || []),
       customItemsAndSpells: Array.isArray(parsed.customItemsAndSpells) ? parsed.customItemsAndSpells : (SAMPLE_DM_WORKSPACE.customItemsAndSpells || []),
+      placeAlbumPhotos:
+        Array.isArray(parsed.placeAlbumPhotos) && parsed.placeAlbumPhotos.length > 0
+          ? parsed.placeAlbumPhotos
+          : SAMPLE_DM_WORKSPACE.placeAlbumPhotos || [],
+      atlasMaps:
+        parsed.atlasMaps && typeof parsed.atlasMaps === 'object'
+          ? { ...(SAMPLE_DM_WORKSPACE.atlasMaps || {}), ...parsed.atlasMaps }
+          : SAMPLE_DM_WORKSPACE.atlasMaps || {},
+      atlasPinPositions:
+        parsed.atlasPinPositions && typeof parsed.atlasPinPositions === 'object'
+          ? { ...(SAMPLE_DM_WORKSPACE.atlasPinPositions || {}), ...parsed.atlasPinPositions }
+          : SAMPLE_DM_WORKSPACE.atlasPinPositions || {},
+      activeLiveVisual: parsed.activeLiveVisual || SAMPLE_DM_WORKSPACE.activeLiveVisual,
+      dmName: parsed.dmName || SAMPLE_DM_WORKSPACE.dmName || 'Dungeon Master',
+      dmAvatarType: parsed.dmAvatarType || SAMPLE_DM_WORKSPACE.dmAvatarType || 'icon',
+      dmAvatarUrl: parsed.dmAvatarUrl !== undefined ? parsed.dmAvatarUrl : SAMPLE_DM_WORKSPACE.dmAvatarUrl,
+      dmAvatarIcon: parsed.dmAvatarIcon || SAMPLE_DM_WORKSPACE.dmAvatarIcon || 'crown',
       dmLiveMessage: parsed.dmLiveMessage !== undefined ? parsed.dmLiveMessage : SAMPLE_DM_WORKSPACE.dmLiveMessage,
-      folders: Array.isArray(parsed.folders) ? parsed.folders : SAMPLE_DM_WORKSPACE.folders,
+      folders:
+        Array.isArray(parsed.folders) && parsed.folders.some((f: string) => f.includes('Costa de la Espada'))
+          ? parsed.folders
+          : Array.from(new Set([...(SAMPLE_DM_WORKSPACE.folders || []), ...(Array.isArray(parsed.folders) ? parsed.folders : [])])),
       activeEncounter: {
         ...SAMPLE_DM_WORKSPACE.activeEncounter,
         ...(parsed.activeEncounter || {}),

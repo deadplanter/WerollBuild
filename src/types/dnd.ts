@@ -3,6 +3,8 @@ export type AbilityKey = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
 export interface AbilityScore {
   score: number;
   proficientSave: boolean;
+  customModifier?: number;
+  modifierOverride?: number;
 }
 
 export type SkillKey =
@@ -214,6 +216,9 @@ export interface NPCRecord {
     notes?: string;
   };
   avatarUrl?: string;
+  avatarType?: 'icon' | 'custom';
+  avatarCustomUrl?: string;
+  avatarIcon?: string;
 }
 
 export interface MonsterAttack {
@@ -253,13 +258,17 @@ export interface MonsterRecord {
   legendaryActions?: { name: string; description: string }[];
   folder?: string;
   notes?: string;
+  avatarUrl?: string;
+  avatarType?: 'icon' | 'custom';
+  avatarCustomUrl?: string;
+  avatarIcon?: string;
 }
 
 export interface LocationRecord {
   id: string;
   name: string;
   region: string;
-  type: 'Ciudad' | 'Mazmorra' | 'Templo' | 'Bosque' | 'Castillo' | 'Taberna' | 'Ruinas' | 'Poblado' | 'Otro';
+  type: 'Ciudad' | 'Mazmorra' | 'Templo' | 'Bosque' | 'Castillo' | 'Taberna' | 'Ruinas' | 'Poblado' | 'Zona' | 'Zona Táctica' | 'Otro' | string;
   description: string;
   secretsForDm: string;
   notes?: string; // DM private notes
@@ -274,7 +283,7 @@ export interface CampaignLogEntry {
   sessionNumber: number;
   title: string;
   date: string;
-  realDate: string;
+  realDate?: string;
   summary: string;
   publicNotes: string; // To read aloud or share with players
   privateNotes: string; // DM only
@@ -392,9 +401,27 @@ export interface PlayerMessageToDM {
   readByDm?: boolean;
 }
 
+export interface PlaceAlbumPhoto {
+  id: string;
+  title: string;
+  imageUrl: string;
+  folder: string;
+  description?: string;
+  createdAt: number;
+}
+
+export interface AtlasPinPosition {
+  x: number; // percentage 0-100 on the 1:1 square map
+  y: number; // percentage 0-100 on the 1:1 square map
+}
+
 export interface DMWorkspace {
   dmPassword?: string;
   password?: string;
+  dmName?: string;
+  dmAvatarType?: 'icon' | 'custom';
+  dmAvatarUrl?: string;
+  dmAvatarIcon?: string;
   npcs: NPCRecord[];
   monsters: MonsterRecord[];
   customItems: InventoryItem[];
@@ -404,6 +431,16 @@ export interface DMWorkspace {
   combatSummaries: CombatSummary[];
   playerMessages?: PlayerMessageToDM[];
   folders: string[];
+  atlasMaps?: Record<string, string>; // key: 'all' or folder path -> square map image URL / DataURL
+  atlasPinPositions?: Record<string, AtlasPinPosition>; // key: child folder path -> { x, y }
+  placeAlbumPhotos?: PlaceAlbumPhoto[];
+  activeLiveVisual?: {
+    kind: 'album' | 'tactical';
+    id: string;
+    title: string;
+    imageUrl?: string;
+    folder?: string;
+  };
   activeEncounter: EncounterState;
   currentQuest?: string; // DM's active quest objective broadcast
   quickNotification?: string; // Quick alert banner
@@ -504,11 +541,11 @@ export interface SharedSessionData {
   playerMessages?: PlayerMessageToDM[];
 }
 
-export type UserRole = 'player' | 'dm' | 'both' | 'moderator' | 'admin';
+export type UserRole = 'player' | 'dm' | 'both' | 'moderator' | 'creator' | 'admin';
 
 // Distinct Role Architecture: Table / Player Type vs. Application Role
 export type PlayerType = 'player' | 'dm' | 'both';
-export type AppRole = 'client' | 'moderator' | 'admin';
+export type AppRole = 'client' | 'moderator' | 'creator' | 'admin';
 
 export interface PlayerSheetRecord {
   id: string;
@@ -524,6 +561,7 @@ export interface UserAccountPublic {
   displayName: string;
   userTagId?: string;
   fullTag?: string;
+  avatarUrl?: string;
   friends?: string[];
   role: UserRole;
   playerType: PlayerType;
@@ -603,6 +641,7 @@ export interface WorldSheetSummary {
   description?: string;
   roomCode: string;
   roomPassword?: string;
+  roomMode?: 'online' | 'offline';
   lastPlayed: number;
   workspace: DMWorkspace;
 }
@@ -664,6 +703,16 @@ export interface AutoBackupConfig {
   history?: AutoBackupLog[];
 }
 
+export interface LiveBroadcastPopup {
+  id: string;
+  title: string;
+  message: string;
+  senderName: string;
+  senderTag?: string;
+  senderRole?: string;
+  sentAt: number;
+}
+
 export interface HostSettings {
   apiKeyOverride?: string;
   aiModel?: string; // 'gemini-flash-lite-latest' | 'gemini-flash-latest' | custom string
@@ -698,6 +747,7 @@ export interface HostSettings {
     type?: 'info' | 'maintenance' | 'alert';
     updatedAt?: number;
   };
+  liveBroadcastPopup?: LiveBroadcastPopup;
   changelog?: ChangelogEntry[];
   roleSwitchingAllowed?: 'strict' | 'open'; // 'strict' locks player to player and DM to DM; 'open' allows switcher
 }

@@ -8,6 +8,54 @@ export function calculateModifier(score: number): number {
   return Math.floor((score - 10) / 2);
 }
 
+export function getEffectiveAbilityModifier(
+  ability?: { score: number; customModifier?: number; modifierOverride?: number } | number | null
+): number {
+  if (ability === null || ability === undefined) return 0;
+  if (typeof ability === 'number') {
+    return calculateModifier(ability);
+  }
+  if (typeof ability.modifierOverride === 'number' && !isNaN(ability.modifierOverride)) {
+    return Math.round(ability.modifierOverride);
+  }
+  const baseMod = calculateModifier(ability.score ?? 10);
+  const bonus = typeof ability.customModifier === 'number' && !isNaN(ability.customModifier) ? Math.round(ability.customModifier) : 0;
+  return baseMod + bonus;
+}
+
+export interface JournalIndexItem {
+  sheetNumber: number;
+  id: string;
+  sessionNumber: number;
+  title: string;
+  dateInGame: string;
+  pagesOccupied: number;
+}
+
+export function buildJournalIndexEntries(
+  entries?: {
+    id: string;
+    sessionNumber: number;
+    title: string;
+    dateInGame?: string;
+    date?: string;
+  }[]
+): { totalSheets: number; items: JournalIndexItem[] } {
+  const safeList = Array.isArray(entries) ? entries : [];
+  const items: JournalIndexItem[] = safeList.map((entry, idx) => ({
+    sheetNumber: idx + 1,
+    id: entry.id,
+    sessionNumber: Number(entry.sessionNumber) || idx + 1,
+    title: String(entry.title || `Entrada ${idx + 1}`).trim(),
+    dateInGame: String(entry.dateInGame || entry.date || '').trim(),
+    pagesOccupied: 1,
+  }));
+  return {
+    totalSheets: items.length,
+    items,
+  };
+}
+
 export function formatModifier(mod: number): string {
   if (isNaN(mod)) return '+0';
   return mod >= 0 ? `+${mod}` : `${mod}`;
@@ -569,5 +617,170 @@ export function buildPlayerMessageToDM(params: {
     read: false,
   };
 }
+
+export function stepInitiativeTurn(
+  currentTurnIndex: number,
+  round: number,
+  combatantsCount: number,
+  direction: 'next' | 'prev'
+): { currentTurnIndex: number; round: number } {
+  const safeRound = Math.max(1, Number(round) || 1);
+  if (combatantsCount <= 0) {
+    return { currentTurnIndex: 0, round: safeRound };
+  }
+  const safeIndex = Math.max(0, Math.min(combatantsCount - 1, Number(currentTurnIndex) || 0));
+
+  if (direction === 'next') {
+    const nextIdx = (safeIndex + 1) % combatantsCount;
+    const nextRound = nextIdx === 0 ? safeRound + 1 : safeRound;
+    return { currentTurnIndex: nextIdx, round: nextRound };
+  } else {
+    if (safeIndex > 0) {
+      return { currentTurnIndex: safeIndex - 1, round: safeRound };
+    }
+    return {
+      currentTurnIndex: combatantsCount - 1,
+      round: Math.max(1, safeRound - 1),
+    };
+  }
+}
+
+export interface AtlasBreadcrumbSegment {
+  label: string;
+  folderPath: string;
+  depth: number;
+}
+
+export function buildAtlasBreadcrumbs(selectedFolder: string): AtlasBreadcrumbSegment[] {
+  const crumbs: AtlasBreadcrumbSegment[] = [
+    { label: 'Mundo', folderPath: 'all', depth: 0 },
+  ];
+
+  const clean = String(selectedFolder || '').trim();
+  if (!clean || clean === 'all') {
+    return crumbs;
+  }
+
+  const parts = clean
+    .split('/')
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  let cumulative = '';
+  parts.forEach((part, idx) => {
+    cumulative = cumulative ? `${cumulative} / ${part}` : part;
+    crumbs.push({
+      label: part,
+      folderPath: cumulative,
+      depth: idx + 1,
+    });
+  });
+
+  return crumbs;
+}
+
+export function ensureCompleteFolderHierarchy(rawFolders: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const raw of rawFolders || []) {
+    const parts = String(raw || '')
+      .split('/')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 4); // Up to 4 hierarchical levels under Mundo
+
+    let cumulative = '';
+    for (const part of parts) {
+      cumulative = cumulative ? `${cumulative} / ${part}` : part;
+      if (!seen.has(cumulative)) {
+        seen.add(cumulative);
+        result.push(cumulative);
+      }
+    }
+  }
+
+  return result;
+}
+
+export function getChildFoldersForAtlas(allFolders: string[], selectedFolder: string): string[] {
+  const cleanSelected = String(selectedFolder || 'all').trim();
+  const list = ensureCompleteFolderHierarchy(Array.isArray(allFolders) ? allFolders : []);
+  const depthOf = (path: string) =>
+    String(path || '')
+      .split('/')
+      .map((s) => s.trim())
+      .filter(Boolean).length;
+
+  if (!cleanSelected || cleanSelected === 'all') {
+    return list.filter((f) => depthOf(f) === 1);
+  }
+
+  const targetDepth = depthOf(cleanSelected) + 1;
+  if (targetDepth > 4) return [];
+  const prefix = `${cleanSelected} / `;
+  return list.filter((f) => f.startsWith(prefix) && depthOf(f) === targetDepth);
+}
+
+export function getPinPositionForChildPlace(
+  childFolderPath: string,
+  index: number,
+  total: number,
+  customPositions?: Record<string, { x: number; y: number }>
+): { x: number; y: number } {
+  const custom = customPositions?.[childFolderPath];
+  if (
+    custom &&
+    typeof custom.x === 'number' &&
+    typeof custom.y === 'number' &&
+    !isNaN(custom.x) &&
+    !isNaN(custom.y)
+  ) {
+    return {
+      x: Math.max(8, Math.min(92, Math.round(custom.x))),
+      y: Math.max(10, Math.min(90, Math.round(custom.y))),
+    };
+  }
+
+  // Deterministic well-distributed default positions on a square/rectangular map
+  const safeTotal = Math.max(1, total);
+  if (safeTotal === 1) {
+    return { x: 50, y: 50 };
+  }
+  const presets = [
+    { x: 26, y: 36 },
+    { x: 68, y: 34 },
+    { x: 46, y: 68 },
+    { x: 24, y: 72 },
+    { x: 74, y: 70 },
+    { x: 50, y: 28 },
+  ];
+  if (index < presets.length) {
+    return presets[index];
+  }
+  const col = index % 3;
+  const row = Math.floor(index / 3);
+  return {
+    x: Math.max(15, Math.min(85, 22 + col * 28)),
+    y: Math.max(18, Math.min(84, 25 + (row % 3) * 26)),
+  };
+}
+
+export function filterAlbumPhotosByPlace<T extends { folder?: string }>(
+  photos: T[],
+  selectedFolder: string
+): T[] {
+  const safePhotos = Array.isArray(photos) ? photos : [];
+  const cleanSelected = String(selectedFolder || 'all').trim();
+  if (!cleanSelected || cleanSelected === 'all') {
+    return safePhotos;
+  }
+  return safePhotos.filter((p) => {
+    const f = String(p.folder || '').trim();
+    return f === cleanSelected || f.startsWith(`${cleanSelected} / `);
+  });
+}
+
+
 
 

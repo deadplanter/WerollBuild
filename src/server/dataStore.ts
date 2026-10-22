@@ -51,11 +51,12 @@ export interface UserAccount {
   email: string;
   displayName: string;
   userTagId?: string;
+  avatarUrl?: string;
   friends?: string[];
   password: string;
-  role: 'player' | 'dm' | 'both' | 'moderator' | 'admin';
+  role: 'player' | 'dm' | 'both' | 'moderator' | 'creator' | 'admin';
   playerType?: PlayerType; // 'player' | 'dm' | 'both'
-  appRole?: AppRole; // 'client' | 'moderator' | 'admin'
+  appRole?: AppRole; // 'client' | 'moderator' | 'creator' | 'admin'
   canPostInForum?: boolean; // false for regular clients unless granted by mod/admin
   forumPermissionsRequested?: boolean;
   status: 'pending' | 'approved' | 'rejected';
@@ -104,6 +105,7 @@ export interface WorldSheetRecord {
   description?: string;
   roomCode: string;
   roomPassword?: string;
+  roomMode?: 'online' | 'offline';
   workspace: DMWorkspace;
   updatedAt: number;
 }
@@ -225,8 +227,10 @@ export const dataStore = {
           email: u.email,
           displayName: u.displayName,
           userTagId: u.userTagId || '',
+          avatarLen: (u.avatarUrl || '').length,
           friends: Array.isArray(u.friends) ? u.friends : [],
           role: u.role,
+          appRole: u.appRole,
           status: u.status,
           password: u.password,
           passwordResetRequested: u.passwordResetRequested,
@@ -483,6 +487,8 @@ export const dataStore = {
       if (!u.appRole) {
         if (u.role === 'admin' || u.email.toLowerCase() === 'admin@weroll.app' || u.email.toLowerCase() === 'deadplanter@gmail.com') {
           u.appRole = 'admin';
+        } else if (u.role === 'creator') {
+          u.appRole = 'creator';
         } else if (u.role === 'moderator') {
           u.appRole = 'moderator';
         } else {
@@ -490,7 +496,7 @@ export const dataStore = {
         }
         needsSave = true;
       }
-      if (u.appRole === 'admin' || u.appRole === 'moderator') {
+      if (u.appRole === 'admin' || u.appRole === 'creator' || u.appRole === 'moderator') {
         if (!u.canPostInForum) {
           u.canPostInForum = true;
           needsSave = true;
@@ -638,6 +644,18 @@ export const dataStore = {
     return users[idx];
   },
 
+  updateUserAvatar(id: string, avatarUrl?: string): UserAccount | null {
+    const users = this.getUsers();
+    const idx = users.findIndex((u) => u.id === id);
+    if (idx === -1) return null;
+    users[idx].avatarUrl = avatarUrl ? avatarUrl.trim() : undefined;
+    this.saveUsers(
+      users,
+      `Avatar de jugador actualizado: ${users[idx].displayName}@${users[idx].userTagId || '123'}`
+    );
+    return users[idx];
+  },
+
   adminUpdateUserAccount(
     id: string,
     updates: {
@@ -696,9 +714,12 @@ export const dataStore = {
     }
     if ((updates as any).appRole) {
       users[idx].appRole = (updates as any).appRole;
-      if (users[idx].appRole === 'admin' || users[idx].appRole === 'moderator') {
+      if (users[idx].appRole === 'admin' || users[idx].appRole === 'creator' || users[idx].appRole === 'moderator') {
         users[idx].canPostInForum = true;
       }
+    }
+    if ((updates as any).avatarUrl !== undefined) {
+      users[idx].avatarUrl = (updates as any).avatarUrl || undefined;
     }
     if ((updates as any).canPostInForum !== undefined) {
       users[idx].canPostInForum = Boolean((updates as any).canPostInForum);
@@ -749,7 +770,9 @@ export const dataStore = {
         displayName: u.displayName,
         userTagId: u.userTagId || '123',
         fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+        avatarUrl: u.avatarUrl,
         role: u.role,
+        appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'creator' ? 'creator' : u.role === 'moderator' ? 'moderator' : 'client'),
         status: u.status,
         lastActiveAt: u.lastActiveAt,
       }));
