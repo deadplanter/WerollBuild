@@ -3091,7 +3091,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                       Página de Administración WeRoll
                     </h3>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 border border-blue-700/60 text-blue-300 font-bold">
-                      v0.9.5 Alfa
+                      v1.0 Beta
                     </span>
                   </div>
                   <p className="text-xs text-stone-400">

@@ -1340,7 +1340,7 @@ export default function App() {
               className="px-2.5 py-1 rounded-full bg-[#1b1d28] hover:bg-[#252836] border border-[#c8a45c]/50 text-[#e2c275] text-[11px] font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
               title="Ver historial de versiones y novedades"
             >
-              <span>v0.9.5 Alfa</span>
+              <span>v1.0 Beta</span>
               <span className="w-4 h-4 rounded-full bg-[#c8a45c]/25 border border-[#e2c275] text-[#f5e4be] flex items-center justify-center text-[10px] font-black">
                 ?
               </span>

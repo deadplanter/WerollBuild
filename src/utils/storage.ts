@@ -20,16 +20,30 @@ export const DEFAULT_HOST_SETTINGS: HostSettings = {
   dmPassword: '',
   moderatorPassword: 'admin',
   headerTitle: 'WeRoll',
-  headerSubtitle: 'Companion & DM Suite v0.9.5 Alfa',
+  headerSubtitle: 'Companion & DM Suite v1.0 Beta',
   headerLogoIcon: 'shield',
   developerNotice: {
     enabled: true,
-    title: 'WeRoll • Novedades v0.9.5 Alfa',
-    content: '¡Versión 0.9.5 Alfa disponible! Ajuste de paneles por Rol (Panel Admin General, Panel Moderador y Feedback para Clientes), permiso de foro reversible (permitir/negar) y rediseño compacto responsive de cuadros de Personajes, World Sheets y Amigos.',
-    version: '0.9.5 Alfa',
+    title: 'WeRoll • Novedades v1.0 Beta',
+    content: '¡Versión 1.0 Beta disponible! Rework visual completo del Lobby y Pantalla del DM, Modo Online/Offline para World Sheets, avisos pop-up en vivo e imagen de perfil de jugador.',
+    version: '1.0 Beta',
   },
   oracleWelcomeMessage: 'Saludos, viajero. Soy el Sabio Arcano, tu árbitro y custodio de las reglas de 5E. ¿Qué duda deseas resolver hoy?',
   changelog: [
+    {
+      version: '1.0 Beta',
+      date: '2026-10-21',
+      title: 'WeRoll 1.0 Beta • Rework Visual del Lobby y Pantalla del DM, Modo Online/Offline y Avisos en Vivo',
+      changes: [
+        'Rework Visual Completo del Lobby: Nuevo diseño refinado con marco dorado ornamentado, avatar circular de perfil de jugador, insignias dinámicas de rol y acceso directo a seguridad de cuenta.',
+        'Modo Online y Offline para World Sheets: Opción para que el DM abra sus mesas en Modo Online (para conexión en vivo de jugadores) o Modo Offline (para diseñar, preparar y editar campañas en privado sin abrir sala pública).',
+        'Rework Visual de la Pantalla del DM y Atlas del Mundo: Navegación jerárquica de ubicaciones geográficas y lugares, filtrado visual temático de PNJs, monstruos y objetos, y visualización táctica en vivo.',
+        'Avisos Pop-up en Vivo del Administrador / Moderador: Transmisión instantánea de comunicados importantes en tiempo real para todos los usuarios activos en el lobby y en partidas.',
+        'Imagen de Perfil de Jugador Personalizada: Sube tu propia foto o retrato de jugador (independiente de las fichas de personaje), visible en el banner del Lobby y en la lista de Amigos.',
+        'Aviso Oficial Reorganizado sobre el Foro: Reubicación compacta del comunicado oficial del administrador directamente sobre el Foro WeRoll para mayor claridad visual.',
+        'Paneles de Administración y Moderación a Pantalla Completa: Vistas dedicadas y fluidas para la gestión de usuarios, roles, bóvedas de respaldo y moderación de contenido comunitario.',
+      ],
+    },
     {
       version: '0.9.5 Alfa',
       date: '2026-10-19',
@@ -341,23 +355,27 @@ export function loadHostSettings(): HostSettings {
     if (!data) return DEFAULT_HOST_SETTINGS;
     const parsed = JSON.parse(data);
     const merged: HostSettings = { ...DEFAULT_HOST_SETTINGS, ...parsed };
-    const v09 = DEFAULT_HOST_SETTINGS.changelog?.[0];
-    if (v09 && Array.isArray(merged.changelog)) {
-      const idx = merged.changelog.findIndex((c) => c.version && c.version.toLowerCase().includes('0.9'));
+    const v10 = DEFAULT_HOST_SETTINGS.changelog?.[0];
+    if (v10 && Array.isArray(merged.changelog)) {
+      const idx = merged.changelog.findIndex((c) => c.version && c.version.toLowerCase().includes('1.0'));
       if (idx === -1) {
-        merged.changelog = [v09, ...merged.changelog];
+        merged.changelog = [v10, ...merged.changelog];
       } else {
-        merged.changelog[idx] = v09;
+        merged.changelog[idx] = v10;
       }
     }
     if (
       !merged.headerSubtitle ||
+      merged.headerSubtitle.includes('0.9') ||
       merged.headerSubtitle.includes('0.8') ||
       merged.headerSubtitle.includes('0.65') ||
       merged.headerSubtitle.includes('0.6 ') ||
       merged.headerSubtitle.includes('0.5')
     ) {
       merged.headerSubtitle = DEFAULT_HOST_SETTINGS.headerSubtitle;
+    }
+    if (merged.developerNotice?.version?.includes('0.9')) {
+      merged.developerNotice = DEFAULT_HOST_SETTINGS.developerNotice;
     }
     return merged;
   } catch {
