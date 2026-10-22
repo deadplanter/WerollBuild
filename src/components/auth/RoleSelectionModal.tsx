@@ -13,6 +13,8 @@ export interface AuthSessionUser {
   friends?: string[];
   role: UserRole;
   playerType?: PlayerType;
+  requestedPlayerType?: PlayerType;
+  playerTypeChangeRequested?: boolean;
   appRole?: AppRole;
   canPostInForum?: boolean;
   forumPermissionsRequested?: boolean;

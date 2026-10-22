@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, Send, X, User, Clock, Check, CheckCheck, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { MessageSquare, Send, X, CheckCheck, RefreshCw } from 'lucide-react';
 import { FriendDirectMessage } from '../../types/dnd';
 import { AuthSessionUser } from '../auth/RoleSelectionModal';
+
+export const FRIEND_CHAT_BROADCAST_CHANNEL = 'dnd_5e_friend_chat_channel';
 
 interface FriendDirectChatModalProps {
   isOpen: boolean;
@@ -12,9 +14,11 @@ interface FriendDirectChatModalProps {
     displayName: string;
     userTagId: string;
     fullTag: string;
+    avatarUrl?: string;
     role?: string;
     status?: string;
   } | null;
+  onMessagesUpdated?: () => void;
 }
 
 export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
@@ -22,41 +26,88 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
   onClose,
   currentUser,
   friend,
+  onMessagesUpdated,
 }) => {
   const [messages, setMessages] = useState<FriendDirectMessage[]>([]);
   const [inputText, setInputText] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSending, setIsSending] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const lastMsgIdRef = useRef<string>('');
 
-  const fetchMessages = async () => {
+  const fetchMessages = useCallback(async (silent = false) => {
     if (!currentUser?.id || !friend?.id) return;
+    if (!silent) setIsLoading(true);
     try {
-      const res = await fetch(`/api/friends/messages?userId=${encodeURIComponent(currentUser.id)}&friendId=${encodeURIComponent(friend.id)}`);
+      const res = await fetch(
+        `/api/friends/messages?userId=${encodeURIComponent(currentUser.id)}&friendId=${encodeURIComponent(friend.id)}&_t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
       const data = await res.json();
       if (res.ok && Array.isArray(data.messages)) {
-        setMessages(data.messages);
+        setMessages((prev) => {
+          const prevLast = prev[prev.length - 1]?.id || '';
+          const nextLast = data.messages[data.messages.length - 1]?.id || '';
+          if (prev.length === data.messages.length && prevLast === nextLast) {
+            return prev;
+          }
+          return data.messages;
+        });
+        if (onMessagesUpdated) {
+          onMessagesUpdated();
+        }
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      if (!silent) setIsLoading(false);
     }
-  };
+  }, [currentUser?.id, friend?.id, onMessagesUpdated]);
 
   useEffect(() => {
     if (!isOpen || !friend) return;
-    setIsLoading(true);
-    fetchMessages().finally(() => setIsLoading(false));
+    lastMsgIdRef.current = '';
+    fetchMessages(false);
 
-    // Poll every 4 seconds for live conversation updates
+    // Poll every 1.5 seconds for live real-time conversation updates
     const timer = setInterval(() => {
-      fetchMessages();
-    }, 4000);
+      fetchMessages(true);
+    }, 1500);
 
-    return () => clearInterval(timer);
-  }, [isOpen, friend?.id]);
+    // Listen to BroadcastChannel for instant updates across browser tabs/windows
+    let channel: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        channel = new BroadcastChannel(FRIEND_CHAT_BROADCAST_CHANNEL);
+        channel.onmessage = (evt) => {
+          const payload = evt.data;
+          if (
+            payload &&
+            ((payload.fromUserId === friend.id && payload.toUserId === currentUser.id) ||
+              (payload.fromUserId === currentUser.id && payload.toUserId === friend.id))
+          ) {
+            fetchMessages(true);
+          }
+        };
+      }
+    } catch {}
+
+    return () => {
+      clearInterval(timer);
+      if (channel) {
+        try {
+          channel.close();
+        } catch {}
+      }
+    };
+  }, [isOpen, friend?.id, currentUser?.id, fetchMessages]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const newestId = messages[messages.length - 1]?.id || '';
+    if (newestId !== lastMsgIdRef.current) {
+      lastMsgIdRef.current = newestId;
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   if (!isOpen || !friend) return null;
@@ -81,7 +132,25 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.message) {
-        setMessages((prev) => [...prev, data.message]);
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === data.message.id)) return prev;
+          return [...prev, data.message];
+        });
+        try {
+          if (typeof BroadcastChannel !== 'undefined') {
+            const ch = new BroadcastChannel(FRIEND_CHAT_BROADCAST_CHANNEL);
+            ch.postMessage({
+              type: 'NEW_FRIEND_MESSAGE',
+              fromUserId: currentUser.id,
+              toUserId: friend.id,
+              messageId: data.message.id,
+            });
+            ch.close();
+          }
+        } catch {}
+        if (onMessagesUpdated) {
+          onMessagesUpdated();
+        }
       }
     } catch (e) {
       console.error(e);
@@ -96,8 +165,16 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
         {/* Header */}
         <div className="bg-[#181920] border-b border-stone-800 p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-950/60 border border-amber-700/60 flex items-center justify-center text-amber-300 font-bold font-cinzel">
-              {friend.displayName.slice(0, 2).toUpperCase()}
+            <div className="w-10 h-10 rounded-xl bg-amber-950/60 border border-amber-700/60 flex items-center justify-center text-amber-300 font-bold font-cinzel overflow-hidden shrink-0">
+              {friend.avatarUrl ? (
+                <img
+                  src={friend.avatarUrl}
+                  alt={friend.displayName}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                friend.displayName.slice(0, 2).toUpperCase()
+              )}
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -107,16 +184,20 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
                 <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-stone-800 text-amber-300 font-bold border border-stone-700">
                   @{friend.userTagId}
                 </span>
+                <span className="inline-flex items-center gap-1 text-[10px] font-cinzel text-emerald-400 bg-emerald-950/60 border border-emerald-700/50 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  En vivo
+                </span>
               </div>
               <p className="text-[11px] text-stone-400">
-                Mensaje privado directo entre amigos
+                Mensaje privado directo entre amigos (actualización en tiempo real)
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-stone-800 text-stone-400 hover:text-stone-200 transition"
+            className="p-1.5 rounded-lg hover:bg-stone-800 text-stone-400 hover:text-stone-200 transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -180,6 +261,7 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
         <form onSubmit={handleSendMessage} className="bg-[#181920] border-t border-stone-800 p-3 flex gap-2">
           <input
             type="text"
+            data-testid="input-friend-chat-message"
             placeholder={`Escribe un mensaje para ${friend.displayName}...`}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
@@ -187,8 +269,9 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
           />
           <button
             type="submit"
+            data-testid="btn-send-friend-chat-message"
             disabled={!inputText.trim() || isSending}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 disabled:opacity-50 text-stone-950 font-cinzel font-bold text-xs transition flex items-center gap-1.5 shadow"
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 disabled:opacity-50 text-stone-950 font-cinzel font-bold text-xs transition flex items-center gap-1.5 shadow cursor-pointer"
           >
             <Send className="w-3.5 h-3.5" />
             <span>Enviar</span>
@@ -198,3 +281,4 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
     </div>
   );
 };
+

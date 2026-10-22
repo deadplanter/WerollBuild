@@ -434,8 +434,9 @@ export interface DMWorkspace {
   atlasMaps?: Record<string, string>; // key: 'all' or folder path -> square map image URL / DataURL
   atlasPinPositions?: Record<string, AtlasPinPosition>; // key: child folder path -> { x, y }
   placeAlbumPhotos?: PlaceAlbumPhoto[];
+  activeAtlasFolder?: string; // Current folder/place path selected by the DM
   activeLiveVisual?: {
-    kind: 'album' | 'tactical';
+    kind: 'album' | 'tactical' | 'map';
     id: string;
     title: string;
     imageUrl?: string;
@@ -446,6 +447,15 @@ export interface DMWorkspace {
   quickNotification?: string; // Quick alert banner
   dmLiveMessage?: string; // Live status message from DM to table
   favoritesSRD: string[]; // List of favorited rule IDs or titles
+}
+
+export interface LiveRoomProjection {
+  locationName: string;
+  locationFolder: string;
+  visualKind: 'map' | 'album' | 'tactical';
+  visualTitle: string;
+  visualImageUrl?: string;
+  galleryPhotos?: PlaceAlbumPhoto[];
 }
 
 // Dice & Session Types
@@ -485,8 +495,14 @@ export interface PartyMemberLive {
   ac: number;
   passivePerception: number;
   level: number;
+  experience?: number;
+  alignment?: string;
+  speed?: number;
+  initiative?: number;
+  race?: string;
   characterClass: string;
   lastPing: number;
+  dmModifiedAt?: number;
   presenceStatus?: PresenceStatus;
   idleSeconds?: number;
   lastRoll?: DiceRollResult;
@@ -517,6 +533,12 @@ export interface LiveCombatantMini {
   faction: 'enemy' | 'ally';
   isPlayer: boolean;
   conditions?: string[];
+  levelOrCr?: string;
+  initiative?: number;
+  speed?: string;
+  avatarType?: 'icon' | 'custom';
+  avatarCustomUrl?: string;
+  avatarIcon?: string;
 }
 
 export interface SharedSessionData {
@@ -538,6 +560,7 @@ export interface SharedSessionData {
   quickNotification?: string;
   showCombatantsOnTable?: boolean;
   liveCombatants?: LiveCombatantMini[];
+  liveProjection?: LiveRoomProjection;
   playerMessages?: PlayerMessageToDM[];
 }
 
@@ -565,6 +588,8 @@ export interface UserAccountPublic {
   friends?: string[];
   role: UserRole;
   playerType: PlayerType;
+  requestedPlayerType?: PlayerType;
+  playerTypeChangeRequested?: boolean;
   appRole: AppRole;
   canPostInForum: boolean;
   forumPermissionsRequested?: boolean;

@@ -53,9 +53,13 @@ export interface UserAccount {
   userTagId?: string;
   avatarUrl?: string;
   friends?: string[];
+  incomingFriendRequests?: string[];
+  outgoingFriendRequests?: string[];
   password: string;
   role: 'player' | 'dm' | 'both' | 'moderator' | 'creator' | 'admin';
   playerType?: PlayerType; // 'player' | 'dm' | 'both'
+  requestedPlayerType?: PlayerType; // 'player' | 'dm' | 'both'
+  playerTypeChangeRequested?: boolean;
   appRole?: AppRole; // 'client' | 'moderator' | 'creator' | 'admin'
   canPostInForum?: boolean; // false for regular clients unless granted by mod/admin
   forumPermissionsRequested?: boolean;
@@ -760,22 +764,84 @@ export const dataStore = {
     const users = this.getUsers();
     const currentUser = users.find((u) => u.id === userId);
     if (!currentUser) return [];
+    const allMessages = readJSON<FriendDirectMessage[]>('friend_messages.json', []);
     const friendIds = Array.isArray(currentUser.friends) ? currentUser.friends : [];
     return friendIds
       .map((fId) => users.find((u) => u.id === fId))
       .filter((u): u is UserAccount => Boolean(u))
-      .map((u) => ({
-        id: u.id,
-        email: u.email,
-        displayName: u.displayName,
-        userTagId: u.userTagId || '123',
-        fullTag: `${u.displayName}@${u.userTagId || '123'}`,
-        avatarUrl: u.avatarUrl,
-        role: u.role,
-        appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'creator' ? 'creator' : u.role === 'moderator' ? 'moderator' : 'client'),
-        status: u.status,
-        lastActiveAt: u.lastActiveAt,
-      }));
+      .map((u) => {
+        const unreadCount = allMessages.filter(
+          (m) => m.fromUserId === u.id && m.toUserId === userId && !m.read
+        ).length;
+        return {
+          id: u.id,
+          email: u.email,
+          displayName: u.displayName,
+          userTagId: u.userTagId || '123',
+          fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+          avatarUrl: u.avatarUrl,
+          role: u.role,
+          appRole:
+            u.appRole ||
+            (u.role === 'admin'
+              ? 'admin'
+              : u.role === 'creator'
+              ? 'creator'
+              : u.role === 'moderator'
+              ? 'moderator'
+              : 'client'),
+          status: u.status,
+          lastActiveAt: u.lastActiveAt,
+          unreadCount,
+        };
+      });
+  },
+
+  getFriendRequestsForUser(userId: string) {
+    const users = this.getUsers();
+    const currentUser = users.find((u) => u.id === userId);
+    if (!currentUser) {
+      return { incomingRequests: [], outgoingRequests: [] };
+    }
+    const incomingIds = Array.isArray(currentUser.incomingFriendRequests)
+      ? currentUser.incomingFriendRequests
+      : [];
+    const outgoingIds = Array.isArray(currentUser.outgoingFriendRequests)
+      ? currentUser.outgoingFriendRequests
+      : [];
+
+    const mapReqUser = (u: UserAccount) => ({
+      id: u.id,
+      email: u.email,
+      displayName: u.displayName,
+      userTagId: u.userTagId || '123',
+      fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+      avatarUrl: u.avatarUrl,
+      role: u.role,
+      appRole:
+        u.appRole ||
+        (u.role === 'admin'
+          ? 'admin'
+          : u.role === 'creator'
+          ? 'creator'
+          : u.role === 'moderator'
+          ? 'moderator'
+          : 'client'),
+      status: u.status,
+      lastActiveAt: u.lastActiveAt,
+    });
+
+    const incomingRequests = incomingIds
+      .map((rId) => users.find((u) => u.id === rId))
+      .filter((u): u is UserAccount => Boolean(u))
+      .map(mapReqUser);
+
+    const outgoingRequests = outgoingIds
+      .map((tId) => users.find((u) => u.id === tId))
+      .filter((u): u is UserAccount => Boolean(u))
+      .map(mapReqUser);
+
+    return { incomingRequests, outgoingRequests };
   },
 
   addFriendByTag(userId: string, friendFullTagInput: string) {
@@ -816,37 +882,157 @@ export const dataStore = {
     if (!Array.isArray(users[userIdx].friends)) {
       users[userIdx].friends = [];
     }
+    if (!Array.isArray(users[targetIdx].friends)) {
+      users[targetIdx].friends = [];
+    }
     if (users[userIdx].friends!.includes(targetUser.id)) {
       throw new Error(`${targetUser.displayName}@${targetUser.userTagId} ya está en tu lista de amigos.`);
     }
 
-    users[userIdx].friends!.push(targetUser.id);
-
-    // Also add reciprocally so both users appear in each other's friends list
-    if (!Array.isArray(users[targetIdx].friends)) {
-      users[targetIdx].friends = [];
+    if (!Array.isArray(users[userIdx].incomingFriendRequests)) {
+      users[userIdx].incomingFriendRequests = [];
     }
-    if (!users[targetIdx].friends!.includes(userId)) {
-      users[targetIdx].friends!.push(userId);
+    if (!Array.isArray(users[userIdx].outgoingFriendRequests)) {
+      users[userIdx].outgoingFriendRequests = [];
+    }
+    if (!Array.isArray(users[targetIdx].incomingFriendRequests)) {
+      users[targetIdx].incomingFriendRequests = [];
+    }
+    if (!Array.isArray(users[targetIdx].outgoingFriendRequests)) {
+      users[targetIdx].outgoingFriendRequests = [];
+    }
+
+    // If the target user ALREADY sent us a friend request, automatically accept it!
+    if (users[userIdx].incomingFriendRequests!.includes(targetUser.id)) {
+      users[userIdx].incomingFriendRequests = users[userIdx].incomingFriendRequests!.filter(
+        (id) => id !== targetUser.id
+      );
+      users[targetIdx].outgoingFriendRequests = users[targetIdx].outgoingFriendRequests!.filter(
+        (id) => id !== userId
+      );
+      if (!users[userIdx].friends!.includes(targetUser.id)) {
+        users[userIdx].friends!.push(targetUser.id);
+      }
+      if (!users[targetIdx].friends!.includes(userId)) {
+        users[targetIdx].friends!.push(userId);
+      }
+      this.saveUsers(
+        users,
+        `Solicitud de amistad aceptada mutuamente entre ${users[userIdx].displayName}@${users[userIdx].userTagId} y ${targetUser.displayName}@${targetUser.userTagId}`
+      );
+      const reqs = this.getFriendRequestsForUser(userId);
+      return {
+        requestStatus: 'accepted' as const,
+        addedFriend: {
+          id: targetUser.id,
+          email: targetUser.email,
+          displayName: targetUser.displayName,
+          userTagId: targetUser.userTagId || '123',
+          fullTag: `${targetUser.displayName}@${targetUser.userTagId || '123'}`,
+          avatarUrl: targetUser.avatarUrl,
+          role: targetUser.role,
+          status: targetUser.status,
+          lastActiveAt: targetUser.lastActiveAt,
+        },
+        friends: this.getFriendsForUser(userId),
+        ...reqs,
+      };
+    }
+
+    // Check if we already sent a pending request to this user
+    if (users[userIdx].outgoingFriendRequests!.includes(targetUser.id)) {
+      throw new Error(
+        `Ya enviaste una solicitud de amistad a ${targetUser.displayName}@${targetUser.userTagId}. Espera a que la acepte.`
+      );
+    }
+
+    // Send a pending friend request to targetUser
+    users[userIdx].outgoingFriendRequests!.push(targetUser.id);
+    if (!users[targetIdx].incomingFriendRequests!.includes(userId)) {
+      users[targetIdx].incomingFriendRequests!.push(userId);
     }
 
     this.saveUsers(
       users,
-      `Amigo agregado: ${users[userIdx].displayName}@${users[userIdx].userTagId} agregó a ${targetUser.displayName}@${targetUser.userTagId}`
+      `Solicitud de amistad enviada: ${users[userIdx].displayName}@${users[userIdx].userTagId} solicitó agregar a ${targetUser.displayName}@${targetUser.userTagId}`
     );
 
+    const reqs = this.getFriendRequestsForUser(userId);
     return {
+      requestStatus: 'pending' as const,
       addedFriend: {
         id: targetUser.id,
         email: targetUser.email,
         displayName: targetUser.displayName,
         userTagId: targetUser.userTagId || '123',
         fullTag: `${targetUser.displayName}@${targetUser.userTagId || '123'}`,
+        avatarUrl: targetUser.avatarUrl,
         role: targetUser.role,
         status: targetUser.status,
         lastActiveAt: targetUser.lastActiveAt,
       },
       friends: this.getFriendsForUser(userId),
+      ...reqs,
+    };
+  },
+
+  respondToFriendRequest(userId: string, requesterId: string, accept: boolean) {
+    const users = this.getUsers();
+    const userIdx = users.findIndex((u) => u.id === userId);
+    const reqIdx = users.findIndex((u) => u.id === requesterId);
+
+    if (userIdx === -1) {
+      throw new Error('Tu usuario no fue encontrado.');
+    }
+    if (reqIdx === -1) {
+      throw new Error('El usuario que envió la solicitud no fue encontrado.');
+    }
+
+    const currentUser = users[userIdx];
+    const requesterUser = users[reqIdx];
+
+    currentUser.incomingFriendRequests = (currentUser.incomingFriendRequests || []).filter(
+      (id) => id !== requesterId
+    );
+    currentUser.outgoingFriendRequests = (currentUser.outgoingFriendRequests || []).filter(
+      (id) => id !== requesterId
+    );
+    requesterUser.outgoingFriendRequests = (requesterUser.outgoingFriendRequests || []).filter(
+      (id) => id !== userId
+    );
+    requesterUser.incomingFriendRequests = (requesterUser.incomingFriendRequests || []).filter(
+      (id) => id !== userId
+    );
+
+    if (accept) {
+      if (!Array.isArray(currentUser.friends)) currentUser.friends = [];
+      if (!Array.isArray(requesterUser.friends)) requesterUser.friends = [];
+      if (!currentUser.friends.includes(requesterId)) {
+        currentUser.friends.push(requesterId);
+      }
+      if (!requesterUser.friends.includes(userId)) {
+        requesterUser.friends.push(userId);
+      }
+    }
+
+    this.saveUsers(
+      users,
+      accept
+        ? `Solicitud de amistad aceptada: ${currentUser.displayName}@${currentUser.userTagId} aceptó a ${requesterUser.displayName}@${requesterUser.userTagId}`
+        : `Solicitud de amistad rechazada: ${currentUser.displayName}@${currentUser.userTagId} rechazó a ${requesterUser.displayName}@${requesterUser.userTagId}`
+    );
+
+    const reqs = this.getFriendRequestsForUser(userId);
+    return {
+      accepted: accept,
+      requester: {
+        id: requesterUser.id,
+        displayName: requesterUser.displayName,
+        userTagId: requesterUser.userTagId || '123',
+        fullTag: `${requesterUser.displayName}@${requesterUser.userTagId || '123'}`,
+      },
+      friends: this.getFriendsForUser(userId),
+      ...reqs,
     };
   },
 
@@ -859,10 +1045,24 @@ export const dataStore = {
 
     const friendUser = users.find((u) => u.id === friendId);
     users[userIdx].friends = (users[userIdx].friends || []).filter((id) => id !== friendId);
+    users[userIdx].incomingFriendRequests = (users[userIdx].incomingFriendRequests || []).filter(
+      (id) => id !== friendId
+    );
+    users[userIdx].outgoingFriendRequests = (users[userIdx].outgoingFriendRequests || []).filter(
+      (id) => id !== friendId
+    );
 
     const friendIdx = users.findIndex((u) => u.id === friendId);
-    if (friendIdx !== -1 && Array.isArray(users[friendIdx].friends)) {
-      users[friendIdx].friends = users[friendIdx].friends!.filter((id) => id !== userId);
+    if (friendIdx !== -1) {
+      if (Array.isArray(users[friendIdx].friends)) {
+        users[friendIdx].friends = users[friendIdx].friends!.filter((id) => id !== userId);
+      }
+      users[friendIdx].incomingFriendRequests = (users[friendIdx].incomingFriendRequests || []).filter(
+        (id) => id !== userId
+      );
+      users[friendIdx].outgoingFriendRequests = (users[friendIdx].outgoingFriendRequests || []).filter(
+        (id) => id !== userId
+      );
     }
 
     this.saveUsers(
@@ -870,8 +1070,10 @@ export const dataStore = {
       `Amigo eliminado: ${users[userIdx].displayName}@${users[userIdx].userTagId} eliminó a ${friendUser ? `${friendUser.displayName}@${friendUser.userTagId}` : friendId}`
     );
 
+    const reqs = this.getFriendRequestsForUser(userId);
     return {
       friends: this.getFriendsForUser(userId),
+      ...reqs,
     };
   },
 
@@ -1761,6 +1963,60 @@ export const dataStore = {
     user.forumPermissionsRequested = true;
     this.saveUsers(users, `Solicitud de permiso de foro por ${user.displayName}@${user.userTagId}`);
     return true;
+  },
+
+  // --- TABLE ROLE (PLAYER TYPE) CHANGE REQUEST & MODERATOR APPROVAL ---
+  requestPlayerTypeChange(userId: string, requestedPlayerType: PlayerType): UserAccount | null {
+    const users = this.getUsers();
+    const user = users.find((u) => u.id === userId);
+    if (!user) return null;
+    user.requestedPlayerType = requestedPlayerType;
+    user.playerTypeChangeRequested = true;
+    this.saveUsers(
+      users,
+      `Solicitud de cambio de Rol de Mesa (${requestedPlayerType}) por ${user.displayName}@${user.userTagId}`
+    );
+    return user;
+  },
+
+  resolvePlayerTypeChangeRequest(
+    userId: string,
+    approved: boolean,
+    overridePlayerType?: PlayerType
+  ): UserAccount | null {
+    const users = this.getUsers();
+    const user = users.find((u) => u.id === userId);
+    if (!user) return null;
+
+    if (approved) {
+      const nextType: PlayerType =
+        overridePlayerType ||
+        user.requestedPlayerType ||
+        user.playerType ||
+        'both';
+      user.playerType = nextType;
+      const appRole =
+        user.appRole ||
+        (user.role === 'admin'
+          ? 'admin'
+          : user.role === 'creator'
+          ? 'creator'
+          : user.role === 'moderator'
+          ? 'moderator'
+          : 'client');
+      if (appRole === 'client') {
+        user.role = nextType;
+      }
+    }
+
+    user.playerTypeChangeRequested = false;
+    user.requestedPlayerType = undefined;
+
+    this.saveUsers(
+      users,
+      `Solicitud de Rol de Mesa ${approved ? 'aprobada' : 'rechazada'} para ${user.displayName}@${user.userTagId}`
+    );
+    return user;
   },
 
   // --- PERSISTENT HOST SETTINGS & CHANGELOG ---

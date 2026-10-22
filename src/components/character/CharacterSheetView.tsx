@@ -38,6 +38,7 @@ import { CharacterSettingsModal } from './CharacterSettingsModal';
 import { CharacterJournalBookModal } from './CharacterJournalBookModal';
 import { CharacterBackpackModal } from './CharacterBackpackModal';
 import { CharacterParchmentModal } from './CharacterParchmentModal';
+import { CharacterTarotCard, AlignmentBadgeIcon } from './CharacterTarotCard';
 import {
   Character5e,
   AbilityKey,
@@ -106,6 +107,8 @@ interface CharacterSheetViewProps {
     title: string,
     description: string
   ) => Promise<{ ok: boolean; message?: string; error?: string }>;
+  onOpenTableMapView?: () => void;
+  activeLocationName?: string;
 }
 
 export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
@@ -128,6 +131,8 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
   onOpenRollFeed,
   rollFeed = [],
   onSendPlayerMessageToDM,
+  onOpenTableMapView,
+  activeLocationName,
 }) => {
   // Active Deck in "Mazos de Juego" & Horizontal Card Carousel Index
   const [activeDeck, setActiveDeck] = useState<'combat' | 'skills' | 'spells'>('combat');
@@ -602,6 +607,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                   <h1 className="font-cinzel font-black text-xl sm:text-2xl text-[#f5e4be] tracking-wide leading-none">
                     {character.name}
                   </h1>
+                  <AlignmentBadgeIcon alignment={character.alignment} size="sm" />
 
                   <button
                     type="button"
@@ -1000,9 +1006,9 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
           {/* --------------------------------------------------------------- */}
           {/* ROW 4: MAZOS DE JUEGO (LEFT) & EL RINCÓN DEL AVENTURERO (RIGHT) */}
           {/* --------------------------------------------------------------- */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 pt-0.5">
-            {/* LEFT 7 COLS: MAZOS DE JUEGO (Standing Deck Cards + Overlapping Foreground Hand + Scroll Arrows) */}
-            <div className="lg:col-span-7 bg-[#12141b]/90 border border-[#c8a45c]/45 rounded-xl p-3 flex flex-col justify-between">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 pt-1 items-stretch">
+            {/* LEFT 7 COLS: MAZOS DE JUEGO (Tarot-Proportioned Cards in Both Solo & Table Modes) */}
+            <div className="lg:col-span-7 bg-[#12151e]/95 border-2 border-[#c8a45c]/65 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between shadow-xl">
               {(() => {
                 const combatCardsCount = Math.max(1, equippedWeaponAttacks.length);
                 const currentPlayerDeckCount =
@@ -1011,34 +1017,34 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                     : activeDeck === 'skills'
                     ? possessedSkills.length
                     : preparedSpells.length;
-                const maxScrollIdx = Math.max(0, currentPlayerDeckCount - 3);
+                const maxScrollIdx = Math.max(0, currentPlayerDeckCount - 2);
                 const safeScrollIdx = Math.min(playerDeckScrollIndex, maxScrollIdx);
 
                 return (
-                  <div className="flex flex-col justify-between h-full">
+                  <div className="flex flex-col h-full">
                     {/* Section Header */}
-                    <div className="flex items-center gap-3 mb-2">
-                      <h2 className="font-cinzel font-black text-sm text-[#f5e4be] tracking-wider uppercase whitespace-nowrap">
+                    <div className="flex items-center gap-3 mb-3">
+                      <h2 className="font-cinzel font-black text-base sm:text-lg text-[#f5e4be] tracking-wider uppercase whitespace-nowrap">
                         MAZOS DE JUEGO
                       </h2>
                       <div className="h-px flex-1 bg-gradient-to-r from-[#c8a45c]/60 to-transparent" />
-                      {currentPlayerDeckCount > 3 && (
+                      {currentPlayerDeckCount > 2 && (
                         <span className="text-[10px] font-mono text-amber-300 bg-[#181b26] px-2 py-0.5 rounded border border-[#c8a45c]/40">
-                          Cartas {safeScrollIdx + 1}–{Math.min(currentPlayerDeckCount, safeScrollIdx + 3)} de {currentPlayerDeckCount}
+                          Cartas {safeScrollIdx + 1}–{Math.min(currentPlayerDeckCount, safeScrollIdx + 2)} de {currentPlayerDeckCount}
                         </span>
                       )}
-                      <span className="text-[10px] font-cinzel text-[#cbb692]">
+                      <span className="text-[11px] font-cinzel text-[#d8ba73] uppercase tracking-wider">
                         {activeDeck === 'combat'
-                          ? 'Combate y Acciones'
+                          ? 'COMBATE Y ACCIONES'
                           : activeDeck === 'skills'
-                          ? 'Habilidades Equipadas'
-                          : 'Conjuros Preparados'}
+                          ? 'HABILIDADES'
+                          : 'LANZAR CONJUROS'}
                       </span>
                     </div>
 
-                    {/* LAYER 1 (BACK): 3 Tall Standing Deck Cards (La mitad inferior queda cubierta por las cartas abiertas) */}
+                    {/* LAYER 1 (TOP TABS): 3 Deck Selector Tabs tucked behind the main Tarot Card Tray */}
                     <div className="grid grid-cols-3 gap-2.5 px-1">
-                      {/* Standing Deck 1: COMBATES Y ACCIONES */}
+                      {/* Deck Tab 1: COMBATES Y ACCIONES */}
                       <button
                         type="button"
                         data-testid="player-deck-combat"
@@ -1046,32 +1052,26 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                           setActiveDeck('combat');
                           setPlayerDeckScrollIndex(0);
                         }}
-                        className={`relative h-[148px] rounded-2xl p-2.5 border-2 text-center transition-all duration-200 cursor-pointer overflow-hidden flex flex-col items-center justify-start ${
+                        className={`relative h-[86px] rounded-t-2xl p-2.5 pb-5 border-2 text-left transition-all duration-200 cursor-pointer overflow-hidden flex items-start gap-2 ${
                           activeDeck === 'combat'
-                            ? 'bg-gradient-to-b from-[#3b2714] via-[#24180c] to-[#171008] border-[#f3dfb2] shadow-[0_0_22px_rgba(226,194,117,0.35)] -translate-y-1 z-10'
-                            : 'bg-gradient-to-b from-[#211912] to-[#130f0b] border-[#c8a45c]/40 opacity-80 hover:opacity-100 hover:-translate-y-0.5'
+                            ? 'bg-gradient-to-b from-[#3d2914] via-[#26190c] to-[#171008] border-[#f5e4be] shadow-[0_0_22px_rgba(226,194,117,0.35)] z-10'
+                            : 'bg-gradient-to-b from-[#1e1813] to-[#120f0c] border-[#c8a45c]/40 opacity-80 hover:opacity-100'
                         }`}
                       >
-                        <div className="absolute inset-1.5 rounded-xl border border-amber-400/20 pointer-events-none" />
-                        <div className="flex items-center gap-1.5 z-10 mt-0.5">
-                          <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-400/60 flex items-center justify-center text-amber-300 shadow-inner shrink-0">
-                            <Sword className="w-3.5 h-3.5" />
-                          </div>
-                          <div className="text-left">
-                            <div className="font-cinzel font-black text-[10px] sm:text-[11px] text-[#f5e4be] leading-none uppercase">
-                              COMBATES Y ACCIONES
-                            </div>
-                            <div className="text-[9px] text-amber-300/90 font-mono mt-0.5">
-                              {combatCardsCount} Cartas
-                            </div>
-                          </div>
+                        <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-400/70 flex items-center justify-center text-amber-300 shadow-inner shrink-0 mt-0.5">
+                          <Sword className="w-3.5 h-3.5" />
                         </div>
-                        <div className="mt-4 opacity-20 pointer-events-none">
-                          <Sword className="w-12 h-12 text-amber-300" />
+                        <div className="min-w-0">
+                          <div className="font-cinzel font-black text-[11px] sm:text-xs text-[#f5e4be] leading-tight uppercase">
+                            COMBATES Y ACCIONES
+                          </div>
+                          <div className="text-[10px] text-amber-300/90 font-mono mt-0.5">
+                            {combatCardsCount} Cartas
+                          </div>
                         </div>
                       </button>
 
-                      {/* Standing Deck 2: HABILIDADES */}
+                      {/* Deck Tab 2: HABILIDADES */}
                       <button
                         type="button"
                         data-testid="player-deck-skills"
@@ -1079,32 +1079,26 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                           setActiveDeck('skills');
                           setPlayerDeckScrollIndex(0);
                         }}
-                        className={`relative h-[148px] rounded-2xl p-2.5 border-2 text-center transition-all duration-200 cursor-pointer overflow-hidden flex flex-col items-center justify-start ${
+                        className={`relative h-[86px] rounded-t-2xl p-2.5 pb-5 border-2 text-left transition-all duration-200 cursor-pointer overflow-hidden flex items-start gap-2 ${
                           activeDeck === 'skills'
-                            ? 'bg-gradient-to-b from-[#132c3d] via-[#0e1f2b] to-[#09131c] border-cyan-300 shadow-[0_0_22px_rgba(34,211,238,0.3)] -translate-y-1 z-10'
-                            : 'bg-gradient-to-b from-[#111d26] to-[#0b1218] border-cyan-500/35 opacity-80 hover:opacity-100 hover:-translate-y-0.5'
+                            ? 'bg-gradient-to-b from-[#132e40] via-[#0e1f2c] to-[#09131c] border-cyan-300 shadow-[0_0_22px_rgba(34,211,238,0.3)] z-10'
+                            : 'bg-gradient-to-b from-[#111c26] to-[#0b1218] border-cyan-500/35 opacity-80 hover:opacity-100'
                         }`}
                       >
-                        <div className="absolute inset-1.5 rounded-xl border border-cyan-400/20 pointer-events-none" />
-                        <div className="flex items-center gap-1.5 z-10 mt-0.5">
-                          <div className="w-7 h-7 rounded-full bg-cyan-500/20 border border-cyan-400/60 flex items-center justify-center text-cyan-300 shadow-inner shrink-0">
-                            <BookOpen className="w-3.5 h-3.5" />
-                          </div>
-                          <div className="text-left">
-                            <div className="font-cinzel font-black text-[10px] sm:text-[11px] text-cyan-100 leading-none uppercase">
-                              HABILIDADES
-                            </div>
-                            <div className="text-[9px] text-cyan-300 font-mono mt-0.5">
-                              {possessedSkills.length} Cartas
-                            </div>
-                          </div>
+                        <div className="w-7 h-7 rounded-full bg-cyan-500/20 border border-cyan-400/70 flex items-center justify-center text-cyan-300 shadow-inner shrink-0 mt-0.5">
+                          <BookOpen className="w-3.5 h-3.5" />
                         </div>
-                        <div className="mt-4 opacity-20 pointer-events-none">
-                          <BookOpen className="w-12 h-12 text-cyan-300" />
+                        <div className="min-w-0">
+                          <div className="font-cinzel font-black text-[11px] sm:text-xs text-cyan-100 leading-tight uppercase">
+                            HABILIDADES
+                          </div>
+                          <div className="text-[10px] text-cyan-300 font-mono mt-0.5">
+                            {possessedSkills.length} Cartas
+                          </div>
                         </div>
                       </button>
 
-                      {/* Standing Deck 3: LANZAR CONJUROS */}
+                      {/* Deck Tab 3: LANZAR CONJUROS */}
                       <button
                         type="button"
                         data-testid="player-deck-spells"
@@ -1112,55 +1106,49 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                           setActiveDeck('spells');
                           setPlayerDeckScrollIndex(0);
                         }}
-                        className={`relative h-[148px] rounded-2xl p-2.5 border-2 text-center transition-all duration-200 cursor-pointer overflow-hidden flex flex-col items-center justify-start ${
+                        className={`relative h-[86px] rounded-t-2xl p-2.5 pb-5 border-2 text-left transition-all duration-200 cursor-pointer overflow-hidden flex items-start gap-2 ${
                           activeDeck === 'spells'
-                            ? 'bg-gradient-to-b from-[#2d1742] via-[#1e102e] to-[#12091c] border-purple-300 shadow-[0_0_22px_rgba(192,132,252,0.32)] -translate-y-1 z-10'
-                            : 'bg-gradient-to-b from-[#1d1229] to-[#110b18] border-purple-500/35 opacity-80 hover:opacity-100 hover:-translate-y-0.5'
+                            ? 'bg-gradient-to-b from-[#2f1845] via-[#1f102f] to-[#12091c] border-purple-300 shadow-[0_0_22px_rgba(192,132,252,0.32)] z-10'
+                            : 'bg-gradient-to-b from-[#1c1228] to-[#110b18] border-purple-500/35 opacity-80 hover:opacity-100'
                         }`}
                       >
-                        <div className="absolute inset-1.5 rounded-xl border border-purple-400/20 pointer-events-none" />
-                        <div className="flex items-center gap-1.5 z-10 mt-0.5">
-                          <div className="w-7 h-7 rounded-full bg-purple-500/20 border border-purple-400/60 flex items-center justify-center text-purple-300 shadow-inner shrink-0">
-                            <Flame className="w-3.5 h-3.5" />
-                          </div>
-                          <div className="text-left">
-                            <div className="font-cinzel font-black text-[10px] sm:text-[11px] text-purple-100 leading-none uppercase">
-                              LANZAR CONJUROS
-                            </div>
-                            <div className="text-[9px] text-purple-300 font-mono mt-0.5">
-                              {preparedSpells.length} Preparados
-                            </div>
-                          </div>
+                        <div className="w-7 h-7 rounded-full bg-purple-500/20 border border-purple-400/70 flex items-center justify-center text-purple-300 shadow-inner shrink-0 mt-0.5">
+                          <Flame className="w-3.5 h-3.5" />
                         </div>
-                        <div className="mt-4 opacity-20 pointer-events-none">
-                          <Flame className="w-12 h-12 text-purple-300" />
+                        <div className="min-w-0">
+                          <div className="font-cinzel font-black text-[11px] sm:text-xs text-purple-100 leading-tight uppercase">
+                            LANZAR CONJUROS
+                          </div>
+                          <div className="text-[10px] text-purple-300 font-mono mt-0.5">
+                            {preparedSpells.length} Preparados
+                          </div>
                         </div>
                       </button>
                     </div>
 
-                    {/* LAYER 2 (FOREGROUND OVERLAPPING LOWER HALF): Playable RPG Cards + Scroll Arrows + Compact Empty-Card Add Slot */}
-                    <div className="relative -mt-20 z-20 rounded-2xl bg-[#0f1119]/95 backdrop-blur-md border-2 border-[#c8a45c]/75 p-2 shadow-[0_-10px_25px_rgba(0,0,0,0.95)] flex items-center gap-1.5">
-                      {/* Left Scroll Arrow (when > 3 cards) */}
-                      {currentPlayerDeckCount > 3 && (
+                    {/* LAYER 2 (FOREGROUND TAROT TRAY): Balanced Tarot-Proportioned Cards + "+ NUEVA CARTA" Slot */}
+                    <div className="relative -mt-5 z-20 flex-1 rounded-2xl bg-[#10131c] border-2 border-[#c8a45c]/80 p-3 shadow-[0_-10px_30px_rgba(0,0,0,0.95)] flex items-center gap-2">
+                      {/* Left Scroll Arrow (when > 2 cards) */}
+                      {currentPlayerDeckCount > 2 && (
                         <button
                           type="button"
                           data-testid="btn-player-deck-prev"
                           disabled={safeScrollIdx === 0}
                           onClick={() => setPlayerDeckScrollIndex(Math.max(0, safeScrollIdx - 1))}
-                          className="w-6 h-28 rounded-xl bg-[#191c29] hover:bg-amber-950/80 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 transition cursor-pointer disabled:cursor-default shadow"
+                          className="w-7 h-36 rounded-xl bg-[#191c29] hover:bg-amber-950/80 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 transition cursor-pointer disabled:cursor-default shadow"
                           title="Ver cartas anteriores"
                         >
                           <ChevronLeft className="w-4 h-4 text-amber-300" />
                         </button>
                       )}
 
-                      {/* 3 Visible Open Cards Grid */}
-                      <div className="flex-1 grid grid-cols-3 gap-2 min-h-[144px]">
+                      {/* 3-Column Tarot Cards Tray (2 Visible Playable Tarot Cards + 1 "+ NUEVA CARTA" Tarot Slot) */}
+                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-stretch">
                         {/* DECK 1 CARDS: COMBATES Y ACCIONES */}
                         {activeDeck === 'combat' && (
                           <>
                             {equippedWeaponAttacks
-                              .slice(safeScrollIdx, safeScrollIdx + 3)
+                              .slice(safeScrollIdx, safeScrollIdx + 2)
                               .map((watk) => (
                                 <div
                                   key={watk.id}
@@ -1172,34 +1160,53 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                       20
                                     )
                                   }
-                                  className="group relative rounded-xl border-2 border-[#c8a45c]/80 hover:border-[#fff0c2] bg-gradient-to-b from-[#2b1f14] via-[#1c150e] to-[#120d09] p-2.5 flex flex-col justify-between min-h-[140px] shadow-xl hover:-translate-y-0.5 transition cursor-pointer"
+                                  className="group relative rounded-2xl border-2 border-[#c8a45c] ring-1 ring-inset ring-[#e2c275]/35 hover:border-[#fff0c2] bg-gradient-to-b from-[#231d17] via-[#17161d] to-[#11131a] p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer"
                                 >
-                                  <div className="flex items-center justify-between text-[10px] text-[#e2c275] font-cinzel font-bold border-b border-[#c8a45c]/30 pb-1">
-                                    <span className="truncate">{watk.weaponName}</span>
-                                    <Sword className="w-3 h-3 shrink-0 text-amber-400" />
+                                  {/* Card Top Header */}
+                                  <div className="flex items-center justify-between text-[11px] text-[#d8ba73] font-cinzel font-bold border-b border-[#c8a45c]/30 pb-1">
+                                    <span className="truncate uppercase">{watk.weaponName}</span>
+                                    <Sword className="w-3.5 h-3.5 shrink-0 text-[#e2c275]" />
                                   </div>
 
-                                  <div className="my-1 text-center">
-                                    <div className="font-cinzel font-black text-xs text-white leading-tight line-clamp-2">
+                                  {/* Framed Tarot Illustration Box */}
+                                  <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#2b2318] to-[#141210] border-2 border-[#786545] shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition">
+                                    <svg
+                                      viewBox="0 0 64 64"
+                                      className="w-full h-full text-[#dcb868] drop-shadow"
+                                      fill="currentColor"
+                                    >
+                                      <path d="M52 8L40 12L18 34L12 32L8 36L16 44L10 50L14 54L20 48L28 56L32 52L30 46L52 24L56 12L52 8ZM22 40L44 18L46 20L24 42L22 40Z" />
+                                    </svg>
+                                  </div>
+
+                                  {/* Title & Formula Pill */}
+                                  <div className="text-center space-y-1.5">
+                                    <div className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase leading-tight line-clamp-2">
                                       {watk.attackName}
                                     </div>
-                                    <div className="mt-1.5 inline-block px-2 py-0.5 rounded bg-black/60 border border-amber-500/40 font-mono font-bold text-xs text-amber-300">
-                                      {watk.damageFormula}
-                                    </div>
-                                    <div className="text-[10px] text-[#cbb692] mt-0.5">
-                                      {watk.damageType}
+                                    <div className="rounded-xl bg-[#181c29] border border-white/10 py-1.5 px-2.5 shadow-inner">
+                                      <div className="font-cinzel font-black text-base sm:text-lg text-white leading-none">
+                                        {watk.damageFormula}
+                                      </div>
+                                      <div className="text-[9px] font-cinzel font-bold text-[#8e96aa] uppercase tracking-wider mt-0.5">
+                                        {watk.damageType}
+                                      </div>
                                     </div>
                                   </div>
 
-                                  <div className="pt-1 border-t border-[#c8a45c]/30 flex items-center justify-between text-[10px] font-mono text-[#f3dfb2]">
+                                  {/* Footer */}
+                                  <div className="pt-1.5 mt-1.5 border-t border-[#c8a45c]/35 flex items-center justify-between text-[11px] font-sans text-[#e2d6c1]">
                                     <span>Impacto: {formatModifier(watk.toHitBonus)}</span>
-                                    <span className="text-amber-400 font-bold">Tirar</span>
+                                    <span className="font-cinzel font-black text-[#e5c478] uppercase tracking-wider">
+                                      TIRAR
+                                    </span>
                                   </div>
                                 </div>
                               ))}
 
                             {equippedWeaponAttacks.length === 0 && (
                               <div
+                                data-testid="player-card-unarmed"
                                 onClick={() =>
                                   onTriggerRoll(
                                     'Golpe Desarmado',
@@ -1207,29 +1214,48 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                     20
                                   )
                                 }
-                                className="group relative rounded-xl border-2 border-[#c8a45c]/60 hover:border-[#e2c275] bg-gradient-to-b from-[#221c17] to-[#13100d] p-2.5 flex flex-col justify-between min-h-[140px] shadow hover:-translate-y-0.5 transition cursor-pointer"
+                                className="group relative rounded-2xl border-2 border-[#c8a45c] ring-1 ring-inset ring-[#e2c275]/35 hover:border-[#fff0c2] bg-gradient-to-b from-[#231d17] via-[#17161d] to-[#11131a] p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer"
                               >
-                                <div className="flex items-center justify-between text-[10px] text-[#cbb692] font-cinzel font-bold border-b border-white/10 pb-1">
+                                <div className="flex items-center justify-between text-[11px] text-[#d8ba73] font-cinzel font-bold border-b border-[#c8a45c]/30 pb-1">
                                   <span>BÁSICO</span>
-                                  <Sword className="w-3 h-3 text-[#e2c275]" />
+                                  <Sword className="w-3.5 h-3.5 text-[#e2c275]" />
                                 </div>
-                                <div className="my-1.5 text-center">
-                                  <div className="font-cinzel font-black text-xs text-[#f5e4be]">
-                                    Golpe Desarmado
-                                  </div>
-                                  <div className="mt-1 inline-block px-2 py-0.5 rounded bg-black/50 text-xs font-mono text-amber-300">
-                                    1 + {getEffectiveAbilityModifier(character.abilities.str)}
-                                  </div>
-                                  <div className="text-[10px] text-stone-400 mt-0.5">Contundente</div>
+
+                                {/* Framed Clenched Fist Tarot Emblem */}
+                                <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#2b2318] to-[#141210] border-2 border-[#786545] shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition">
+                                  <svg
+                                    viewBox="0 0 64 64"
+                                    className="w-full h-full text-[#dcb868] drop-shadow"
+                                    fill="currentColor"
+                                  >
+                                    <path d="M18 22c0-3 2.5-5 5.5-5 1.5 0 2.8.6 3.7 1.5.9-1.5 2.5-2.5 4.3-2.5 2 0 3.7 1 4.5 2.6.9-.9 2.2-1.6 3.7-1.6 2.8 0 5 2.2 5 5v2.2c2.8.6 4.8 3.1 4.8 6.1v7.7c0 7.5-5.8 13.5-13.2 13.5H27c-6.6 0-12-5.4-12-12V27c0-2.8 1.3-4.2 3-5zm5 4v8h3v-9c0-1.1-.9-2-2-2s-1 .9-1 3zm6-1v9h3V24c0-1.1-.9-2-2-2s-1 .9-1 2zm6 1v8h3v-8c0-1.1-.9-2-2-2s-1 .9-1 2zm6 4v6h2.5c1.4 0 2.5-1.1 2.5-2.5v-1c0-1.4-1.1-2.5-2.5-2.5H41z" />
+                                  </svg>
                                 </div>
-                                <div className="pt-1 border-t border-white/10 flex items-center justify-between text-[10px] font-mono text-[#cbb692]">
+
+                                <div className="text-center space-y-1.5">
+                                  <div className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase leading-tight">
+                                    GOLPE DESARMADO
+                                  </div>
+                                  <div className="rounded-xl bg-[#181c29] border border-white/10 py-1.5 px-2.5 shadow-inner">
+                                    <div className="font-cinzel font-black text-base sm:text-lg text-white leading-none">
+                                      1 + {getEffectiveAbilityModifier(character.abilities.str)}
+                                    </div>
+                                    <div className="text-[9px] font-cinzel font-bold text-[#8e96aa] uppercase tracking-wider mt-0.5">
+                                      CONTUNDENTE
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="pt-1.5 mt-1.5 border-t border-[#c8a45c]/35 flex items-center justify-between text-[11px] font-sans text-[#e2d6c1]">
                                   <span>
                                     Impacto:{' '}
                                     {formatModifier(
                                       getEffectiveAbilityModifier(character.abilities.str) + profBonus
                                     )}
                                   </span>
-                                  <span className="text-amber-300">Tirar</span>
+                                  <span className="font-cinzel font-black text-[#e5c478] uppercase tracking-wider">
+                                    TIRAR
+                                  </span>
                                 </div>
                               </div>
                             )}
@@ -1239,7 +1265,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                         {/* DECK 2 CARDS: HABILIDADES */}
                         {activeDeck === 'skills' &&
                           possessedSkills
-                            .slice(safeScrollIdx, safeScrollIdx + 3)
+                            .slice(safeScrollIdx, safeScrollIdx + 2)
                             .map((sk) => {
                               const abMod = getEffectiveAbilityModifier(character.abilities[sk.ability]);
                               const totalBonus =
@@ -1254,11 +1280,11 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                   key={sk.id}
                                   data-testid={`player-card-${sk.id}`}
                                   onClick={() => onTriggerRoll(`Habilidad: ${sk.name}`, totalBonus, 20)}
-                                  className="group relative rounded-xl border-2 border-cyan-400/75 hover:border-cyan-200 bg-gradient-to-b from-[#132838] via-[#0e1c28] to-[#09121a] p-2.5 flex flex-col justify-between min-h-[140px] shadow-xl hover:-translate-y-0.5 transition cursor-pointer"
+                                  className="group relative rounded-2xl border-2 border-cyan-400/80 ring-1 ring-inset ring-cyan-300/25 hover:border-cyan-200 bg-gradient-to-b from-[#132838] via-[#0e1c28] to-[#09121a] p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer"
                                 >
-                                  <div className="flex items-center justify-between text-[10px] text-cyan-300 font-cinzel font-bold border-b border-cyan-500/30 pb-1">
+                                  <div className="flex items-center justify-between text-[11px] text-cyan-300 font-cinzel font-bold border-b border-cyan-500/30 pb-1">
                                     <span>{ABILITY_LABELS[sk.ability].abbr}</span>
-                                    {!isLocked && (
+                                    {!isLocked ? (
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -1268,216 +1294,370 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                         className="text-red-400 hover:text-red-200"
                                         title="Quitar habilidad del mazo"
                                       >
-                                        <Trash2 className="w-3 h-3" />
+                                        <Trash2 className="w-3.5 h-3.5" />
                                       </button>
+                                    ) : (
+                                      <BookOpen className="w-3.5 h-3.5 text-cyan-300" />
                                     )}
                                   </div>
 
-                                  <div className="my-1 text-center">
-                                    <div className="font-cinzel font-black text-xs text-white leading-tight">
-                                      {sk.name}
-                                    </div>
-                                    <div className="mt-1 inline-block px-2 py-0.5 rounded-full bg-cyan-950 border border-cyan-400/50 font-mono font-black text-xs text-cyan-200">
-                                      {formatModifier(totalBonus)}
-                                    </div>
-                                    <p className="text-[10px] text-cyan-100/75 line-clamp-2 mt-1">
-                                      {sk.description}
-                                    </p>
+                                  <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#152d3e] to-[#0b1721] border-2 border-cyan-500/50 shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition">
+                                    <BookOpen className="w-9 h-9 text-cyan-300" />
                                   </div>
 
-                                  <div className="pt-1 border-t border-cyan-500/30 flex items-center justify-between text-[10px] font-mono text-cyan-200">
-                                    <span>
-                                      {sk.proficiency === 'expertise' ? 'Pericia' : 'Competente'}
+                                  <div className="text-center space-y-1.5">
+                                    <div className="font-cinzel font-black text-xs sm:text-sm text-white uppercase leading-tight line-clamp-2">
+                                      {sk.name}
+                                    </div>
+                                    <div className="rounded-xl bg-[#0b141e] border border-cyan-400/25 py-1.5 px-2.5 shadow-inner">
+                                      <div className="font-cinzel font-black text-base sm:text-lg text-cyan-200 leading-none">
+                                        {formatModifier(totalBonus)}
+                                      </div>
+                                      <div className="text-[9px] font-cinzel font-bold text-cyan-400/80 uppercase tracking-wider mt-0.5">
+                                        {sk.proficiency === 'expertise' ? 'PERICIA' : 'COMPETENTE'}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="pt-1.5 mt-1.5 border-t border-cyan-500/30 flex items-center justify-between text-[11px] font-sans text-cyan-100">
+                                    <span>Prueba d20</span>
+                                    <span className="font-cinzel font-black text-cyan-300 uppercase tracking-wider">
+                                      TIRAR
                                     </span>
-                                    <span className="font-bold">d20</span>
                                   </div>
                                 </div>
                               );
                             })}
 
-                        {/* DECK 3 CARDS: LANZAR CONJUROS (PREPARED SPELLS) */}
-                        {activeDeck === 'spells' && (
-                          <>
-                            {preparedSpells.slice(safeScrollIdx, safeScrollIdx + 3).map((sp) => (
-                              <div
-                                key={sp.id}
-                                data-testid={`player-card-${sp.id}`}
-                                onClick={() =>
-                                  onTriggerRoll(
-                                    `Conjuro: ${sp.name} ${sp.damageOrHeal ? `(${sp.damageOrHeal})` : ''}`,
-                                    spellAttackBonus,
-                                    20
-                                  )
-                                }
-                                className="group relative rounded-xl border-2 border-purple-400/75 hover:border-purple-200 bg-gradient-to-b from-[#28153d] via-[#1b0e29] to-[#11091a] p-2.5 flex flex-col justify-between min-h-[140px] shadow-xl hover:-translate-y-0.5 transition cursor-pointer"
-                              >
-                                <div className="flex items-center justify-between text-[10px] text-purple-300 font-cinzel font-bold border-b border-purple-500/30 pb-1">
-                                  <span>{sp.level === 0 ? 'TRUCO' : `NIVEL ${sp.level}`}</span>
-                                  <Flame className="w-3 h-3 text-purple-300" />
-                                </div>
+                        {/* DECK 3 CARDS: LANZAR CONJUROS */}
+                        {activeDeck === 'spells' &&
+                          preparedSpells.slice(safeScrollIdx, safeScrollIdx + 2).map((sp) => (
+                            <div
+                              key={sp.id}
+                              data-testid={`player-card-${sp.id}`}
+                              onClick={() =>
+                                onTriggerRoll(
+                                  `Conjuro: ${sp.name} ${sp.damageOrHeal ? `(${sp.damageOrHeal})` : ''}`,
+                                  spellAttackBonus,
+                                  20
+                                )
+                              }
+                              className="group relative rounded-2xl border-2 border-purple-400/80 ring-1 ring-inset ring-purple-300/25 hover:border-purple-200 bg-gradient-to-b from-[#28153d] via-[#1b0e29] to-[#11091a] p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer"
+                            >
+                              <div className="flex items-center justify-between text-[11px] text-purple-300 font-cinzel font-bold border-b border-purple-500/30 pb-1">
+                                <span>{sp.level === 0 ? 'TRUCO' : `NIVEL ${sp.level}`}</span>
+                                <Flame className="w-3.5 h-3.5 text-purple-300" />
+                              </div>
 
-                                <div className="my-1 text-center">
-                                  <div className="font-cinzel font-black text-xs text-white leading-tight line-clamp-2">
-                                    {sp.name}
+                              <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#311a4a] to-[#160b24] border-2 border-purple-400/50 shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition">
+                                <Sparkles className="w-9 h-9 text-purple-300" />
+                              </div>
+
+                              <div className="text-center space-y-1.5">
+                                <div className="font-cinzel font-black text-xs sm:text-sm text-white uppercase leading-tight line-clamp-2">
+                                  {sp.name}
+                                </div>
+                                <div className="rounded-xl bg-[#140b20] border border-purple-400/25 py-1.5 px-2.5 shadow-inner">
+                                  <div className="font-cinzel font-black text-base sm:text-lg text-amber-300 leading-none">
+                                    {sp.damageOrHeal || formatModifier(spellAttackBonus)}
                                   </div>
-                                  {sp.damageOrHeal && (
-                                    <div className="mt-1 inline-block px-2 py-0.5 rounded bg-black/60 border border-purple-400/40 font-mono font-bold text-xs text-amber-300">
-                                      {sp.damageOrHeal}
-                                    </div>
-                                  )}
-                                  <p className="text-[10px] text-purple-200/80 line-clamp-2 mt-1">
-                                    {sp.description}
-                                  </p>
-                                </div>
-
-                                <div className="pt-1 border-t border-purple-500/30 flex items-center justify-between text-[10px] font-mono text-purple-200">
-                                  <span className="truncate">{sp.range || '60 ft'}</span>
-                                  <span className="text-amber-300 font-bold">Lanzar</span>
+                                  <div className="text-[9px] font-cinzel font-bold text-purple-300/80 uppercase tracking-wider mt-0.5 truncate">
+                                    {sp.school || 'CONJURO ARCANO'}
+                                  </div>
                                 </div>
                               </div>
-                            ))}
 
-                            {preparedSpells.length === 0 && (
-                              <div className="col-span-3 rounded-xl border border-dashed border-purple-400/40 bg-[#151221]/70 flex flex-col items-center justify-center p-3 text-center">
-                                <span className="font-cinzel font-bold text-xs text-purple-100">
-                                  No tienes conjuros preparados
-                                </span>
-                                <span className="text-[10px] text-purple-300/80 mt-0.5">
-                                  Usa el botón "+" a la derecha para preparar conjuros en tu grimorio
+                              <div className="pt-1.5 mt-1.5 border-t border-purple-500/30 flex items-center justify-between text-[11px] font-sans text-purple-200">
+                                <span className="truncate">{sp.range || '60 ft'}</span>
+                                <span className="font-cinzel font-black text-[#e5c478] uppercase tracking-wider">
+                                  TIRAR
                                 </span>
                               </div>
-                            )}
-                          </>
-                        )}
+                            </div>
+                          ))}
+
+                        {/* BALANCED TAROT-PROPORTIONED "+ NUEVA CARTA" DASHED SLOT CARD */}
+                        <button
+                          type="button"
+                          data-testid="btn-player-deck-add"
+                          onClick={() => {
+                            if (activeDeck === 'combat') setShowAddCombatCardModal(true);
+                            else if (activeDeck === 'skills') setShowAddSkillCardModal(true);
+                            else setIsBackpackModalOpen(true);
+                          }}
+                          className="min-h-[225px] sm:min-h-[240px] rounded-2xl border-2 border-dashed border-[#c8a45c]/45 hover:border-[#f5e4be] bg-[#141724]/75 hover:bg-[#1a1f30] p-3 flex flex-col items-center justify-center gap-2.5 text-[#cbb692] hover:text-white transition cursor-pointer group shadow-inner"
+                          title="Agregar nueva carta a este mazo"
+                        >
+                          <div className="w-12 h-12 rounded-full border-2 border-[#c8a45c]/75 bg-[#291e14] group-hover:scale-110 flex items-center justify-center transition shadow-lg">
+                            <Plus className="w-6 h-6 text-[#e2c275]" />
+                          </div>
+                          <span className="font-cinzel font-black text-xs sm:text-sm text-[#9aa3b5] group-hover:text-[#f5e4be] uppercase tracking-widest text-center leading-tight">
+                            NUEVA
+                            <br />
+                            CARTA
+                          </span>
+                        </button>
                       </div>
 
-                      {/* Right Scroll Arrow (when > 3 cards) */}
-                      {currentPlayerDeckCount > 3 && (
+                      {/* Right Scroll Arrow (when > 2 cards) */}
+                      {currentPlayerDeckCount > 2 && (
                         <button
                           type="button"
                           data-testid="btn-player-deck-next"
                           disabled={safeScrollIdx >= maxScrollIdx}
                           onClick={() => setPlayerDeckScrollIndex(Math.min(maxScrollIdx, safeScrollIdx + 1))}
-                          className="w-6 h-28 rounded-xl bg-[#191c29] hover:bg-amber-950/80 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 transition cursor-pointer disabled:cursor-default shadow"
+                          className="w-7 h-36 rounded-xl bg-[#191c29] hover:bg-amber-950/80 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 transition cursor-pointer disabled:cursor-default shadow"
                           title="Ver siguientes cartas"
                         >
                           <ChevronRight className="w-4 h-4 text-amber-300" />
                         </button>
                       )}
-
-                      {/* Compact Empty-Card Slot ("+ Nueva") on the Right Edge */}
-                      <button
-                        type="button"
-                        data-testid="btn-player-deck-add"
-                        onClick={() => {
-                          if (activeDeck === 'combat') setShowAddCombatCardModal(true);
-                          else if (activeDeck === 'skills') setShowAddSkillCardModal(true);
-                          else setIsBackpackModalOpen(true);
-                        }}
-                        className="w-14 sm:w-16 min-h-[140px] rounded-xl border-2 border-dashed border-[#c8a45c]/55 hover:border-[#f5e4be] bg-[#161925]/80 hover:bg-[#1e2233] p-1.5 flex flex-col items-center justify-center gap-1.5 shrink-0 text-[#e8d8b9] hover:text-white transition cursor-pointer group"
-                        title="Agregar nueva carta a este mazo"
-                      >
-                        <div className="w-7 h-7 rounded-full border border-[#c8a45c]/70 bg-amber-950/40 group-hover:scale-110 flex items-center justify-center transition">
-                          <Plus className="w-3.5 h-3.5 text-[#e2c275]" />
-                        </div>
-                        <span className="font-cinzel font-bold text-[9px] uppercase tracking-wider text-center leading-tight">
-                          Nueva
-                          <br />
-                          Carta
-                        </span>
-                      </button>
                     </div>
                   </div>
                 );
               })()}
             </div>
 
-            {/* RIGHT 5 COLS: EL RINCÓN DEL AVENTURERO */}
-            <div className="lg:col-span-5 bg-[#12141b]/90 border border-[#c8a45c]/45 rounded-xl p-3 flex flex-col justify-between space-y-2">
+            {/* RIGHT 5 COLS: EL RINCÓN DEL AVENTURERO (1 Large Inventory Box on Top + 2 Half-Size Boxes Below) */}
+            <div className="lg:col-span-5 bg-[#12151e]/95 border-2 border-[#c8a45c]/65 rounded-2xl p-3 flex flex-col justify-between gap-2.5 shadow-xl">
               <div className="flex items-center gap-3">
-                <h2 className="font-cinzel font-black text-sm text-[#f5e4be] tracking-wider uppercase whitespace-nowrap">
+                <h2 className="font-cinzel font-black text-base sm:text-lg text-[#e7c67b] tracking-wider uppercase whitespace-nowrap">
                   EL RINCÓN DEL AVENTURERO
                 </h2>
                 <div className="h-px flex-1 bg-gradient-to-r from-[#c8a45c]/60 to-transparent" />
               </div>
 
-              <div className="space-y-2 flex-1 flex flex-col justify-between">
-                {/* 1. DIARIO DE [NOMBRE DEL PERSONAJE] */}
+              {/* 1. TOP LARGE CARD: EQUIPO E INVENTARIO */}
+              <button
+                type="button"
+                data-testid="btn-rincon-inventario"
+                onClick={() => setIsBackpackModalOpen(true)}
+                className="relative w-full rounded-2xl border-2 border-[#c8a45c] ring-1 ring-inset ring-[#e2c275]/25 hover:border-[#f5e4be] bg-gradient-to-b from-[#1e2330] via-[#191d28] to-[#141720] p-3 flex flex-col items-center justify-center text-center shadow-xl transition cursor-pointer group flex-1"
+              >
+                {/* Weight Badge Top-Right */}
+                <span className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-lg bg-[#161412] border border-[#c8a45c]/70 text-[11px] font-sans font-semibold text-[#f3e3c3] shadow">
+                  {totalWeight.toFixed(0)} / {carryCap.maxCarry} lb
+                </span>
+
+                {/* Framed Adventurer's Leather Backpack SVG Illustration */}
+                <div className="w-20 h-20 sm:w-22 sm:h-22 rounded-2xl bg-[#10141c] border-2 border-[#8c7853] shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition">
+                  <svg viewBox="0 0 80 80" className="w-full h-full drop-shadow-lg">
+                    {/* Left & Right Straps */}
+                    <path
+                      d="M22 26 C12 32, 12 54, 20 58"
+                      stroke="#593e28"
+                      strokeWidth="4.5"
+                      fill="none"
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d="M36 14 C36 9, 44 9, 44 14"
+                      stroke="#6e4d32"
+                      strokeWidth="4"
+                      fill="none"
+                    />
+                    {/* Main Backpack Body */}
+                    <rect
+                      x="22"
+                      y="16"
+                      width="36"
+                      height="46"
+                      rx="8"
+                      fill="#7c583b"
+                      stroke="#1f140b"
+                      strokeWidth="2.5"
+                    />
+                    {/* Top Flap */}
+                    <path
+                      d="M22 22 C22 15, 58 15, 58 22 L56 36 C46 39, 34 39, 24 36 Z"
+                      fill="#8f6746"
+                      stroke="#1f140b"
+                      strokeWidth="2.4"
+                    />
+                    {/* Front Pocket */}
+                    <rect
+                      x="27"
+                      y="41"
+                      width="26"
+                      height="17"
+                      rx="4"
+                      fill="#69482e"
+                      stroke="#1f140b"
+                      strokeWidth="2.2"
+                    />
+                    {/* Side Pouch */}
+                    <rect
+                      x="17"
+                      y="38"
+                      width="7"
+                      height="18"
+                      rx="3"
+                      fill="#69482e"
+                      stroke="#1f140b"
+                      strokeWidth="2"
+                    />
+                    <rect
+                      x="56"
+                      y="38"
+                      width="7"
+                      height="18"
+                      rx="3"
+                      fill="#69482e"
+                      stroke="#1f140b"
+                      strokeWidth="2"
+                    />
+                    {/* Leather Buckle Straps & Gold Clasps */}
+                    <rect x="30" y="20" width="4" height="24" rx="1.5" fill="#4a301c" stroke="#1f140b" strokeWidth="1.4" />
+                    <rect x="46" y="20" width="4" height="24" rx="1.5" fill="#4a301c" stroke="#1f140b" strokeWidth="1.4" />
+                    <rect x="29" y="32" width="6" height="5" rx="1" fill="#d8b467" stroke="#1f140b" strokeWidth="1.3" />
+                    <rect x="45" y="32" width="6" height="5" rx="1" fill="#d8b467" stroke="#1f140b" strokeWidth="1.3" />
+                  </svg>
+                </div>
+
+                <h3 className="font-cinzel font-black text-sm sm:text-base text-[#e7c67b] group-hover:text-[#fff1cc] uppercase tracking-wider mt-2">
+                  EQUIPO E INVENTARIO
+                </h3>
+
+                <div className="flex items-center justify-center gap-1.5 mt-0.5 text-xs font-sans">
+                  <Coins className="w-3.5 h-3.5 text-[#d8b467] shrink-0" />
+                  <span className="text-[#d8b467] font-semibold">
+                    {currency.gp} PO • {currency.sp} PP • {currency.cp} PC
+                  </span>
+                  <span className="text-[#8e96aa]">
+                    • {(character.inventory || []).length} objetos
+                  </span>
+                </div>
+              </button>
+
+              {/* 2. BOTTOM 2-COLUMN GRID: DIARIO (LEFT) & RASGOS Y TRASFONDO (RIGHT) */}
+              <div className="grid grid-cols-2 gap-2.5">
+                {/* Bottom-Left: DIARIO DE [NOMBRE] */}
                 <button
                   type="button"
+                  data-testid="btn-rincon-diario"
                   onClick={() => setIsJournalModalOpen(true)}
-                  className="w-full text-left rounded-xl border-2 border-[#c8a45c]/70 hover:border-[#f5e4be] bg-gradient-to-r from-[#281e15] via-[#1d1610] to-[#14100c] p-2.5 flex items-center gap-3 shadow-md hover:shadow-xl transition cursor-pointer group"
+                  className="relative rounded-2xl border-2 border-[#8c94a4]/65 hover:border-[#e2c275] bg-gradient-to-b from-[#1e2330] via-[#181c27] to-[#131720] p-2.5 flex flex-col items-center justify-between text-center shadow-lg transition cursor-pointer group"
                 >
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-b from-[#5e3a1e] to-[#2e1b0d] border-2 border-[#e2c275] flex items-center justify-center shrink-0 shadow-inner group-hover:scale-105 transition">
-                    <BookOpen className="w-6 h-6 text-[#f5e4be]" />
+                  <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-lg bg-[#161412] border border-[#c8a45c]/60 text-[10px] font-sans font-semibold text-[#f3e3c3] shadow">
+                    {journalIndex.totalSheets} Hojas
+                  </span>
+
+                  {/* Framed Leather Journal SVG Illustration */}
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[#10141c] border-2 border-[#8c7853] shadow-inner flex items-center justify-center p-2 mt-1.5 group-hover:scale-105 transition">
+                    <svg viewBox="0 0 64 64" className="w-full h-full drop-shadow">
+                      <rect
+                        x="14"
+                        y="8"
+                        width="36"
+                        height="48"
+                        rx="4"
+                        fill="#6b462b"
+                        stroke="#1c1108"
+                        strokeWidth="2.5"
+                      />
+                      <line x1="20" y1="8" x2="20" y2="56" stroke="#3d2616" strokeWidth="2.5" />
+                      {/* Gold Corners & Clasp */}
+                      <path d="M42 8 H50 V16 Z" fill="#d8b467" />
+                      <path d="M42 56 H50 V48 Z" fill="#d8b467" />
+                      <rect
+                        x="43"
+                        y="28"
+                        width="9"
+                        height="8"
+                        rx="2"
+                        fill="#d8b467"
+                        stroke="#1c1108"
+                        strokeWidth="1.8"
+                      />
+                      {/* Open Book Emblem on Cover */}
+                      <path
+                        d="M25 24 Q30 22 34 25 Q38 22 43 24 V38 Q38 36 34 39 Q30 36 25 38 Z"
+                        fill="none"
+                        stroke="#d8b467"
+                        strokeWidth="1.8"
+                      />
+                    </svg>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] group-hover:text-amber-300 truncate uppercase">
-                        DIARIO DE {character.name}
-                      </h3>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/50 border border-[#c8a45c]/40 text-[#e2c275] shrink-0">
-                        {journalIndex.totalSheets} Hojas
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#cbb692] line-clamp-1 mt-0.5">
-                      {character.notes
-                        ? `Apunte: "${character.notes}"`
-                        : 'Cuaderno de crónicas, apunte rápido e índice de hojas de sesión.'}
+
+                  <div className="mt-1.5">
+                    <h3 className="font-cinzel font-black text-xs text-[#e7c67b] group-hover:text-[#fff1cc] uppercase leading-tight">
+                      DIARIO DE
+                      <br />
+                      {character.name}
+                    </h3>
+                    <p className="text-[10px] text-[#8e96aa] mt-0.5 line-clamp-1">
+                      Crónicas y apuntes de sesión
                     </p>
                   </div>
                 </button>
 
-                {/* 2. EQUIPO E INVENTARIO (MOCHILA + DINERO) */}
+                {/* Bottom-Right: RASGOS Y TRASFONDO */}
                 <button
                   type="button"
-                  onClick={() => setIsBackpackModalOpen(true)}
-                  className="w-full text-left rounded-xl border-2 border-[#c8a45c]/70 hover:border-[#f5e4be] bg-gradient-to-r from-[#261c14] via-[#1c150f] to-[#14100c] p-2.5 flex items-center gap-3 shadow-md hover:shadow-xl transition cursor-pointer group"
-                >
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-b from-[#694322] to-[#331f0e] border-2 border-[#e2c275] flex items-center justify-center shrink-0 shadow-inner group-hover:scale-105 transition">
-                    <Backpack className="w-6 h-6 text-[#f5e4be]" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] group-hover:text-amber-300 uppercase">
-                        EQUIPO E INVENTARIO
-                      </h3>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/50 border border-[#c8a45c]/40 text-[#e2c275] shrink-0">
-                        {totalWeight.toFixed(0)}/{carryCap.maxCarry} lb
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5 text-[11px] text-amber-300 font-mono">
-                      <Coins className="w-3 h-3 text-amber-400 shrink-0" />
-                      <span>
-                        {currency.gp} PO • {currency.sp} PP • {currency.cp} PC
-                      </span>
-                      <span className="text-[#a89270] text-[10px] truncate">
-                        • {(character.inventory || []).length} objetos
-                      </span>
-                    </div>
-                  </div>
-                </button>
-
-                {/* 3. RASGOS Y TRASFONDO (PERGAMINO 5E) */}
-                <button
-                  type="button"
+                  data-testid="btn-rincon-rasgos"
                   onClick={() => setIsParchmentModalOpen(true)}
-                  className="w-full text-left rounded-xl border-2 border-[#c8a45c]/70 hover:border-[#f5e4be] bg-gradient-to-r from-[#292015] via-[#1e1710] to-[#14100c] p-2.5 flex items-center gap-3 shadow-md hover:shadow-xl transition cursor-pointer group"
+                  className="relative rounded-2xl border-2 border-[#8c94a4]/65 hover:border-[#e2c275] bg-gradient-to-b from-[#1e2330] via-[#181c27] to-[#131720] p-2.5 flex flex-col items-center justify-between text-center shadow-lg transition cursor-pointer group"
                 >
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-b from-[#735129] to-[#382611] border-2 border-[#e2c275] flex items-center justify-center shrink-0 shadow-inner group-hover:scale-105 transition">
-                    <Scroll className="w-6 h-6 text-[#f5e4be]" />
+                  <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-lg bg-[#161412] border border-[#c8a45c]/60 text-[10px] font-sans font-semibold text-[#f3e3c3] shadow">
+                    {(character.featuresAndTraits || []).length} Dotes
+                  </span>
+
+                  {/* Framed Parchment Scroll with Wax Seal SVG Illustration */}
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[#10141c] border-2 border-[#8c7853] shadow-inner flex items-center justify-center p-2 mt-1.5 group-hover:scale-105 transition">
+                    <svg viewBox="0 0 64 64" className="w-full h-full drop-shadow">
+                      {/* Top Roll */}
+                      <rect
+                        x="12"
+                        y="10"
+                        width="40"
+                        height="8"
+                        rx="4"
+                        fill="#c9ad7c"
+                        stroke="#24180c"
+                        strokeWidth="2.2"
+                      />
+                      {/* Scroll Body */}
+                      <path
+                        d="M16 18 H48 L46 46 H14 Z"
+                        fill="#DFC699"
+                        stroke="#24180c"
+                        strokeWidth="2.2"
+                      />
+                      {/* Script Lines */}
+                      <line x1="21" y1="25" x2="41" y2="25" stroke="#6e5430" strokeWidth="1.8" strokeLinecap="round" />
+                      <line x1="20" y1="31" x2="40" y2="31" stroke="#6e5430" strokeWidth="1.8" strokeLinecap="round" />
+                      <line x1="20" y1="37" x2="33" y2="37" stroke="#6e5430" strokeWidth="1.8" strokeLinecap="round" />
+                      {/* Bottom Roll */}
+                      <rect
+                        x="10"
+                        y="45"
+                        width="42"
+                        height="9"
+                        rx="4.5"
+                        fill="#b89864"
+                        stroke="#24180c"
+                        strokeWidth="2.2"
+                      />
+                      {/* Wax Seal */}
+                      <circle
+                        cx="40"
+                        cy="42"
+                        r="5"
+                        fill="#8c3b2b"
+                        stroke="#24180c"
+                        strokeWidth="1.8"
+                      />
+                    </svg>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] group-hover:text-amber-300 uppercase">
-                        RASGOS Y TRASFONDO
-                      </h3>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/50 border border-[#c8a45c]/40 text-[#e2c275] shrink-0">
-                        {(character.featuresAndTraits || []).length} Dotes
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#cbb692] truncate mt-0.5">
-                      Pergamino 5E: {character.background} • Personalidad, Ideales, Vínculos e Historial
+
+                  <div className="mt-1.5">
+                    <h3 className="font-cinzel font-black text-xs text-[#e7c67b] group-hover:text-[#fff1cc] uppercase leading-tight">
+                      RASGOS Y
+                      <br />
+                      TRASFONDO
+                    </h3>
+                    <p className="text-[10px] text-[#8e96aa] mt-0.5 line-clamp-1">
+                      {character.background} • Personalidad e Ideales
                     </p>
                   </div>
                 </button>
@@ -1591,97 +1771,12 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
               </div>
             </div>
 
-            {/* 2. CARTA DE JUGADOR (Ornate Gold-Bordered Summary Card with Money Bag) */}
-            <div className="bg-gradient-to-b from-[#231d15] via-[#181410] to-[#120f0c] border-2 border-[#e2c275] rounded-2xl p-3.5 shadow-xl space-y-3">
-              <div className="flex items-center gap-3">
-                <EntityAvatar
-                  avatarType={character.avatarType || (character.avatarUrl ? 'custom' : 'icon')}
-                  customUrl={character.avatarCustomUrl || character.avatarUrl}
-                  iconId={character.avatarIcon || 'anonymous'}
-                  size="md"
-                  className="rounded-full border border-[#e2c275]"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1">
-                    <h4 className="font-cinzel font-black text-base text-[#f5e4be] truncate">
-                      {character.name}
-                    </h4>
-                    <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1 shrink-0">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                      En Línea
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-[#cbb692] truncate">
-                    Niv {character.level} {character.race} {character.characterClass}
-                  </div>
-                </div>
-              </div>
-
-              {/* CA, PP & Mini HP Bar */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs font-cinzel font-bold">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded bg-black/50 border border-[#c8a45c]/40 text-[#e2c275]">
-                      CA {character.armorClass}
-                    </span>
-                    <span className="px-2 py-0.5 rounded bg-black/50 border border-[#c8a45c]/40 text-[#cbb692]">
-                      PP {passivePerception}
-                    </span>
-                  </div>
-                  <span className="font-mono text-emerald-300">
-                    PG {character.currentHp}/{character.maxHp}
-                  </span>
-                </div>
-                <div className="w-full h-2.5 rounded-full bg-black/70 border border-emerald-500/40 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400"
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        Math.max(0, (character.currentHp / Math.max(1, character.maxHp)) * 100)
-                      )}%`,
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* 3x2 Mini Ability Modifiers Grid */}
-              <div className="grid grid-cols-3 gap-1.5">
-                {(Object.keys(ABILITY_LABELS) as AbilityKey[]).map((k) => {
-                  const mod = getEffectiveAbilityModifier(character.abilities[k]);
-                  return (
-                    <div
-                      key={`mini-${k}`}
-                      className="bg-black/45 border border-[#c8a45c]/30 rounded-lg py-1 px-2 flex items-center justify-between text-[11px]"
-                    >
-                      <span className="font-cinzel font-bold text-[#cbb692]">
-                        {ABILITY_LABELS[k].abbr}
-                      </span>
-                      <span className="font-mono font-bold text-white">{formatModifier(mod)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Bolsa de Monedas Footer inside Player Card */}
-              <button
-                type="button"
-                onClick={() => setIsBackpackModalOpen(true)}
-                className="w-full bg-[#14100c] hover:bg-[#1f1812] border border-[#c8a45c]/50 rounded-xl px-3 py-2 flex items-center justify-between text-xs transition cursor-pointer"
-                title="Haz clic para abrir tu Bolsa de Monedas en la Mochila"
-              >
-                <span className="flex items-center gap-1.5 font-cinzel font-bold text-[#e2c275]">
-                  <Coins className="w-4 h-4 text-amber-400" />
-                  <span>Bolsa:</span>
-                </span>
-                <div className="flex items-center gap-2 font-mono font-bold text-[11px]">
-                  <span className="text-amber-300">{currency.gp} PO</span>
-                  <span className="text-slate-300">{currency.sp} PP</span>
-                  <span className="text-orange-300">{currency.cp} PC</span>
-                  <span className="text-indigo-200">{currency.pp} PL</span>
-                </div>
-              </button>
-            </div>
+            {/* 2. CARTA DE JUGADOR (Tarot-Proportioned Character Card with Alignment Badge & Coin Medallions) */}
+            <CharacterTarotCard
+              character={character}
+              isOnline={true}
+              onClickCoinPouch={() => setIsBackpackModalOpen(true)}
+            />
           </div>
         )}
       </div>
@@ -1771,22 +1866,31 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
             </div>
           </div>
 
-          {/* Right 2 Cols: COMPACT MAPA BUTTON (Sized cleanly so it never collides with Rasgos y Trasfondo) */}
+          {/* Right 2 Cols: COMPACT MAPA BUTTON (Launches TableMapView) */}
           <div className="lg:col-span-2 flex items-stretch">
             <button
               type="button"
-              onClick={() => setIsMapModalOpen(true)}
+              data-testid="btn-player-open-map"
+              onClick={() => {
+                if (onOpenTableMapView) {
+                  onOpenTableMapView();
+                } else {
+                  setIsMapModalOpen(true);
+                }
+              }}
               className="w-full h-full min-h-[64px] rounded-2xl border-2 border-[#e2c275] bg-gradient-to-b from-[#2e2216] via-[#21180f] to-[#140e09] hover:from-[#3d2d1d] px-3 py-2 flex items-center justify-center gap-2.5 shadow-xl transition cursor-pointer group"
-              title="Abrir Mapa de la Mesa"
+              title="Ir a la Vista de Mapa de la Mesa"
             >
               <div className="w-10 h-10 rounded-xl bg-[#3d2b18] border border-[#e2c275] flex items-center justify-center text-[#f5e4be] group-hover:scale-105 transition shrink-0">
                 <Compass className="w-5 h-5 text-amber-300" />
               </div>
-              <div className="text-left">
-                <span className="font-cinzel font-black text-sm text-[#f5e4be] tracking-wider uppercase block leading-none">
+              <div className="text-left min-w-0">
+                <span className="font-cinzel font-black text-sm text-[#f5e4be] tracking-wider uppercase block leading-none truncate">
                   MAPA
                 </span>
-                <span className="text-[10px] text-[#cbb692] block mt-0.5">Ver Región</span>
+                <span className="text-[10px] text-emerald-300 block mt-0.5 truncate">
+                  📍 {activeLocationName || 'Ver Ubicación'}
+                </span>
               </div>
             </button>
           </div>

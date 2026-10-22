@@ -1,7 +1,7 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
-import type { DiceRollResult, PartyMemberLive, PresenceStatus, LiveCombatantMini, AutoBackupConfig, AutoBackupLog, PendingDmOffer, PlayerMessageToDM, UserRole, PlayerType, AppRole, ForumPost, ForumComment, FriendDirectMessage } from '../types/dnd.ts';
-import { buildPlayerMessageToDM, normalizeRoomIdentifier } from '../utils/dnd-math.ts';
+import type { DiceRollResult, PartyMemberLive, PresenceStatus, LiveCombatantMini, LiveRoomProjection, AutoBackupConfig, AutoBackupLog, PendingDmOffer, PlayerMessageToDM, UserRole, PlayerType, AppRole, ForumPost, ForumComment, FriendDirectMessage } from '../types/dnd.ts';
+import { buildPlayerMessageToDM, normalizeRoomIdentifier, buildLiveProjectionFromWorkspace } from '../utils/dnd-math.ts';
 import { dataStore, registerDataStoreMutationListener } from './dataStore.ts';
 
 export const apiRouter = express.Router();
@@ -39,6 +39,7 @@ interface RoomState {
   quickNotification?: string;
   showCombatantsOnTable?: boolean;
   liveCombatants?: LiveCombatantMini[];
+  liveProjection?: LiveRoomProjection;
   pendingOffers: PendingDmOffer[];
   playerMessages: PlayerMessageToDM[];
 }
@@ -264,6 +265,8 @@ apiRouter.post('/auth/login', (req, res) => {
       friends: user.friends || [],
       role: user.role,
       playerType: user.playerType || (user.role === 'dm' ? 'dm' : user.role === 'player' ? 'player' : 'both'),
+      requestedPlayerType: user.requestedPlayerType,
+      playerTypeChangeRequested: Boolean(user.playerTypeChangeRequested),
       appRole: user.appRole || (user.role === 'admin' ? 'admin' : user.role === 'creator' ? 'creator' : user.role === 'moderator' ? 'moderator' : 'client'),
       canPostInForum: user.appRole === 'admin' || user.appRole === 'creator' || user.appRole === 'moderator' ? true : Boolean(user.canPostInForum),
       forumPermissionsRequested: Boolean(user.forumPermissionsRequested),
@@ -296,6 +299,8 @@ apiRouter.get('/auth/me', (req, res) => {
     friends: freshUser.friends || [],
     role: freshUser.role,
     playerType: freshUser.playerType || (freshUser.role === 'dm' ? 'dm' : freshUser.role === 'player' ? 'player' : 'both'),
+    requestedPlayerType: freshUser.requestedPlayerType,
+    playerTypeChangeRequested: Boolean(freshUser.playerTypeChangeRequested),
     appRole: freshUser.appRole || (freshUser.role === 'admin' ? 'admin' : freshUser.role === 'creator' ? 'creator' : freshUser.role === 'moderator' ? 'moderator' : 'client'),
     canPostInForum: freshUser.appRole === 'admin' || freshUser.appRole === 'creator' || freshUser.appRole === 'moderator' ? true : Boolean(freshUser.canPostInForum),
     forumPermissionsRequested: Boolean(freshUser.forumPermissionsRequested),
@@ -429,7 +434,7 @@ apiRouter.post('/users/:id/change-password', (req, res) => {
   res.json({ success: true, message: '¡Contraseña actualizada con éxito!' });
 });
 
-// Self-service change playerType ('player' | 'dm' | 'both')
+// Self-service request to change playerType ('player' | 'dm' | 'both') — requires Moderator or above approval
 apiRouter.post('/users/:id/player-type', (req, res) => {
   try {
     const { playerType } = req.body;
@@ -439,18 +444,24 @@ apiRouter.post('/users/:id/player-type', (req, res) => {
     const user = dataStore.findUserById(req.params.id);
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado.' });
 
-    const updated = dataStore.adminUpdateUserAccount(user.id, {
-      playerType,
-      role: user.appRole === 'admin' ? 'admin' : user.appRole === 'creator' ? 'creator' : user.appRole === 'moderator' ? 'moderator' : playerType,
-    } as any);
+    const label =
+      playerType === 'dm'
+        ? 'Dungeon Master únicamente'
+        : playerType === 'player'
+        ? 'Jugador únicamente'
+        : 'DM y Jugador';
+
+    const updated = dataStore.requestPlayerTypeChange(user.id, playerType as PlayerType);
 
     res.json({
       success: true,
-      message: `¡Rol de mesa actualizado a "${playerType === 'dm' ? 'Dungeon Master únicamente' : playerType === 'player' ? 'Jugador únicamente' : 'DM y Jugador'}"!`,
+      pendingApproval: true,
+      requestedPlayerType: playerType,
+      message: `Solicitud enviada para cambiar tu rol de mesa a "${label}". Un Moderador o superior debe aceptar tu solicitud en el apartado de Moderación.`,
       user: updated,
     });
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Error al actualizar tipo de jugador.' });
+    res.status(400).json({ error: err.message || 'Error al solicitar cambio de rol de mesa.' });
   }
 });
 
@@ -470,12 +481,15 @@ apiRouter.get('/friends', (req, res) => {
   }
 
   const friends = dataStore.getFriendsForUser(user.id);
+  const { incomingRequests, outgoingRequests } = dataStore.getFriendRequestsForUser(user.id);
   res.json({
     userId: user.id,
     displayName: user.displayName,
     userTagId: user.userTagId || '123',
     fullTag: `${user.displayName}@${user.userTagId || '123'}`,
     friends,
+    incomingRequests,
+    outgoingRequests,
   });
 });
 
@@ -489,13 +503,42 @@ apiRouter.post('/friends/add', (req, res) => {
       return res.status(404).json({ error: 'Tu sesión de usuario no fue encontrada.' });
     }
     const result = dataStore.addFriendByTag(user.id, friendTag);
+    const message =
+      result.requestStatus === 'accepted'
+        ? `¡Solicitud aceptada mutuamente! ${result.addedFriend.fullTag} ya está en tu lista de amigos.`
+        : `¡Solicitud de amistad enviada a ${result.addedFriend.fullTag}! Se agregará cuando acepte tu solicitud.`;
     res.json({
       success: true,
-      message: `¡${result.addedFriend.fullTag} ha sido agregado a tu lista de amigos!`,
+      message,
       ...result,
     });
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'No se pudo agregar al amigo.' });
+    res.status(400).json({ error: err.message || 'No se pudo enviar la solicitud de amistad.' });
+  }
+});
+
+apiRouter.post('/friends/respond', (req, res) => {
+  try {
+    const { userId, email, requesterId, accept } = req.body;
+    const user =
+      (userId ? dataStore.findUserById(userId) : undefined) ||
+      (email ? dataStore.findUserByEmail(email) : undefined);
+    if (!user) {
+      return res.status(404).json({ error: 'Tu sesión de usuario no fue encontrada.' });
+    }
+    if (!requesterId) {
+      return res.status(400).json({ error: 'ID del solicitante requerido.' });
+    }
+    const result = dataStore.respondToFriendRequest(user.id, requesterId, Boolean(accept));
+    res.json({
+      success: true,
+      message: result.accepted
+        ? `¡Has aceptado la solicitud de amistad de ${result.requester.fullTag}!`
+        : `Solicitud de amistad de ${result.requester.fullTag} rechazada.`,
+      ...result,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'No se pudo procesar la solicitud de amistad.' });
   }
 });
 
@@ -591,6 +634,8 @@ apiRouter.get('/admin/users', (req, res) => {
     password: u.password,
     role: u.role,
     playerType: u.playerType || (u.role === 'dm' ? 'dm' : u.role === 'player' ? 'player' : 'both'),
+    requestedPlayerType: u.requestedPlayerType,
+    playerTypeChangeRequested: Boolean(u.playerTypeChangeRequested),
     appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'creator' ? 'creator' : u.role === 'moderator' ? 'moderator' : 'client'),
     canPostInForum: u.appRole === 'admin' || u.appRole === 'creator' || u.appRole === 'moderator' ? true : Boolean(u.canPostInForum),
     forumPermissionsRequested: Boolean(u.forumPermissionsRequested),
@@ -853,7 +898,7 @@ apiRouter.post('/admin/feedback/:id/status', (req, res) => {
 // MODERATOR PANEL ENDPOINTS (SIMPLIFIED)
 // ==========================================
 
-// Moderator lists users (email, displayName, tag, playerType, appRole, status, forum permission)
+// Moderator lists users (email, displayName, tag, playerType, appRole, status, forum permission, playerType change request)
 apiRouter.get('/moderator/users', (req, res) => {
   const users = dataStore.getUsers().map((u) => ({
     id: u.id,
@@ -863,6 +908,8 @@ apiRouter.get('/moderator/users', (req, res) => {
     fullTag: `${u.displayName}@${u.userTagId || '123'}`,
     avatarUrl: u.avatarUrl,
     playerType: u.playerType || (u.role === 'dm' ? 'dm' : u.role === 'player' ? 'player' : 'both'),
+    requestedPlayerType: u.requestedPlayerType,
+    playerTypeChangeRequested: Boolean(u.playerTypeChangeRequested),
     appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'creator' ? 'creator' : u.role === 'moderator' ? 'moderator' : 'client'),
     canPostInForum: u.appRole === 'admin' || u.appRole === 'creator' || u.appRole === 'moderator' ? true : Boolean(u.canPostInForum),
     forumPermissionsRequested: Boolean(u.forumPermissionsRequested),
@@ -871,6 +918,32 @@ apiRouter.get('/moderator/users', (req, res) => {
     lastActiveAt: u.lastActiveAt,
   }));
   res.json({ users });
+});
+
+// Moderator / Creator / Admin approves or rejects a user's table role (playerType) change request
+apiRouter.post('/moderator/users/:id/player-type-request', (req, res) => {
+  const { approved, playerType } = req.body;
+  const updated = dataStore.resolvePlayerTypeChangeRequest(
+    req.params.id,
+    Boolean(approved),
+    playerType && ['player', 'dm', 'both'].includes(playerType) ? (playerType as PlayerType) : undefined
+  );
+  if (!updated) {
+    return res.status(404).json({ error: 'Usuario no encontrado.' });
+  }
+  const roleLabel =
+    updated.playerType === 'dm'
+      ? 'Dungeon Master únicamente'
+      : updated.playerType === 'player'
+      ? 'Jugador únicamente'
+      : 'DM y Jugador';
+  res.json({
+    success: true,
+    user: updated,
+    message: approved
+      ? `Solicitud aprobada: el rol de mesa de ${updated.displayName}@${updated.userTagId} se actualizó a "${roleLabel}".`
+      : `Solicitud de cambio de rol de mesa de ${updated.displayName}@${updated.userTagId} rechazada.`,
+  });
 });
 
 // Moderator / Admin grants or revokes permission to post in forum
@@ -1317,6 +1390,29 @@ apiRouter.get('/session/room/:roomCode', (req, res) => {
 
   const dmActive = Boolean(room.dmConnected && (now - (room.dmLastPing || 0) < 15 * 60 * 1000));
 
+  let resolvedProjection = room.liveProjection;
+  if (!resolvedProjection || !resolvedProjection.visualImageUrl) {
+    const matchingWorld = dataStore
+      .getWorldSheets()
+      .find((w) => normalizeRoomIdentifier(w.roomCode || w.name) === normalizeRoomIdentifier(normCode));
+    if (matchingWorld && matchingWorld.workspace) {
+      const wsProj = buildLiveProjectionFromWorkspace(matchingWorld.workspace, matchingWorld.name);
+      resolvedProjection = resolvedProjection
+        ? {
+            ...wsProj,
+            ...resolvedProjection,
+            visualImageUrl: resolvedProjection.visualImageUrl || wsProj.visualImageUrl,
+            visualTitle: resolvedProjection.visualTitle || wsProj.visualTitle,
+            locationName: resolvedProjection.locationName || wsProj.locationName,
+            galleryPhotos:
+              resolvedProjection.galleryPhotos && resolvedProjection.galleryPhotos.length > 0
+                ? resolvedProjection.galleryPhotos
+                : wsProj.galleryPhotos,
+          }
+        : wsProj;
+    }
+  }
+
   res.json({
     roomCode: room.roomCode,
     party: activeParty,
@@ -1331,6 +1427,7 @@ apiRouter.get('/session/room/:roomCode', (req, res) => {
     quickNotification: room.quickNotification,
     showCombatantsOnTable: Boolean(room.showCombatantsOnTable),
     liveCombatants: room.liveCombatants || [],
+    liveProjection: resolvedProjection,
     pendingOffers: (room.pendingOffers || []).slice(-30),
     playerMessages: (room.playerMessages || []).slice(0, 100),
   });
@@ -1504,7 +1601,7 @@ apiRouter.post('/session/room/:roomCode/offer/:offerId/ack-dm', (req, res) => {
   res.json({ success: true });
 });
 
-// 2b. Post DM Heartbeat, Live Message, Presence & Active Encounter Combatants
+// 2b. Post DM Heartbeat, Live Message, Presence, Active Encounter Combatants & Live Map Projection
 apiRouter.post('/session/room/:roomCode/dm-heartbeat', (req, res) => {
   const room = getOrCreateRoom(req.params.roomCode);
   const {
@@ -1514,6 +1611,7 @@ apiRouter.post('/session/room/:roomCode/dm-heartbeat', (req, res) => {
     idleSeconds = 0,
     showCombatantsOnTable,
     liveCombatants,
+    liveProjection,
   } = req.body;
 
   room.dmConnected = dmConnected;
@@ -1529,6 +1627,9 @@ apiRouter.post('/session/room/:roomCode/dm-heartbeat', (req, res) => {
   if (Array.isArray(liveCombatants)) {
     room.liveCombatants = liveCombatants;
   }
+  if (liveProjection && typeof liveProjection === 'object') {
+    room.liveProjection = liveProjection;
+  }
   room.lastUpdated = Date.now();
   res.json({
     success: true,
@@ -1536,6 +1637,78 @@ apiRouter.post('/session/room/:roomCode/dm-heartbeat', (req, res) => {
     dmPresenceStatus: room.dmPresenceStatus,
     showCombatantsOnTable: room.showCombatantsOnTable,
     liveCombatants: room.liveCombatants,
+    liveProjection: room.liveProjection,
+  });
+});
+
+// 2b-bis. DM Adjusts a Connected Player's HP or Gold (PO) Directly from the Table / Map View
+apiRouter.post('/session/room/:roomCode/dm-adjust-player', (req, res) => {
+  const normCode = req.params.roomCode.trim().toUpperCase();
+  const room = getOrCreateRoom(normCode);
+  const { characterId, hpDelta, setHp, gpDelta } = req.body;
+
+  if (!characterId) {
+    return res.status(400).json({ error: 'characterId requerido.' });
+  }
+
+  const now = Date.now();
+  const member = room.party[characterId];
+  let newHp: number | undefined;
+  let newCurrency: PartyMemberLive['currency'] | undefined;
+
+  if (member) {
+    const maxHp = Math.max(1, Number(member.maxHp) || 10);
+    if (typeof setHp === 'number') {
+      member.currentHp = Math.max(0, Math.min(maxHp, Math.round(setHp)));
+    } else if (typeof hpDelta === 'number') {
+      member.currentHp = Math.max(0, Math.min(maxHp, (Number(member.currentHp) || 0) + Math.round(hpDelta)));
+    }
+    if (typeof gpDelta === 'number') {
+      const cur = member.currency || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
+      member.currency = {
+        ...cur,
+        gp: Math.max(0, (Number(cur.gp) || 0) + Math.round(gpDelta)),
+      };
+    }
+    member.dmModifiedAt = now;
+    newHp = member.currentHp;
+    newCurrency = member.currency;
+    room.lastUpdated = now;
+  }
+
+  // Also persist into PlayerSheetRecord in dataStore if it exists
+  const sheets = dataStore.getPlayerSheets();
+  const sheet = sheets.find(
+    (s) => s.id === characterId || (s.character && s.character.id === characterId)
+  );
+  if (sheet && sheet.character) {
+    const char = sheet.character;
+    const maxHp = Math.max(1, Number(char.maxHp) || 10);
+    if (typeof setHp === 'number') {
+      char.currentHp = Math.max(0, Math.min(maxHp, Math.round(setHp)));
+    } else if (typeof hpDelta === 'number') {
+      char.currentHp = Math.max(0, Math.min(maxHp, (Number(char.currentHp) || 0) + Math.round(hpDelta)));
+    }
+    if (typeof gpDelta === 'number') {
+      const cur = char.currency || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
+      char.currency = {
+        ...cur,
+        gp: Math.max(0, (Number(cur.gp) || 0) + Math.round(gpDelta)),
+      };
+    }
+    newHp = newHp !== undefined ? newHp : char.currentHp;
+    newCurrency = newCurrency || char.currency;
+    sheet.updatedAt = now;
+    dataStore.savePlayerSheet(sheet);
+  }
+
+  res.json({
+    success: true,
+    characterId,
+    currentHp: newHp,
+    currency: newCurrency,
+    dmModifiedAt: now,
+    party: Object.values(room.party),
   });
 });
 
@@ -1658,6 +1831,11 @@ apiRouter.post('/session/room/:roomCode/heartbeat', (req, res) => {
     ac,
     passivePerception,
     level,
+    experience,
+    alignment,
+    speed,
+    initiative,
+    race,
     characterClass,
     presenceStatus = 'active',
     idleSeconds = 0,
@@ -1674,6 +1852,11 @@ apiRouter.post('/session/room/:roomCode/heartbeat', (req, res) => {
     const resolvedTagId = playerTagId || foundUser?.userTagId || existing?.playerTagId || '123';
     const resolvedFullTag = playerFullTag || existing?.playerFullTag || `${resolvedPlayerName}@${resolvedTagId}`;
 
+    // If the DM adjusted this player's HP or currency within the last 6 seconds, preserve the DM's values so a stale player heartbeat doesn't overwrite them
+    const recentlyDmModified = Boolean(
+      existing?.dmModifiedAt && Date.now() - existing.dmModifiedAt < 6000
+    );
+
     room.party[characterId] = {
       characterId,
       characterName: characterName || 'Aventurero',
@@ -1685,23 +1868,35 @@ apiRouter.post('/session/room/:roomCode/heartbeat', (req, res) => {
       avatarCustomUrl: avatarCustomUrl !== undefined ? avatarCustomUrl : existing?.avatarCustomUrl,
       avatarIcon: avatarIcon !== undefined ? avatarIcon : existing?.avatarIcon,
       avatarUrl: avatarUrl !== undefined ? avatarUrl : existing?.avatarUrl,
-      currentHp: Number(currentHp) || 0,
+      currentHp: recentlyDmModified ? existing!.currentHp : Number(currentHp) || 0,
       maxHp: Number(maxHp) || 10,
       ac: Number(ac) || 10,
       passivePerception: Number(passivePerception) || 10,
       level: Number(level) || 1,
+      experience: experience !== undefined ? Number(experience) || 0 : existing?.experience ?? 0,
+      alignment: alignment || existing?.alignment || 'Neutral Bueno',
+      speed: speed !== undefined ? Number(speed) || 30 : existing?.speed ?? 30,
+      initiative: initiative !== undefined ? Number(initiative) : existing?.initiative ?? 0,
+      race: race || existing?.race || '',
       characterClass: characterClass || 'Aventurero',
       lastPing: Date.now(),
+      dmModifiedAt: existing?.dmModifiedAt,
       presenceStatus,
       idleSeconds,
       lastRoll: lastRoll || existing?.lastRoll,
       abilities: abilities || existing?.abilities,
-      currency: currency || existing?.currency,
+      currency: recentlyDmModified && existing?.currency ? existing.currency : currency || existing?.currency,
     };
     room.lastUpdated = Date.now();
   }
 
-  res.json({ success: true });
+  const savedMember = characterId ? room.party[characterId] : undefined;
+  res.json({
+    success: true,
+    dmModifiedAt: savedMember?.dmModifiedAt,
+    currentHp: savedMember?.currentHp,
+    currency: savedMember?.currency,
+  });
 });
 
 // Player Leave Room (trigger leave backup)

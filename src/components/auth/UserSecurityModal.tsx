@@ -28,8 +28,10 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
   const [avatarErrorMsg, setAvatarErrorMsg] = useState<string>('');
 
   // Table Player Type state ('player' | 'dm' | 'both')
-  const [currentPlayerType, setCurrentPlayerType] = useState<PlayerType>(
-    authUser.playerType || (authUser.role === 'dm' ? 'dm' : authUser.role === 'player' ? 'player' : 'both')
+  const currentPlayerType: PlayerType =
+    authUser.playerType || (authUser.role === 'dm' ? 'dm' : authUser.role === 'player' ? 'player' : 'both');
+  const [requestedPlayerType, setRequestedPlayerType] = useState<PlayerType | undefined>(
+    authUser.playerTypeChangeRequested ? authUser.requestedPlayerType : undefined
   );
   const [isUpdatingPlayerType, setIsUpdatingPlayerType] = useState<boolean>(false);
   const [playerTypeStatusMsg, setPlayerTypeStatusMsg] = useState<string>('');
@@ -55,9 +57,15 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
   const [isRequestingForgot, setIsRequestingForgot] = useState<boolean>(false);
   const [userForgotMsg, setUserForgotMsg] = useState<string>('');
 
+  const getPlayerTypeLabel = (t?: PlayerType) =>
+    t === 'dm'
+      ? 'Dungeon Master únicamente'
+      : t === 'player'
+      ? 'Jugador únicamente'
+      : 'DM y Jugador';
+
   const handleSelectPlayerType = async (type: PlayerType) => {
-    if (type === currentPlayerType) return;
-    setCurrentPlayerType(type);
+    if (type === currentPlayerType && !requestedPlayerType) return;
     setPlayerTypeStatusMsg('');
     setPlayerTypeErrorMsg('');
     setIsUpdatingPlayerType(true);
@@ -69,15 +77,19 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
       });
       const data = await res.json();
       if (!res.ok) {
-        setPlayerTypeErrorMsg(data.error || 'Error al actualizar tipo de jugador.');
+        setPlayerTypeErrorMsg(data.error || 'Error al solicitar cambio de rol de mesa.');
         return;
       }
-      setPlayerTypeStatusMsg(data.message || '¡Rol de mesa actualizado con éxito!');
+      setRequestedPlayerType(type);
+      setPlayerTypeStatusMsg(
+        data.message ||
+          `Solicitud enviada para cambiar a "${getPlayerTypeLabel(type)}". Un Moderador o superior debe aprobarla en el apartado de Moderación.`
+      );
       if (onRefreshAuthStatus) {
         await onRefreshAuthStatus();
       }
     } catch {
-      setPlayerTypeErrorMsg('Error de red al actualizar rol de mesa.');
+      setPlayerTypeErrorMsg('Error de red al solicitar cambio de rol de mesa.');
     } finally {
       setIsUpdatingPlayerType(false);
     }
@@ -465,25 +477,42 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
             </div>
           </form>
 
-          {/* Section 2: Table Player Type (Preferencia del Lobby) */}
+          {/* Section 2: Table Player Type (Preferencia del Lobby — Requiere Aprobación de Moderador) */}
           <div className="bg-[#161720] border border-stone-800 rounded-2xl p-5 shadow space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800/80 pb-3">
               <h4 className="font-cinzel font-bold text-sm text-stone-200 flex items-center gap-2">
                 <Crown className="w-4 h-4 text-purple-400" />
-                Rol de Mesa (Preferencia del Lobby)
+                Rol de Mesa (Solicitud a Moderación)
               </h4>
-              <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-stone-900 border border-stone-700 text-amber-300 font-bold">
-                Actual: {currentPlayerType === 'dm' ? 'Dungeon Master únicamente' : currentPlayerType === 'player' ? 'Jugador únicamente' : 'DM y Jugador'}
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-stone-900 border border-stone-700 text-amber-300 font-bold">
+                  Actual: {getPlayerTypeLabel(currentPlayerType)}
+                </span>
+                {(requestedPlayerType || authUser.playerTypeChangeRequested) && (
+                  <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-purple-950/90 border border-purple-500 text-purple-200 font-bold animate-pulse">
+                    Solicitado: {getPlayerTypeLabel(requestedPlayerType || authUser.requestedPlayerType)}
+                  </span>
+                )}
+              </div>
             </div>
 
             <p className="text-xs text-stone-400 leading-relaxed">
-              Define qué apartados se muestran en tu vista principal del Lobby. Si eres únicamente Jugador solo verás tus Fichas de Personajes; si eres únicamente DM solo verás tus World Sheets; y si eres DM y Jugador tendrás ambas opciones disponibles con selector.
+              Para cambiar tu rol de mesa (<strong className="text-stone-200">Solo DM</strong>, <strong className="text-stone-200">Solo Jugador</strong> o <strong className="text-stone-200">DM y Jugador</strong>), selecciona la opción deseada para enviar una solicitud. Un <strong className="text-purple-300">Moderador o superior</strong> deberá aceptarla en el apartado de Moderación.
             </p>
 
+            {(requestedPlayerType || authUser.playerTypeChangeRequested) && !playerTypeStatusMsg && (
+              <div className="p-3 rounded-xl bg-purple-950/70 border border-purple-600/80 text-purple-200 text-xs flex items-center gap-2">
+                <Shield className="w-4 h-4 text-purple-400 shrink-0" />
+                <span>
+                  Tienes una solicitud pendiente para cambiar tu rol de mesa a{' '}
+                  <strong>"{getPlayerTypeLabel(requestedPlayerType || authUser.requestedPlayerType)}"</strong>. En espera de aprobación de un Moderador.
+                </span>
+              </div>
+            )}
+
             {playerTypeStatusMsg && (
-              <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-600 text-emerald-300 text-xs flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div className="p-3 rounded-xl bg-purple-950/80 border border-purple-500 text-purple-200 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-purple-400 shrink-0" />
                 <span>{playerTypeStatusMsg}</span>
               </div>
             )}
@@ -499,60 +528,108 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
               {/* Dungeon Master únicamente */}
               <button
                 type="button"
+                data-testid="btn-request-role-dm"
                 disabled={isUpdatingPlayerType}
                 onClick={() => handleSelectPlayerType('dm')}
-                className={`p-3.5 rounded-2xl border text-left transition flex flex-col items-center sm:items-start text-center sm:text-left cursor-pointer ${
+                className={`p-3.5 rounded-2xl border text-left transition flex flex-col items-center sm:items-start text-center sm:text-left cursor-pointer relative ${
                   currentPlayerType === 'dm'
                     ? 'bg-purple-950/90 border-purple-500 text-purple-200 shadow-lg ring-2 ring-purple-500/50'
-                    : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700 hover:text-stone-300'
+                    : (requestedPlayerType || authUser.requestedPlayerType) === 'dm' &&
+                      (requestedPlayerType || authUser.playerTypeChangeRequested)
+                    ? 'bg-purple-950/50 border-purple-400 border-dashed text-purple-200'
+                    : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-purple-700/60 hover:text-stone-200'
                 }`}
               >
-                <Crown className="w-5 h-5 mb-1.5 text-purple-400" />
+                <div className="flex items-center justify-between w-full mb-1.5">
+                  <Crown className="w-5 h-5 text-purple-400" />
+                  {currentPlayerType === 'dm' ? (
+                    <span className="text-[9px] font-cinzel font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700">
+                      Actual
+                    </span>
+                  ) : (requestedPlayerType || authUser.requestedPlayerType) === 'dm' &&
+                    (requestedPlayerType || authUser.playerTypeChangeRequested) ? (
+                    <span className="text-[9px] font-cinzel font-bold uppercase px-1.5 py-0.5 rounded bg-purple-900 text-purple-200 border border-purple-500">
+                      Solicitado
+                    </span>
+                  ) : null}
+                </div>
                 <span className="font-cinzel font-bold text-xs text-stone-200 block">
                   Dungeon Master únicamente
                 </span>
                 <span className="text-[10px] text-stone-400 mt-0.5">
-                  Solo World Sheets y pantallas DM
+                  {currentPlayerType === 'dm' ? 'Tu rol activo en el Lobby' : 'Solicitar cambio a Solo DM'}
                 </span>
               </button>
 
               {/* Jugador únicamente */}
               <button
                 type="button"
+                data-testid="btn-request-role-player"
                 disabled={isUpdatingPlayerType}
                 onClick={() => handleSelectPlayerType('player')}
-                className={`p-3.5 rounded-2xl border text-left transition flex flex-col items-center sm:items-start text-center sm:text-left cursor-pointer ${
+                className={`p-3.5 rounded-2xl border text-left transition flex flex-col items-center sm:items-start text-center sm:text-left cursor-pointer relative ${
                   currentPlayerType === 'player'
                     ? 'bg-amber-950/90 border-amber-500 text-amber-200 shadow-lg ring-2 ring-amber-500/50'
-                    : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700 hover:text-stone-300'
+                    : (requestedPlayerType || authUser.requestedPlayerType) === 'player' &&
+                      (requestedPlayerType || authUser.playerTypeChangeRequested)
+                    ? 'bg-amber-950/50 border-amber-400 border-dashed text-amber-200'
+                    : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-amber-700/60 hover:text-stone-200'
                 }`}
               >
-                <User className="w-5 h-5 mb-1.5 text-amber-400" />
+                <div className="flex items-center justify-between w-full mb-1.5">
+                  <User className="w-5 h-5 text-amber-400" />
+                  {currentPlayerType === 'player' ? (
+                    <span className="text-[9px] font-cinzel font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700">
+                      Actual
+                    </span>
+                  ) : (requestedPlayerType || authUser.requestedPlayerType) === 'player' &&
+                    (requestedPlayerType || authUser.playerTypeChangeRequested) ? (
+                    <span className="text-[9px] font-cinzel font-bold uppercase px-1.5 py-0.5 rounded bg-purple-900 text-purple-200 border border-purple-500">
+                      Solicitado
+                    </span>
+                  ) : null}
+                </div>
                 <span className="font-cinzel font-bold text-xs text-stone-200 block">
                   Jugador únicamente
                 </span>
                 <span className="text-[10px] text-stone-400 mt-0.5">
-                  Solo Fichas de personajes D&D 5e
+                  {currentPlayerType === 'player' ? 'Tu rol activo en el Lobby' : 'Solicitar cambio a Solo Jugador'}
                 </span>
               </button>
 
               {/* DM y Jugador */}
               <button
                 type="button"
+                data-testid="btn-request-role-both"
                 disabled={isUpdatingPlayerType}
                 onClick={() => handleSelectPlayerType('both')}
-                className={`p-3.5 rounded-2xl border text-left transition flex flex-col items-center sm:items-start text-center sm:text-left cursor-pointer ${
+                className={`p-3.5 rounded-2xl border text-left transition flex flex-col items-center sm:items-start text-center sm:text-left cursor-pointer relative ${
                   currentPlayerType === 'both'
                     ? 'bg-gradient-to-br from-amber-950/90 to-purple-950/90 border-amber-400 text-amber-100 shadow-lg ring-2 ring-amber-400/50'
-                    : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700 hover:text-stone-300'
+                    : (requestedPlayerType || authUser.requestedPlayerType) === 'both' &&
+                      (requestedPlayerType || authUser.playerTypeChangeRequested)
+                    ? 'bg-purple-950/50 border-amber-400 border-dashed text-amber-200'
+                    : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-amber-700/60 hover:text-stone-200'
                 }`}
               >
-                <Sparkles className="w-5 h-5 mb-1.5 text-amber-300" />
+                <div className="flex items-center justify-between w-full mb-1.5">
+                  <Sparkles className="w-5 h-5 text-amber-300" />
+                  {currentPlayerType === 'both' ? (
+                    <span className="text-[9px] font-cinzel font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700">
+                      Actual
+                    </span>
+                  ) : (requestedPlayerType || authUser.requestedPlayerType) === 'both' &&
+                    (requestedPlayerType || authUser.playerTypeChangeRequested) ? (
+                    <span className="text-[9px] font-cinzel font-bold uppercase px-1.5 py-0.5 rounded bg-purple-900 text-purple-200 border border-purple-500">
+                      Solicitado
+                    </span>
+                  ) : null}
+                </div>
                 <span className="font-cinzel font-bold text-xs text-stone-200 block">
                   DM y Jugador
                 </span>
                 <span className="text-[10px] text-stone-400 mt-0.5">
-                  Ambas pestañas con selector
+                  {currentPlayerType === 'both' ? 'Tu rol activo en el Lobby' : 'Solicitar cambio a DM y Jugador'}
                 </span>
               </button>
             </div>

@@ -434,8 +434,120 @@ test('getPinPositionForChildPlace and filterAlbumPhotosByPlace work accurately',
   );
 });
 
+import {
+  parseAlignmentDescriptor,
+  canAddEnemyToEncounter,
+  MAX_ENCOUNTER_ENEMIES,
+  buildLiveProjectionFromWorkspace,
+} from './dnd-math.ts';
 
+test('parseAlignmentDescriptor maps morality to green/gray/red and ethics to spiral/equilibrium/scales', () => {
+  // Chaotic Good -> Spiral + Green
+  const cg = parseAlignmentDescriptor('Caótico Bueno');
+  assert.equal(cg.ethics, 'chaotic');
+  assert.equal(cg.morality, 'good');
+  assert.equal(cg.shape, 'spiral');
+  assert.equal(cg.colorTone, 'green');
+  assert.equal(cg.labelEs, 'Caótico Bueno');
 
+  // Lawful Good -> Scales + Green
+  const lg = parseAlignmentDescriptor('Legal Bueno');
+  assert.equal(lg.ethics, 'lawful');
+  assert.equal(lg.morality, 'good');
+  assert.equal(lg.shape, 'scales');
+  assert.equal(lg.colorTone, 'green');
 
+  // Neutral Evil -> Equilibrium + Red
+  const ne = parseAlignmentDescriptor('Neutral Malvado');
+  assert.equal(ne.ethics, 'neutral');
+  assert.equal(ne.morality, 'evil');
+  assert.equal(ne.shape, 'equilibrium');
+  assert.equal(ne.colorTone, 'red');
+
+  // True Neutral -> Equilibrium + Gray
+  const nn = parseAlignmentDescriptor('Neutral');
+  assert.equal(nn.ethics, 'neutral');
+  assert.equal(nn.morality, 'neutral');
+  assert.equal(nn.shape, 'equilibrium');
+  assert.equal(nn.colorTone, 'gray');
+  assert.equal(nn.labelEs, 'Neutral Verdadero');
+
+  // Chaotic Evil -> Spiral + Red
+  const ce = parseAlignmentDescriptor('Caótico Malo');
+  assert.equal(ce.shape, 'spiral');
+  assert.equal(ce.colorTone, 'red');
+});
+
+test('canAddEnemyToEncounter enforces a strict maximum of 8 enemies while ignoring allies', () => {
+  assert.equal(MAX_ENCOUNTER_ENEMIES, 8);
+
+  const sevenEnemiesAndThreeAllies = [
+    ...Array.from({ length: 7 }, () => ({ faction: 'enemy' as const, isPlayer: false })),
+    ...Array.from({ length: 3 }, () => ({ faction: 'ally' as const, isPlayer: true })),
+  ];
+  assert.deepEqual(canAddEnemyToEncounter(sevenEnemiesAndThreeAllies), {
+    enemyCount: 7,
+    maxEnemies: 8,
+    canAdd: true,
+  });
+
+  const eightEnemies = [
+    ...Array.from({ length: 8 }, () => ({ faction: 'enemy' as const, isPlayer: false })),
+    { faction: 'ally' as const, isPlayer: true },
+  ];
+  assert.deepEqual(canAddEnemyToEncounter(eightEnemies), {
+    enemyCount: 8,
+    maxEnemies: 8,
+    canAdd: false,
+  });
+});
+
+test('buildLiveProjectionFromWorkspace resolves activeLiveVisual album photos, atlasMaps, and tactical visuals accurately', () => {
+  // 1. When DM activates an album photo in activeLiveVisual, players receive its exact imageUrl and title
+  const projPhoto = buildLiveProjectionFromWorkspace(
+    {
+      activeAtlasFolder: 'Costa de la Espada / Taberna del Jabalí',
+      atlasMaps: {
+        'Costa de la Espada / Taberna del Jabalí': 'https://example.com/map-taberna.jpg',
+      },
+      activeLiveVisual: {
+        kind: 'album',
+        id: 'alb-1',
+        title: 'Interior de la Taberna',
+        imageUrl: 'data:image/png;base64,TABERNA_PHOTO',
+        folder: 'Costa de la Espada / Taberna del Jabalí',
+      },
+      placeAlbumPhotos: [
+        {
+          id: 'alb-1',
+          title: 'Interior de la Taberna',
+          imageUrl: 'data:image/png;base64,TABERNA_PHOTO',
+          folder: 'Costa de la Espada / Taberna del Jabalí',
+        },
+      ],
+    },
+    'Reinos Olvidados'
+  );
+  assert.equal(projPhoto.locationName, 'Taberna del Jabalí');
+  assert.equal(projPhoto.visualKind, 'photo');
+  assert.equal(projPhoto.visualTitle, 'Interior de la Taberna');
+  assert.equal(projPhoto.visualImageUrl, 'data:image/png;base64,TABERNA_PHOTO');
+  assert.equal(projPhoto.galleryPhotos.length, 1);
+
+  // 2. When no activeLiveVisual is set, falls back to atlasMaps[activeFolder]
+  const projMap = buildLiveProjectionFromWorkspace(
+    {
+      activeAtlasFolder: 'Costa de la Espada / Taberna del Jabalí',
+      atlasMaps: {
+        'Costa de la Espada / Taberna del Jabalí': 'https://example.com/map-taberna.jpg',
+      },
+      placeAlbumPhotos: [],
+    },
+    'Reinos Olvidados'
+  );
+  assert.equal(projMap.visualKind, 'map');
+  assert.equal(projMap.visualImageUrl, 'https://example.com/map-taberna.jpg');
+  assert.equal(projMap.visualTitle, 'Mapa: Taberna del Jabalí');
+});
 
 
