@@ -323,5 +323,119 @@ test('buildPlayerMessageToDM builds a structured private message for the DM', ()
   assert.equal(msg.read, false);
 });
 
+import {
+  getEffectiveAbilityModifier,
+  buildJournalIndexEntries,
+} from './dnd-math.ts';
+
+test('getEffectiveAbilityModifier supports base score, customModifier bonus, and modifierOverride', () => {
+  assert.equal(getEffectiveAbilityModifier(10), 0);
+  assert.equal(getEffectiveAbilityModifier({ score: 8 }), -1);
+  // Base 8 (-1) + customModifier (+3) = +2
+  assert.equal(getEffectiveAbilityModifier({ score: 8, customModifier: 3 }), 2);
+  // Direct modifierOverride takes precedence
+  assert.equal(getEffectiveAbilityModifier({ score: 8, customModifier: 1, modifierOverride: 4 }), 4);
+});
+
+test('buildJournalIndexEntries builds 1-sheet-per-entry index summary accurately', () => {
+  const index = buildJournalIndexEntries([
+    { id: 'j1', sessionNumber: 1, title: 'La Cripta del Dragón', dateInGame: '14 de Tarsakh' },
+    { id: 'j2', sessionNumber: 2, title: 'El Pacto en la Taberna', dateInGame: '' },
+  ]);
+  assert.equal(index.totalSheets, 2);
+  assert.equal(index.items[0].sheetNumber, 1);
+  assert.equal(index.items[0].title, 'La Cripta del Dragón');
+  assert.equal(index.items[0].dateInGame, '14 de Tarsakh');
+  assert.equal(index.items[0].pagesOccupied, 1);
+  assert.equal(index.items[1].sheetNumber, 2);
+  assert.equal(index.items[1].sessionNumber, 2);
+});
+
+import {
+  stepInitiativeTurn,
+  buildAtlasBreadcrumbs,
+  getChildFoldersForAtlas,
+  ensureCompleteFolderHierarchy,
+  getPinPositionForChildPlace,
+  filterAlbumPhotosByPlace,
+} from './dnd-math.ts';
+
+test('stepInitiativeTurn steps forward and backward across rounds accurately', () => {
+  // 3 combatants (indices 0, 1, 2)
+  assert.deepEqual(stepInitiativeTurn(0, 1, 3, 'next'), { currentTurnIndex: 1, round: 1 });
+  assert.deepEqual(stepInitiativeTurn(1, 1, 3, 'next'), { currentTurnIndex: 2, round: 1 });
+  // Wrapping from last combatant increments round
+  assert.deepEqual(stepInitiativeTurn(2, 1, 3, 'next'), { currentTurnIndex: 0, round: 2 });
+
+  // Stepping backward within same round
+  assert.deepEqual(stepInitiativeTurn(2, 2, 3, 'prev'), { currentTurnIndex: 1, round: 2 });
+  // Stepping backward from index 0 wraps to last combatant and decrements round (min 1)
+  assert.deepEqual(stepInitiativeTurn(0, 2, 3, 'prev'), { currentTurnIndex: 2, round: 1 });
+  assert.deepEqual(stepInitiativeTurn(0, 1, 3, 'prev'), { currentTurnIndex: 2, round: 1 });
+});
+
+test('buildAtlasBreadcrumbs and getChildFoldersForAtlas support 4 hierarchical levels and strict direct children', () => {
+  const crumbsAll = buildAtlasBreadcrumbs('all');
+  assert.equal(crumbsAll.length, 1);
+  assert.equal(crumbsAll[0].label, 'Mundo');
+
+  // 4 levels deep under Mundo: Región -> Ciudad -> Lugar -> Sub-lugar
+  const deepPath = 'Costa de la Espada / Ciudad Olvidada / Taberna del Jabalí / Sótano Secreto';
+  const crumbs4 = buildAtlasBreadcrumbs(deepPath);
+  assert.equal(crumbs4.length, 5); // Mundo + 4 levels
+  assert.equal(crumbs4[1].label, 'Costa de la Espada');
+  assert.equal(crumbs4[2].label, 'Ciudad Olvidada');
+  assert.equal(crumbs4[3].label, 'Taberna del Jabalí');
+  assert.equal(crumbs4[4].label, 'Sótano Secreto');
+
+  // Even if only a 4-level leaf path is passed, ensureCompleteFolderHierarchy expands intermediate levels
+  const expanded = ensureCompleteFolderHierarchy([deepPath, 'Valle del Norte / Campamento del Valle']);
+  assert.deepEqual(getChildFoldersForAtlas(expanded, 'all'), [
+    'Costa de la Espada',
+    'Valle del Norte',
+  ]);
+  assert.deepEqual(getChildFoldersForAtlas(expanded, 'Costa de la Espada'), [
+    'Costa de la Espada / Ciudad Olvidada',
+  ]);
+  assert.deepEqual(getChildFoldersForAtlas(expanded, 'Costa de la Espada / Ciudad Olvidada'), [
+    'Costa de la Espada / Ciudad Olvidada / Taberna del Jabalí',
+  ]);
+  assert.deepEqual(
+    getChildFoldersForAtlas(expanded, 'Costa de la Espada / Ciudad Olvidada / Taberna del Jabalí'),
+    ['Costa de la Espada / Ciudad Olvidada / Taberna del Jabalí / Sótano Secreto']
+  );
+});
+
+test('getPinPositionForChildPlace and filterAlbumPhotosByPlace work accurately', () => {
+  const customPos = {
+    'Costa de la Espada / Ciudad Olvidada': { x: 75, y: 22 },
+  };
+  assert.deepEqual(
+    getPinPositionForChildPlace('Costa de la Espada / Ciudad Olvidada', 0, 2, customPos),
+    { x: 75, y: 22 }
+  );
+  const fallbackPos = getPinPositionForChildPlace('Valle del Norte', 0, 2, customPos);
+  assert.equal(typeof fallbackPos.x, 'number');
+  assert.equal(typeof fallbackPos.y, 'number');
+
+  const photos = [
+    { id: 'p1', title: 'Mapa General', folder: 'Costa de la Espada' },
+    { id: 'p2', title: 'Barra de la Taberna', folder: 'Costa de la Espada / Ciudad Olvidada / Taberna del Jabalí' },
+    { id: 'p3', title: 'Cripta del Sótano', folder: 'Costa de la Espada / Ciudad Olvidada / Taberna del Jabalí / Sótano Secreto' },
+    { id: 'p4', title: 'Tienda del Valle', folder: 'Valle del Norte / Campamento del Valle' },
+  ];
+
+  // At Mundo ('all'), all 4 photos are returned
+  assert.equal(filterAlbumPhotosByPlace(photos, 'all').length, 4);
+  // At Taberna del Jabalí, only p2 and p3 (inside Taberna or its sub-places) are returned
+  assert.deepEqual(
+    filterAlbumPhotosByPlace(photos, 'Costa de la Espada / Ciudad Olvidada / Taberna del Jabalí').map((p) => p.id),
+    ['p2', 'p3']
+  );
+});
+
+
+
+
 
 

@@ -29,13 +29,15 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
 
   const currentFolders = workspace.folders || [];
 
-  // Group folders by depth
-  // Level 1: depth 1 (no ' / ')
-  // Level 2: depth 2 (one ' / ')
-  // Level 3: depth 3 (two ' / ')
+  // Group folders by depth (Up to 4 levels under Mundo)
+  // Level 1: depth 1 (e.g. Región)
+  // Level 2: depth 2 (e.g. Ciudad / Villa)
+  // Level 3: depth 3 (e.g. Lugar / Taberna)
+  // Level 4: depth 4 (e.g. Piso 1 / Sótano)
   const level1Folders = currentFolders.filter((f) => getFolderDepth(f) === 1);
   const level2Folders = currentFolders.filter((f) => getFolderDepth(f) === 2);
-  const eligibleParents = [...level1Folders, ...level2Folders];
+  const level3Folders = currentFolders.filter((f) => getFolderDepth(f) === 3);
+  const eligibleParents = [...level1Folders, ...level2Folders, ...level3Folders];
 
   const handleCreateFolder = (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,26 +46,26 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
 
     const trimmed = newFolderName.trim();
     if (!trimmed) {
-      setErrorMsg('El nombre de la carpeta no puede estar vacío.');
+      setErrorMsg('El nombre del lugar / carpeta no puede estar vacío.');
       return;
     }
     if (trimmed.includes('/')) {
-      setErrorMsg('El nombre no debe contener barras ("/"). Selecciona la carpeta padre abajo.');
+      setErrorMsg('El nombre no debe contener barras ("/"). Selecciona el lugar padre abajo.');
       return;
     }
 
     let fullPath = trimmed;
     if (selectedParentFolder !== 'root') {
       const parentDepth = getFolderDepth(selectedParentFolder);
-      if (parentDepth >= 3) {
-        setErrorMsg('Límite alcanzado: Máximo 3 niveles de carpetas consecutivas (Carpeta / Subcarpeta / Sub-subcarpeta).');
+      if (parentDepth >= 4) {
+        setErrorMsg('Límite alcanzado: Máximo 4 niveles de lugares bajo el Mundo (Región / Ciudad / Lugar / Sub-lugar).');
         return;
       }
       fullPath = `${selectedParentFolder} / ${trimmed}`;
     }
 
     if (currentFolders.includes(fullPath)) {
-      setErrorMsg('Ya existe una carpeta con esa ruta.');
+      setErrorMsg('Ya existe un lugar o carpeta con esa ruta.');
       return;
     }
 
@@ -74,7 +76,7 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
     });
 
     setNewFolderName('');
-    setSuccessMsg(`¡Carpeta "${fullPath}" creada con éxito!`);
+    setSuccessMsg(`¡Lugar "${fullPath}" creado con éxito!`);
     setTimeout(() => setSuccessMsg(''), 2500);
   };
 
@@ -103,7 +105,7 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
     }
 
     if (currentFolders.includes(newFullPath)) {
-      setErrorMsg('Ya existe una carpeta con ese nombre en este nivel.');
+      setErrorMsg('Ya existe un lugar con ese nombre en este nivel.');
       return;
     }
 
@@ -132,6 +134,22 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
     const updatedLogs = (workspace.campaignLogs || []).map((l) => ({ ...l, folder: updateEntityFolder(l.folder) || 'General' }));
     const updatedSummaries = (workspace.combatSummaries || []).map((s) => ({ ...s, folder: updateEntityFolder(s.folder) || 'General' }));
     const updatedCustom = (workspace.customItemsAndSpells || []).map((c) => ({ ...c, folder: updateEntityFolder(c.folder) || 'General' }));
+    const updatedPhotos = (workspace.placeAlbumPhotos || []).map((p) => ({
+      ...p,
+      folder: updateEntityFolder(p.folder) || 'all',
+    }));
+
+    const updatedAtlasMaps: Record<string, string> = {};
+    for (const [k, v] of Object.entries(workspace.atlasMaps || {})) {
+      const nextKey = updateEntityFolder(k) || k;
+      updatedAtlasMaps[nextKey] = v;
+    }
+
+    const updatedPinPositions: Record<string, { x: number; y: number }> = {};
+    for (const [k, v] of Object.entries(workspace.atlasPinPositions || {})) {
+      const nextKey = updateEntityFolder(k) || k;
+      updatedPinPositions[nextKey] = v;
+    }
 
     onUpdateWorkspace({
       ...workspace,
@@ -142,15 +160,18 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
       campaignLogs: updatedLogs,
       combatSummaries: updatedSummaries,
       customItemsAndSpells: updatedCustom,
+      placeAlbumPhotos: updatedPhotos,
+      atlasMaps: updatedAtlasMaps,
+      atlasPinPositions: updatedPinPositions,
     });
 
     setEditingFolderOriginal(null);
-    setSuccessMsg(`Carpeta renombrada a "${newFullPath}".`);
+    setSuccessMsg(`Lugar renombrado a "${newFullPath}".`);
     setTimeout(() => setSuccessMsg(''), 2500);
   };
 
   const handleDeleteFolder = (folderToDelete: string) => {
-    if (!confirm(`¿Eliminar la carpeta "${folderToDelete}" y todas sus subcarpetas? Los elementos se moverán a "General".`)) {
+    if (!confirm(`¿Eliminar el lugar "${folderToDelete}" y todos sus sub-lugares? Los elementos se moverán a "General".`)) {
       return;
     }
 
@@ -165,6 +186,20 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
       return fProp;
     };
 
+    const updatedAtlasMaps: Record<string, string> = {};
+    for (const [k, v] of Object.entries(workspace.atlasMaps || {})) {
+      if (k !== folderToDelete && !k.startsWith(`${folderToDelete} / `)) {
+        updatedAtlasMaps[k] = v;
+      }
+    }
+
+    const updatedPinPositions: Record<string, { x: number; y: number }> = {};
+    for (const [k, v] of Object.entries(workspace.atlasPinPositions || {})) {
+      if (k !== folderToDelete && !k.startsWith(`${folderToDelete} / `)) {
+        updatedPinPositions[k] = v;
+      }
+    }
+
     onUpdateWorkspace({
       ...workspace,
       folders: updatedFolders,
@@ -174,9 +209,15 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
       campaignLogs: (workspace.campaignLogs || []).map((l) => ({ ...l, folder: reassign(l.folder) || 'General' })),
       combatSummaries: (workspace.combatSummaries || []).map((s) => ({ ...s, folder: reassign(s.folder) || 'General' })),
       customItemsAndSpells: (workspace.customItemsAndSpells || []).map((c) => ({ ...c, folder: reassign(c.folder) || 'General' })),
+      placeAlbumPhotos: (workspace.placeAlbumPhotos || []).map((p) => ({
+        ...p,
+        folder: p.folder === folderToDelete || p.folder?.startsWith(`${folderToDelete} / `) ? 'all' : p.folder,
+      })),
+      atlasMaps: updatedAtlasMaps,
+      atlasPinPositions: updatedPinPositions,
     });
 
-    setSuccessMsg('Carpeta eliminada.');
+    setSuccessMsg('Lugar eliminado.');
     setTimeout(() => setSuccessMsg(''), 2000);
   };
 
@@ -189,7 +230,8 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
     const logs = (workspace.campaignLogs || []).filter((l) => match(l.folder)).length;
     const sums = (workspace.combatSummaries || []).filter((s) => match(s.folder)).length;
     const items = (workspace.customItemsAndSpells || []).filter((i) => match(i.folder)).length;
-    return npcs + mons + locs + logs + sums + items;
+    const photos = (workspace.placeAlbumPhotos || []).filter((p) => match(p.folder)).length;
+    return npcs + mons + locs + logs + sums + items + photos;
   };
 
   return (
@@ -207,10 +249,10 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
             </div>
             <div>
               <h3 className="font-cinzel font-bold text-lg text-amber-300">
-                Gestión de Carpetas Jerárquicas (Hasta 3 Niveles)
+                Gestión de Lugares y Sub-Lugares del Atlas (Hasta 4 Niveles)
               </h3>
               <p className="text-[11px] text-stone-400">
-                Estructura tu campaña en Carpetas Principales, Subcarpetas y Sub-subcarpetas.
+                Estructura tu mundo en Regiones (Nivel 1), Ciudades/Villas (Nivel 2), Lugares (Nivel 3) y Sub-lugares como Piso 1 o Sótano (Nivel 4).
               </p>
             </div>
           </div>
@@ -256,18 +298,22 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-[11px] text-stone-400 mb-1">Ubicación / Carpeta Padre:</label>
+              <label className="block text-[11px] text-stone-400 mb-1">Ubicación / Lugar Padre:</label>
               <select
                 value={selectedParentFolder}
                 onChange={(e) => setSelectedParentFolder(e.target.value)}
                 className="w-full bg-[#181920] border border-stone-700 rounded-lg px-3 py-1.5 text-xs text-stone-100 cursor-pointer"
               >
-                <option value="root">📁 Raíz (Carpeta Principal - Nivel 1)</option>
+                <option value="root">🌍 Mundo (Crear Región / Lugar Nivel 1)</option>
                 {eligibleParents.map((p) => {
                   const depth = getFolderDepth(p);
                   return (
                     <option key={p} value={p}>
-                      {depth === 1 ? `↳ 📂 ${p} (Nivel 2)` : `   ↳ 📄 ${p} (Nivel 3)`}
+                      {depth === 1
+                        ? `↳ ⛰️ ${p} (Crear Sub-lugar Nivel 2)`
+                        : depth === 2
+                        ? `   ↳ 🏰 ${p} (Crear Lugar Nivel 3)`
+                        : `      ↳ 🍺 ${p} (Crear Sub-lugar Nivel 4)`}
                     </option>
                   );
                 })}
@@ -280,22 +326,22 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
             className="w-full py-2 bg-amber-600 hover:bg-amber-500 text-white font-cinzel font-bold text-xs rounded-lg shadow transition flex items-center justify-center gap-1.5"
           >
             <FolderPlus className="w-4 h-4" />
-            <span>Crear Carpeta</span>
+            <span>Crear Lugar / Sub-Lugar</span>
           </button>
         </form>
 
         {/* Existing Folders Tree */}
         <div className="flex-1 overflow-y-auto space-y-2 pr-1.5 custom-scrollbar">
           <div className="flex items-center justify-between text-xs font-cinzel font-bold text-stone-400 pb-1">
-            <span>Carpetas Existentes ({currentFolders.length})</span>
+            <span>Lugares Existentes ({currentFolders.length})</span>
             <span className="text-[10px] text-stone-500 font-sans">
-              Haz clic para filtrar la vista del DM
+              Haz clic para viajar a ese lugar en el Atlas
             </span>
           </div>
 
           {currentFolders.length === 0 ? (
             <p className="text-xs text-stone-500 italic py-6 text-center">
-              No tienes carpetas personalizadas aún. ¡Crea una arriba!
+              No tienes lugares personalizados aún. ¡Crea uno arriba!
             </p>
           ) : (
             currentFolders.map((f) => {
@@ -313,7 +359,9 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
                       ? 'bg-[#181920] border-amber-900/60 shadow-sm'
                       : depth === 2
                       ? 'bg-[#15161d] border-stone-800 ml-4'
-                      : 'bg-[#121318] border-stone-800/80 ml-8'
+                      : depth === 3
+                      ? 'bg-[#121318] border-stone-800/80 ml-8'
+                      : 'bg-[#101116] border-stone-800/60 ml-12'
                   }`}
                 >
                   <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -323,10 +371,18 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
                           ? 'text-amber-400 font-bold'
                           : depth === 2
                           ? 'text-amber-300'
+                          : depth === 3
+                          ? 'text-amber-200/80'
                           : 'text-stone-400'
                       }`}
                     >
-                      {depth === 1 ? '📁' : depth === 2 ? '↳ 📂' : '   ↳ 📄'}
+                      {depth === 1
+                        ? '⛰️'
+                        : depth === 2
+                        ? '↳ 🏰'
+                        : depth === 3
+                        ? '   ↳ 🍺'
+                        : '      ↳ 🚪'}
                     </span>
 
                     {isEditing ? (
@@ -360,7 +416,7 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
                           onClose();
                         }}
                         className="cursor-pointer truncate group flex-1"
-                        title={`Filtrar DM por ${f}`}
+                        title={`Viajar a ${f}`}
                       >
                         <span className="font-cinzel text-xs font-bold text-stone-200 group-hover:text-amber-300 transition">
                           {folderBaseName}
@@ -376,14 +432,14 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
 
                   {!isEditing && (
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-800 text-stone-400 font-mono" title="Elementos en esta carpeta y subcarpetas">
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-800 text-stone-400 font-mono" title="Elementos en este lugar y sub-lugares">
                         {totalItems} elems
                       </span>
                       <button
                         type="button"
                         onClick={() => handleStartRename(f)}
                         className="p-1 text-stone-400 hover:text-amber-400 rounded hover:bg-stone-800"
-                        title="Renombrar carpeta"
+                        title="Renombrar lugar"
                       >
                         <Edit className="w-3.5 h-3.5" />
                       </button>
@@ -391,7 +447,7 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
                         type="button"
                         onClick={() => handleDeleteFolder(f)}
                         className="p-1 text-stone-500 hover:text-red-400 rounded hover:bg-stone-800"
-                        title="Eliminar carpeta"
+                        title="Eliminar lugar"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -405,7 +461,7 @@ export const FolderManagerModal: React.FC<FolderManagerModalProps> = ({
 
         {/* Footer */}
         <div className="pt-3 border-t border-stone-800 mt-4 flex justify-between items-center text-xs text-stone-400">
-          <span>Nivel 1 (Principal) • Nivel 2 (Subcarpeta) • Nivel 3 (Sub-subcarpeta)</span>
+          <span>Nivel 1 (Región) • Nivel 2 (Ciudad) • Nivel 3 (Lugar) • Nivel 4 (Sub-lugar)</span>
           <button
             type="button"
             onClick={onClose}

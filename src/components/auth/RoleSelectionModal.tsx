@@ -9,6 +9,7 @@ export interface AuthSessionUser {
   displayName: string;
   userTagId?: string;
   fullTag?: string;
+  avatarUrl?: string;
   friends?: string[];
   role: UserRole;
   playerType?: PlayerType;
@@ -51,7 +52,7 @@ export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
   const [regTagId, setRegTagId] = useState<string>('123');
   const [regPassword, setRegPassword] = useState<string>('');
   const [regRole, setRegRole] = useState<'player' | 'dm' | 'both'>('player');
-  const [regAppRole, setRegAppRole] = useState<'client' | 'moderator' | 'admin'>('client');
+  const [regAppRole, setRegAppRole] = useState<AppRole>('client');
 
   // Forgot password form state
   const [forgotEmail, setForgotEmail] = useState<string>('');

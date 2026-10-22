@@ -52,6 +52,9 @@ import {
   Wrench,
   MessageSquare,
   ShieldCheck,
+  ArrowLeft,
+  Palette,
+  Radio,
 } from 'lucide-react';
 import {
   Character5e,
@@ -63,6 +66,7 @@ import {
   AutoBackupLog,
   PlayerType,
   AppRole,
+  LiveBroadcastPopup,
 } from '../../types/dnd';
 import { AuthSessionUser } from '../auth/RoleSelectionModal';
 import { SAMPLE_CHARACTER, SAMPLE_DM_WORKSPACE } from '../../data/srd';
@@ -86,9 +90,9 @@ interface LobbyPortalViewProps {
   onImportCharacter?: (character: Character5e) => void;
   worldSheets: WorldSheetSummary[];
   onOpenWorldSheet: (world: WorldSheetSummary) => void;
-  onCreateWorldSheet: (config: { name: string; roomCode: string; roomPassword?: string }) => Promise<void>;
+  onCreateWorldSheet: (config: { name: string; roomCode: string; roomPassword?: string; roomMode?: 'online' | 'offline' }) => Promise<void>;
   onImportWorldSheet?: (world: WorldSheetSummary) => void;
-  onUpdateWorldSheetConfig: (worldId: string, updates: { name: string; roomCode: string; roomPassword?: string }) => Promise<void>;
+  onUpdateWorldSheetConfig: (worldId: string, updates: { name: string; roomCode: string; roomPassword?: string; roomMode?: 'online' | 'offline' }) => Promise<void>;
   onDeleteWorldSheet: (worldId: string) => Promise<void>;
   onSaveHostSettings: (settings: HostSettings) => Promise<void>;
   onRefreshAuthStatus: () => Promise<void>;
@@ -101,6 +105,9 @@ interface LobbyPortalViewProps {
   onOpenModeratorPanel?: () => void;
   isAdminModalOpen?: boolean;
   onCloseAdminModal?: () => void;
+  activeLobbyPage?: 'portal' | 'admin' | 'creator' | 'moderator';
+  onChangeLobbyPage?: (page: 'portal' | 'admin' | 'creator' | 'moderator') => void;
+  onBroadcastLivePopup?: (popup: LiveBroadcastPopup) => void;
 }
 
 export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
@@ -131,18 +138,30 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   onOpenModeratorPanel,
   isAdminModalOpen = false,
   onCloseAdminModal,
+  activeLobbyPage = 'portal',
+  onChangeLobbyPage,
+  onBroadcastLivePopup,
 }) => {
-  // Roles architecture: Player Type vs Application Role
+  // Roles architecture: Player Type vs Application Role (admin > creator > moderator > client)
   const userAppRole: AppRole =
     authUser?.appRole ||
-    (authUser?.role === 'admin' ? 'admin' : authUser?.role === 'moderator' ? 'moderator' : 'client');
+    (authUser?.role === 'admin'
+      ? 'admin'
+      : authUser?.role === 'creator'
+      ? 'creator'
+      : authUser?.role === 'moderator'
+      ? 'moderator'
+      : 'client');
   const userPlayerType: PlayerType =
     authUser?.playerType ||
     (authUser?.role === 'dm' ? 'dm' : authUser?.role === 'player' ? 'player' : 'both');
 
   const isAdmin = userAppRole === 'admin' || authUser?.role === 'admin';
-  const isModeratorRole = (userAppRole === 'moderator' || authUser?.role === 'moderator') && !isAdmin;
-  const isModerator = isAdmin || isModeratorRole;
+  const isCreatorRole = (userAppRole === 'creator' || authUser?.role === 'creator') && !isAdmin;
+  const isCreatorOrAbove = isAdmin || isCreatorRole;
+  const isModeratorRole =
+    (userAppRole === 'moderator' || authUser?.role === 'moderator') && !isCreatorOrAbove;
+  const isModerator = isCreatorOrAbove || isModeratorRole;
 
   const canPlay = !authUser || userPlayerType === 'player' || userPlayerType === 'both' || isModerator;
   const canDm = userPlayerType === 'dm' || userPlayerType === 'both' || isModerator;
@@ -152,7 +171,16 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
     canPlay ? 'characters' : canDm ? 'worlds' : 'characters'
   );
 
-  // Dedicated Overlay Modals (so Admin panel & Security are clean, separate experiences)
+  // Full-Page Navigation inside Lobby ('portal' | 'admin' | 'creator' | 'moderator')
+  const [internalLobbyPage, setInternalLobbyPage] = useState<'portal' | 'admin' | 'creator' | 'moderator'>('portal');
+  const currentLobbyPage = onChangeLobbyPage ? activeLobbyPage : internalLobbyPage;
+  const setLobbyPage = (page: 'portal' | 'admin' | 'creator' | 'moderator') => {
+    setInternalLobbyPage(page);
+    if (onChangeLobbyPage) onChangeLobbyPage(page);
+    if (page !== 'admin' && onCloseAdminModal) onCloseAdminModal();
+  };
+
+  // Dedicated Overlay Modals (Security & Direct Friend Chat)
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState<boolean>(false);
   const [isModeratorPanelOpen, setIsModeratorPanelOpen] = useState<boolean>(false);
@@ -185,6 +213,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   const [newWorldName, setNewWorldName] = useState<string>('');
   const [newWorldRoomCode, setNewWorldRoomCode] = useState<string>('MESA-1');
   const [newWorldPassword, setNewWorldPassword] = useState<string>('');
+  const [newWorldRoomMode, setNewWorldRoomMode] = useState<'online' | 'offline'>('online');
   const [worldCreateError, setWorldCreateError] = useState<string>('');
   const [isSavingWorld, setIsSavingWorld] = useState<boolean>(false);
 
@@ -193,6 +222,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   const [editWorldName, setEditWorldName] = useState<string>('');
   const [editWorldRoomCode, setEditWorldRoomCode] = useState<string>('');
   const [editWorldPassword, setEditWorldPassword] = useState<string>('');
+  const [editWorldRoomMode, setEditWorldRoomMode] = useState<'online' | 'offline'>('online');
 
   // Delete confirmations
   const [charToDelete, setCharToDelete] = useState<Character5e | null>(null);
@@ -383,6 +413,12 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   );
   const [greetingSaveStatus, setGreetingSaveStatus] = useState<string>('');
 
+  // Live Broadcast Pop-up state (in Admin Panel)
+  const [livePopupTitle, setLivePopupTitle] = useState<string>('Aviso del Administrador');
+  const [livePopupMessage, setLivePopupMessage] = useState<string>('');
+  const [livePopupSending, setLivePopupSending] = useState<boolean>(false);
+  const [livePopupStatusMsg, setLivePopupStatusMsg] = useState<string>('');
+
   // USER SELF-SERVICE PASSWORD & SECURITY TAB STATE
   const [userOldPassword, setUserOldPassword] = useState<string>('');
   const [userNewPassword, setUserNewPassword] = useState<string>('');
@@ -411,6 +447,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       fullTag: string;
       role: string;
       status: string;
+      avatarUrl?: string;
     }>
   >([]);
   const [isLoadingFriends, setIsLoadingFriends] = useState<boolean>(false);
@@ -1300,13 +1337,13 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       fetchUserSheets();
       fetchUserFriends();
     }
-    if (isModerator && activeTab === 'admin') {
+    if (isModerator && (activeTab === 'admin' || currentLobbyPage === 'admin' || isAdminModalOpen)) {
       fetchAdminUsers();
       fetchVaultDetails();
       fetchAdminChangelog();
       fetchAdminFeedback();
     }
-  }, [authUser?.email, authUser?.status, activeTab, isModerator, charactersCount]);
+  }, [authUser?.email, authUser?.status, activeTab, currentLobbyPage, isAdminModalOpen, isModerator, charactersCount]);
 
   // Handle Join Table validation
   const handleJoinTableSubmit = async (e: React.FormEvent) => {
@@ -1370,11 +1407,13 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
         name: newWorldName.trim(),
         roomCode: newWorldRoomCode.trim().toUpperCase(),
         roomPassword: newWorldPassword.trim() || undefined,
+        roomMode: newWorldRoomMode,
       });
       setIsCreateWorldOpen(false);
       setNewWorldName('');
       setNewWorldRoomCode('MESA-1');
       setNewWorldPassword('');
+      setNewWorldRoomMode('online');
     } catch (err: any) {
       setWorldCreateError(err.message || 'Error al crear World Sheet.');
     } finally {
@@ -1392,6 +1431,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
         name: editWorldName.trim() || editingWorld.name,
         roomCode: editWorldRoomCode.trim().toUpperCase() || editingWorld.roomCode,
         roomPassword: editWorldPassword.trim() || undefined,
+        roomMode: editWorldRoomMode,
       });
       setEditingWorld(null);
       setWorldCreateError('');
@@ -1652,6 +1692,42 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
     }
   };
 
+  const handleSendLivePopupInAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!livePopupMessage.trim()) return;
+    setLivePopupSending(true);
+    setLivePopupStatusMsg('');
+    try {
+      const res = await fetch('/api/admin/live-popup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: livePopupTitle.trim() || 'Aviso del Administrador',
+          message: livePopupMessage.trim(),
+          senderName: authUser?.displayName || 'Administrador',
+          senderRole:
+            userAppRole === 'admin'
+              ? 'Administrador'
+              : userAppRole === 'creator'
+              ? 'Creador de Contenido'
+              : 'Moderador',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo enviar el aviso pop-up en vivo.');
+      setLivePopupMessage('');
+      setLivePopupStatusMsg('¡Aviso Pop-up enviado en vivo a todos los usuarios conectados!');
+      if (onBroadcastLivePopup && data.popup) {
+        onBroadcastLivePopup(data.popup);
+      }
+      setTimeout(() => setLivePopupStatusMsg(''), 4500);
+    } catch (err: any) {
+      setLivePopupStatusMsg(err.message || 'Error al enviar el aviso pop-up.');
+    } finally {
+      setLivePopupSending(false);
+    }
+  };
+
   const renderAdminGreetingBanner = () => {
     if (!hostSettings.adminGreeting?.enabled || !hostSettings.adminGreeting?.message || dismissedGreeting) {
       return null;
@@ -1878,145 +1954,209 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   // VIEW: APPROVED USER LOBBY PORTAL
   // ==========================================
   return (
-    <div className="w-full max-w-[1700px] mx-auto px-2 sm:px-4 py-4 space-y-6 animate-in fade-in">
-      {/* Lobby Top Banner: Welcome, Dual Role Badge, Security & Admin Actions */}
-      <div className="bg-gradient-to-r from-[#171821] via-[#1c1d29] to-[#171821] border border-amber-900/60 rounded-3xl p-5 sm:p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <BrandLogo hostSettings={hostSettings} size="lg" />
-          <div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="font-cinzel font-black text-2xl text-amber-300 tracking-wide">
-                {hostSettings.headerTitle || 'WeRoll'}
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-amber-950 border border-amber-700 text-amber-300">
-                {hostSettings.headerSubtitle || 'Suite v0.9 Alfa'}
-              </span>
-              <button
-                onClick={onOpenChangelog}
-                title="Ver novedades de la versión v0.9 Alfa"
-                className="px-2.5 py-1 rounded-xl bg-stone-800/80 hover:bg-amber-950 hover:border-amber-600/60 border border-stone-700 text-stone-300 text-xs font-cinzel transition flex items-center gap-1.5"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>Novedades</span>
-              </button>
-            </div>
-            <p className="text-xs text-stone-400 mt-1">
-              Bienvenido, <strong className="text-stone-200">{authUser.displayName}</strong> <span className="font-mono text-amber-400 font-bold">@{authUser.userTagId || '123'}</span> ({authUser.email})
-            </p>
-          </div>
-        </div>
+    <div className="w-full max-w-[1700px] mx-auto px-2 sm:px-4 py-3 space-y-5 animate-in fade-in">
+      {/* =================================================================== */}
+      {/* REDESIGNED LOBBY WELCOME BANNER (Matches /assets/aistudio/Lobby_933792e8.jpg) */}
+      {/* =================================================================== */}
+      <div
+        data-testid="lobby-welcome-banner"
+        className="relative bg-gradient-to-r from-[#131520] via-[#191c2a] to-[#131520] border-2 border-[#c8a45c]/75 rounded-2xl px-4 sm:px-6 py-3.5 shadow-[0_0_30px_rgba(0,0,0,0.85)] flex flex-col xl:flex-row items-center justify-between gap-4 overflow-hidden"
+      >
+        {/* Subtle top/bottom gold accent lines */}
+        <div className="absolute top-0 left-8 right-8 h-[1px] bg-gradient-to-r from-transparent via-[#e2c275]/70 to-transparent pointer-events-none" />
+        <div className="absolute bottom-0 left-8 right-8 h-[1px] bg-gradient-to-r from-transparent via-[#c8a45c]/40 to-transparent pointer-events-none" />
 
-        {/* Dual Roles Badges & Quick Action Controls */}
-        <div className="flex items-center gap-2.5 flex-wrap self-end md:self-center">
-          {/* 1. Tipo de Jugador Badge */}
-          <div className="px-3 py-1.5 rounded-xl bg-[#121316] border border-stone-800 flex items-center gap-1.5">
-            {userPlayerType === 'dm' ? (
-              <Crown className="w-3.5 h-3.5 text-purple-400" />
-            ) : userPlayerType === 'both' ? (
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            ) : (
-              <User className="w-3.5 h-3.5 text-amber-400" />
-            )}
-            <span className="text-[11px] font-cinzel font-bold text-stone-200 uppercase">
-              {userPlayerType === 'dm'
-                ? 'Dungeon Master'
-                : userPlayerType === 'both'
-                ? 'DM y Jugador'
-                : 'Jugador'}
-            </span>
-          </div>
-
-          {/* 2. Rol en la App Badge */}
-          <div className="px-3 py-1.5 rounded-xl bg-[#121316] border border-stone-800 flex items-center gap-1.5">
-            {userAppRole === 'admin' ? (
-              <Shield className="w-3.5 h-3.5 text-blue-400" />
-            ) : userAppRole === 'moderator' ? (
-              <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
-            ) : (
-              <User className="w-3.5 h-3.5 text-stone-400" />
-            )}
-            <span className="text-[11px] font-cinzel font-bold uppercase text-stone-300">
-              {userAppRole === 'admin'
-                ? 'Admin'
-                : userAppRole === 'moderator'
-                ? 'Moderador'
-                : 'Cliente'}
-            </span>
-          </div>
-
-          {/* Button: Seguridad & Contraseña Tool */}
+        {/* Left: Circular Player Profile Image + Welcome Name #ID & Email */}
+        <div className="flex items-center gap-3.5 w-full xl:w-auto">
           <button
+            type="button"
             onClick={() => {
               if (onOpenSecurityModal) onOpenSecurityModal();
               else setIsSecurityModalOpen(true);
             }}
-            title="Ajustar Seguridad, @ID y Contraseña"
-            className="p-2.5 rounded-xl bg-[#15161e] hover:bg-[#1d1f2b] border border-stone-700 hover:border-amber-600/70 text-amber-400 transition shadow-sm flex items-center gap-1.5 text-xs font-cinzel font-bold"
+            title="Haz clic para cambiar tu imagen de perfil de jugador"
+            className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-full overflow-hidden bg-[#10121a] border-2 border-[#e2c275] shadow-[0_0_15px_rgba(200,164,92,0.35)] flex items-center justify-center shrink-0 group cursor-pointer"
           >
-            <Wrench className="w-4 h-4" />
-            <span className="hidden sm:inline">Seguridad</span>
+            {authUser.avatarUrl ? (
+              <img
+                src={authUser.avatarUrl}
+                alt={authUser.displayName}
+                className="w-full h-full object-cover group-hover:scale-105 transition"
+              />
+            ) : (
+              <span className="font-cinzel font-black text-base sm:text-lg text-[#f5e4be]">
+                {authUser.displayName.slice(0, 2).toUpperCase()}
+              </span>
+            )}
           </button>
 
-          {/* Button: Admin Panel (Solo Administrador) */}
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <span className="font-cinzel font-bold text-base sm:text-xl text-[#f5e4be] tracking-wide">
+                Bienvenido, <strong className="text-white font-black">{authUser.displayName}</strong>
+              </span>
+              <span className="font-mono font-bold text-xs sm:text-sm text-[#e2c275]">
+                #{authUser.userTagId || '123'}
+              </span>
+            </div>
+            <p className="text-xs text-stone-400 font-mono truncate">
+              ({authUser.email})
+            </p>
+          </div>
+        </div>
+
+        {/* Center: Dual Role Badge Pills (DM Y JUGADOR | ADMIN / CREADOR / MOD) */}
+        <div className="flex items-center gap-2.5 flex-wrap justify-center">
+          <div className="px-3.5 py-1.5 rounded-full bg-[#1b1814] border border-[#c8a45c]/70 flex items-center gap-1.5 shadow-inner">
+            <Crown className="w-3.5 h-3.5 text-[#e2c275]" />
+            <span className="text-[11px] font-cinzel font-bold text-[#f5e4be] uppercase tracking-wider">
+              {userPlayerType === 'dm'
+                ? 'DUNGEON MASTER'
+                : userPlayerType === 'both'
+                ? 'DM Y JUGADOR'
+                : 'JUGADOR'}
+            </span>
+          </div>
+
+          <div
+            className={`px-3.5 py-1.5 rounded-full border flex items-center gap-1.5 shadow-inner ${
+              isAdmin
+                ? 'bg-[#131d31] border-blue-400/70 text-blue-200'
+                : isCreatorRole
+                ? 'bg-[#281e11] border-amber-400/80 text-amber-200'
+                : isModeratorRole
+                ? 'bg-[#211530] border-purple-400/70 text-purple-200'
+                : 'bg-[#161820] border-stone-700 text-stone-300'
+            }`}
+          >
+            {isAdmin ? (
+              <Shield className="w-3.5 h-3.5 text-blue-400" />
+            ) : isCreatorRole ? (
+              <Palette className="w-3.5 h-3.5 text-amber-400" />
+            ) : isModeratorRole ? (
+              <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
+            ) : (
+              <User className="w-3.5 h-3.5 text-stone-400" />
+            )}
+            <span className="text-[11px] font-cinzel font-bold uppercase tracking-wider">
+              {isAdmin
+                ? 'ADMIN / MOD'
+                : isCreatorRole
+                ? 'CREADOR DE CONTENIDO'
+                : isModeratorRole
+                ? 'MODERADOR'
+                : 'CLIENTE'}
+            </span>
+          </div>
+        </div>
+
+        {/* Right: Quick Action Controls (SEGURIDAD | PANEL ADMIN | PANEL CREACIÓN | MODERACIÓN | SALIR DE LA CUENTA) */}
+        <div className="flex items-center gap-2 flex-wrap justify-end w-full xl:w-auto">
+          {/* Button: Seguridad */}
+          <button
+            type="button"
+            data-testid="btn-lobby-security"
+            onClick={() => {
+              if (onOpenSecurityModal) onOpenSecurityModal();
+              else setIsSecurityModalOpen(true);
+            }}
+            title="Configuración de cuenta, imagen de jugador, @ID y contraseña"
+            className="px-3.5 py-2 rounded-xl bg-[#1f1b16] hover:bg-[#2b251d] border border-[#c8a45c]/70 text-[#f5e4be] transition shadow flex items-center gap-1.5 text-xs font-cinzel font-bold uppercase cursor-pointer"
+          >
+            <Wrench className="w-3.5 h-3.5 text-[#e2c275]" />
+            <span>Seguridad</span>
+          </button>
+
+          {/* Button: Panel Admin (Full Page) */}
           {isAdmin && (
             <button
-              onClick={() => {
-                if (onOpenAdminPanel) onOpenAdminPanel();
-                else setIsAdminPanelOpen(true);
-              }}
-              title="Abrir Panel de Administrador"
-              className="p-2.5 rounded-xl bg-blue-950/70 hover:bg-blue-900 border border-blue-700/70 text-blue-300 hover:text-white transition shadow-sm flex items-center gap-1.5 text-xs font-cinzel font-bold"
+              type="button"
+              data-testid="btn-lobby-admin-page"
+              onClick={() =>
+                setLobbyPage(currentLobbyPage === 'admin' ? 'portal' : 'admin')
+              }
+              title="Abrir Página de Administración"
+              className={`px-3.5 py-2 rounded-xl border transition shadow flex items-center gap-1.5 text-xs font-cinzel font-bold uppercase cursor-pointer ${
+                currentLobbyPage === 'admin'
+                  ? 'bg-blue-700 border-blue-300 text-white ring-2 ring-blue-400/50'
+                  : 'bg-[#142038] hover:bg-[#1b2c4d] border-blue-500/70 text-blue-200'
+              }`}
             >
-              <Shield className="w-4 h-4 text-blue-400" />
-              <span className="hidden sm:inline">Panel Admin</span>
+              <Shield className="w-3.5 h-3.5 text-blue-300" />
+              <span>Panel Admin</span>
             </button>
           )}
 
-          {/* Button: Moderator Panel (Moderador o Administrador) */}
+          {/* Button: Moderación (Full Page - incluye Estudio de Creador si el usuario es Creador o Admin) */}
           {isModerator && (
             <button
-              onClick={() => {
-                if (onOpenModeratorPanel) onOpenModeratorPanel();
-                else setIsModeratorPanelOpen(true);
-              }}
-              title="Abrir Panel de Moderación"
-              className="p-2.5 rounded-xl bg-purple-950/70 hover:bg-purple-900 border border-purple-700/70 text-purple-300 hover:text-white transition shadow-sm flex items-center gap-1.5 text-xs font-cinzel font-bold"
+              type="button"
+              data-testid="btn-lobby-moderator-page"
+              onClick={() =>
+                setLobbyPage(
+                  currentLobbyPage === 'moderator' || currentLobbyPage === 'creator'
+                    ? 'portal'
+                    : 'moderator'
+                )
+              }
+              title="Abrir Página de Moderación"
+              className={`px-3.5 py-2 rounded-xl border transition shadow flex items-center gap-1.5 text-xs font-cinzel font-bold uppercase cursor-pointer ${
+                currentLobbyPage === 'moderator' || currentLobbyPage === 'creator'
+                  ? 'bg-purple-700 border-purple-300 text-white ring-2 ring-purple-400/50'
+                  : 'bg-[#241634] hover:bg-[#311d47] border-purple-500/70 text-purple-200'
+              }`}
             >
-              <ShieldCheck className="w-4 h-4 text-purple-400" />
-              <span className="hidden sm:inline">Moderación</span>
+              <ShieldCheck className="w-3.5 h-3.5 text-purple-300" />
+              <span>Moderación</span>
             </button>
           )}
-          {/* Button: Feedback (Solo para Clientes / Jugadores Normales) */}
-          {!isAdmin && !isModeratorRole && (
+
+          {/* Button: Feedback (Regular Clients) */}
+          {!isModerator && (
             <button
+              type="button"
               onClick={() => {
                 if (onOpenFeedback) onOpenFeedback();
               }}
-              title="Enviar feedback o reportar un bug"
-              className="p-2.5 rounded-xl bg-amber-950/60 hover:bg-amber-900 border border-amber-800/60 text-amber-300 hover:text-amber-100 transition shadow-sm flex items-center gap-1.5 text-xs font-cinzel font-bold"
+              className="px-3.5 py-2 rounded-xl bg-amber-950/60 hover:bg-amber-900 border border-amber-700/70 text-amber-200 transition shadow flex items-center gap-1.5 text-xs font-cinzel font-bold uppercase cursor-pointer"
             >
-              <MessageSquarePlus className="w-4 h-4 text-amber-400" />
-              <span className="hidden sm:inline">Feedback</span>
+              <MessageSquarePlus className="w-3.5 h-3.5 text-amber-400" />
+              <span>Feedback</span>
             </button>
           )}
 
-          {/* Logout button */}
+          {/* Button: Salir de la Cuenta */}
           <button
+            type="button"
             onClick={onLogout}
             title="Cerrar Sesión"
-            className="p-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-stone-200 border border-stone-700 transition"
+            className="px-3.5 py-2 rounded-xl bg-[#2a1317] hover:bg-red-950 border border-red-600/70 text-red-200 hover:text-white transition shadow flex items-center gap-1.5 text-xs font-cinzel font-bold uppercase cursor-pointer"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-3.5 h-3.5 text-red-400" />
+            <span>Salir de la Cuenta</span>
           </button>
         </div>
       </div>
 
-      {/* Admin Greeting / Maintenance Notification Banner */}
-      {renderAdminGreetingBanner()}
+      {/* =================================================================== */}
+      {/* DEDICATED FULL PAGE: MODERACIÓN (Y ESTUDIO DE CREADOR SI APLICA)    */}
+      {/* =================================================================== */}
+      {(currentLobbyPage === 'moderator' || currentLobbyPage === 'creator') && isModerator && (
+        <ModeratorPanelModal
+          isOpen={true}
+          asPage={true}
+          creatorMode={isCreatorOrAbove}
+          onClose={() => setLobbyPage('portal')}
+          authUser={authUser}
+          onSwitchToAdminPanel={isAdmin ? () => setLobbyPage('admin') : undefined}
+          onBroadcastLivePopup={onBroadcastLivePopup}
+        />
+      )}
 
       {/* =================================================================== */}
       {/* MAIN 2-COLUMN VIEWPORT: LEFT (1/3) & RIGHT FORUM (2/3)              */}
       {/* =================================================================== */}
+      {currentLobbyPage === 'portal' && (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column (col-span-12 lg:col-span-5 xl:col-span-4 2xl:col-span-4 space-y-6) */}
         <div className="lg:col-span-5 xl:col-span-4 2xl:col-span-4 space-y-6">
@@ -2379,10 +2519,19 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                         <h3 className="font-cinzel font-bold text-sm text-purple-300 group-hover:text-purple-200 transition truncate leading-snug">
                           {world.name}
                         </h3>
-                        <p className="text-[11px] text-stone-400 flex items-center gap-1.5 mt-0.5">
+                        <p className="text-[11px] text-stone-400 flex items-center gap-1.5 mt-0.5 flex-wrap">
                           <span>Mesa:</span>
                           <span className="font-mono font-bold text-amber-300 bg-[#121316] px-1.5 py-0.2 rounded border border-stone-800">
                             {world.roomCode}
+                          </span>
+                          <span
+                            className={`text-[10px] font-cinzel font-bold px-2 py-0.5 rounded-full border ${
+                              world.roomMode === 'offline'
+                                ? 'bg-stone-900 border-stone-700 text-stone-400'
+                                : 'bg-emerald-950/70 border-emerald-600/60 text-emerald-300'
+                            }`}
+                          >
+                            {world.roomMode === 'offline' ? '● Offline (Solo Edición)' : '● Online (Mesa Abierta)'}
                           </span>
                         </p>
                       </div>
@@ -2425,10 +2574,16 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                   <div className="pt-1 flex items-center gap-1.5">
                     <button
                       onClick={() => onOpenWorldSheet(world)}
-                      className="flex-1 py-2 px-2.5 rounded-xl bg-gradient-to-r from-purple-700 to-purple-600 hover:from-purple-600 hover:to-purple-500 text-white font-cinzel font-bold text-xs shadow transition flex items-center justify-center gap-1 min-w-0"
+                      className={`flex-1 py-2 px-2.5 rounded-xl font-cinzel font-bold text-xs shadow transition flex items-center justify-center gap-1 min-w-0 cursor-pointer ${
+                        world.roomMode === 'offline'
+                          ? 'bg-stone-800 hover:bg-stone-700 border border-amber-600/60 text-amber-200'
+                          : 'bg-gradient-to-r from-purple-700 to-purple-600 hover:from-purple-600 hover:to-purple-500 text-white'
+                      }`}
                     >
                       <Play className="w-3.5 h-3.5 fill-current shrink-0" />
-                      <span className="truncate">Abrir Mesa DM</span>
+                      <span className="truncate">
+                        {world.roomMode === 'offline' ? 'Editar Offline' : 'Abrir Mesa Online'}
+                      </span>
                     </button>
 
                     <button
@@ -2437,9 +2592,10 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                         setEditWorldName(world.name);
                         setEditWorldRoomCode(world.roomCode);
                         setEditWorldPassword(world.roomPassword || '');
+                        setEditWorldRoomMode(world.roomMode || 'online');
                       }}
-                      title="Editar configuración de la mesa"
-                      className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700 transition shrink-0"
+                      title="Editar configuración de la mesa (Online / Offline, código y clave)"
+                      className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700 transition shrink-0 cursor-pointer"
                     >
                       <Edit className="w-3.5 h-3.5" />
                     </button>
@@ -2576,8 +2732,16 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                       className="bg-[#181922] border border-stone-800 hover:border-emerald-800/60 rounded-xl p-3 flex items-center justify-between gap-2 transition shadow-sm"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-950/70 border border-emerald-700/60 flex items-center justify-center text-emerald-300 font-cinzel font-bold text-xs shrink-0">
-                          {friend.displayName.slice(0, 2).toUpperCase()}
+                        <div className="w-9 h-9 rounded-lg bg-emerald-950/70 border border-emerald-700/60 flex items-center justify-center text-emerald-300 font-cinzel font-bold text-xs shrink-0 overflow-hidden shadow">
+                          {friend.avatarUrl ? (
+                            <img
+                              src={friend.avatarUrl}
+                              alt={friend.displayName}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            friend.displayName.slice(0, 2).toUpperCase()
+                          )}
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-1 min-w-0">
@@ -2589,8 +2753,10 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                             </span>
                           </div>
                           <span className="text-[10px] text-stone-400 font-cinzel block truncate mt-0.5">
-                            {friend.role === 'moderator'
+                            {friend.role === 'moderator' || friend.role === 'admin'
                               ? 'Administrador'
+                              : friend.role === 'creator'
+                              ? 'Creador de Contenido'
                               : friend.role === 'both'
                               ? 'Jugador & DM'
                               : friend.role === 'dm'
@@ -2631,18 +2797,18 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           </div>
       </div>
 
-        {/* Right Column: FORUM taking 2/3 of the screen width */}
+        {/* Right Column: COMPACT OFFICIAL ADMIN NOTICE + FORUM (2/3 of the screen width) */}
         <div className="lg:col-span-7 xl:col-span-8 2xl:col-span-8 min-w-0 space-y-4">
+          {renderAdminGreetingBanner()}
+
           <ForumView
             authUser={authUser}
             onOpenLoginModal={onOpenAuthModal}
-            onOpenModeratorPanel={() => {
-              if (onOpenModeratorPanel) onOpenModeratorPanel();
-              else setIsModeratorPanelOpen(true);
-            }}
+            onOpenModeratorPanel={() => setLobbyPage('moderator')}
           />
         </div>
       </div>
+      )}
 
       {/* Optional In-Lobby Security View if specifically selected */}
       {activeTab === 'security' && (
@@ -2896,47 +3062,58 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       )}
 
       {/* =================================================================== */}
-      {/* ADMIN PANEL DEDICATED OVERLAY MODAL (SOLO ADMINISTRADOR / MODERADOR) */}
+      {/* ADMIN PANEL DEDICATED FULL PAGE (SOLO ADMINISTRADOR)                 */}
       {/* =================================================================== */}
-      {(isAdminPanelOpen || isAdminModalOpen || activeTab === 'admin') && isModerator && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-2 sm:p-5 animate-in fade-in">
-          <div className="bg-[#14151b] border-2 border-blue-900/80 rounded-3xl w-full max-w-6xl max-h-[94vh] flex flex-col shadow-2xl overflow-hidden">
-            {/* Modal Top Bar */}
-            <div className="bg-[#181920] border-b border-stone-800 p-4 sm:p-5 flex items-center justify-between shrink-0">
+      {(currentLobbyPage === 'admin' || isAdminPanelOpen || isAdminModalOpen || activeTab === 'admin') && isModerator && (
+        <div className="w-full animate-in fade-in">
+          <div className="bg-[#14151b] border-2 border-blue-900/80 rounded-3xl w-full flex flex-col shadow-2xl overflow-hidden">
+            {/* Page Top Bar */}
+            <div className="bg-[#181920] border-b border-stone-800 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4 shrink-0">
               <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAdminPanelOpen(false);
+                    if (activeTab === 'admin') setActiveTab('characters');
+                    setLobbyPage('portal');
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 border border-[#c8a45c]/50 text-[#f5e4be] font-cinzel font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow"
+                >
+                  <ArrowLeft className="w-4 h-4 text-[#e2c275]" />
+                  <span>Volver al Lobby</span>
+                </button>
                 <div className="w-10 h-10 rounded-xl bg-blue-950/70 border border-blue-600/70 flex items-center justify-center text-blue-300">
                   <Shield className="w-5 h-5" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="font-cinzel font-black text-base text-blue-200">
-                      Panel de Administración WeRoll
+                    <h3 className="font-cinzel font-black text-base sm:text-lg text-blue-200">
+                      Página de Administración WeRoll
                     </h3>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 border border-blue-700/60 text-blue-300 font-bold">
-                      v0.9 Alfa
+                      v1.0 Beta
                     </span>
                   </div>
                   <p className="text-xs text-stone-400">
-                    Gestión integral de usuarios, asignación de roles, bóvedas de seguridad y respaldos en la nube.
+                    Gestión integral de usuarios, rol Creador de Contenido, avisos pop-up en vivo, bóvedas y servidor.
                   </p>
                 </div>
               </div>
 
-              <button
-                onClick={() => {
-                  setIsAdminPanelOpen(false);
-                  if (activeTab === 'admin') setActiveTab('characters');
-                  if (onCloseAdminModal) onCloseAdminModal();
-                }}
-                className="p-1.5 rounded-lg hover:bg-stone-800 text-stone-400 hover:text-stone-200 transition"
-                title="Cerrar Panel de Administrador"
-              >
-                <X className="w-6 h-6" />
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setLobbyPage('moderator')}
+                  className="px-3 py-1.5 rounded-xl bg-purple-950/80 hover:bg-purple-900 border border-purple-600/70 text-purple-200 font-cinzel font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Página Moderación</span>
+                </button>
+              </div>
             </div>
 
-            {/* Modal Scrollable Body */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 custom-scrollbar bg-[#101115]">
+            {/* Page Body */}
+            <div className="p-4 sm:p-6 space-y-6 bg-[#101115]">
           {/* Hidden file input for restore (available globally in Admin) */}
           <input
             type="file"
@@ -3178,12 +3355,22 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                           </td>
                           <td className="py-3 px-3">
                             <select
-                              value={u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'moderator' ? 'moderator' : 'client')}
+                              value={
+                                u.appRole ||
+                                (u.role === 'admin'
+                                  ? 'admin'
+                                  : u.role === 'creator'
+                                  ? 'creator'
+                                  : u.role === 'moderator'
+                                  ? 'moderator'
+                                  : 'client')
+                              }
                               onChange={(e) => handleAdminChangeAppRole(u.id, e.target.value)}
                               className="bg-[#121316] border border-blue-900/80 rounded-lg px-2.5 py-1 text-xs text-blue-300 font-cinzel font-semibold outline-none focus:border-blue-500"
                             >
                               <option value="client">Cliente</option>
                               <option value="moderator">Moderador</option>
+                              <option value="creator">Creador de Contenido</option>
                               <option value="admin">Admin</option>
                             </select>
                           </td>
@@ -4494,6 +4681,78 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                 </div>
               </form>
 
+              {/* 1B. AVISO POP-UP EN VIVO (SOLO PARA QUIENES ESTÉN CONECTADOS EN ESTE MOMENTO) */}
+              <form
+                onSubmit={handleSendLivePopupInAdmin}
+                className="bg-[#161720] border-2 border-purple-600/60 rounded-3xl p-6 shadow-xl space-y-4 animate-in fade-in"
+              >
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-stone-800 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-purple-950 border border-purple-500/80 flex items-center justify-center text-purple-300 shrink-0">
+                      <Radio className="w-5 h-5 text-purple-400 animate-pulse" />
+                    </div>
+                    <div>
+                      <h3 className="font-cinzel font-bold text-base text-purple-200 flex items-center gap-2">
+                        Aviso Pop-up en Vivo del Administrador / Moderador
+                      </h3>
+                      <p className="text-xs text-stone-400 mt-0.5">
+                        A diferencia del saludo fijo, este mensaje no aparece al abrir la aplicación después, sino que dispara un pop-up inmediato únicamente a quienes estén en línea ahora mismo (en el Lobby o en una partida).
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-3 py-1 rounded-full bg-purple-950 border border-purple-700 text-[11px] font-mono text-purple-200">
+                    Remitente: <strong>{authUser.displayName}</strong>
+                  </span>
+                </div>
+
+                {livePopupStatusMsg && (
+                  <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-600 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
+                    <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
+                    <span>{livePopupStatusMsg}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-cinzel font-bold uppercase text-stone-400 mb-1">
+                      Título del Pop-up en Vivo
+                    </label>
+                    <input
+                      type="text"
+                      value={livePopupTitle}
+                      onChange={(e) => setLivePopupTitle(e.target.value)}
+                      placeholder="Ej: Aviso del Administrador"
+                      className="w-full bg-[#121316] border border-stone-700 rounded-xl px-3.5 py-2.5 text-stone-100 text-xs outline-none focus:border-purple-500 transition"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-cinzel font-bold uppercase text-stone-400 mb-1">
+                      Mensaje Instantáneo para Usuarios en Línea
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={livePopupMessage}
+                      onChange={(e) => setLivePopupMessage(e.target.value)}
+                      placeholder="Ej: Les recuerdo que en 10 minutos la aplicación entrará en mantenimiento..."
+                      className="w-full bg-[#121316] border border-stone-700 rounded-xl px-3.5 py-2.5 text-stone-100 text-xs outline-none focus:border-purple-500 transition"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="submit"
+                    disabled={livePopupSending}
+                    data-testid="btn-send-live-admin-popup"
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-amber-600 hover:from-purple-500 hover:to-amber-500 text-white font-cinzel font-bold text-xs shadow-lg transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>{livePopupSending ? 'Enviando Pop-up...' : 'Enviar Pop-up en Vivo Ahora'}</span>
+                  </button>
+                </div>
+              </form>
+
               {/* 2. REGISTRO HISTÓRICO DE VERSIONES & MEJORAS */}
               <div className="bg-[#161720] border border-stone-800 rounded-3xl p-6 shadow-xl space-y-5">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-stone-800 pb-4">
@@ -5409,6 +5668,52 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                 />
               </div>
 
+              {/* Online vs Offline Mode Toggle */}
+              <div>
+                <label className="block text-xs font-cinzel font-bold uppercase text-amber-300 mb-1.5">
+                  Modo de Apertura de la Mesa
+                </label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    data-testid="create-world-mode-online"
+                    onClick={() => setNewWorldRoomMode('online')}
+                    className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                      newWorldRoomMode === 'online'
+                        ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200 ring-1 ring-emerald-500'
+                        : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700'
+                    }`}
+                  >
+                    <div className="font-cinzel font-bold text-xs flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Modo Online</span>
+                    </div>
+                    <p className="text-[10px] text-stone-400 mt-1">
+                      Abre la sala en vivo para que los jugadores se unan con el código.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="create-world-mode-offline"
+                    onClick={() => setNewWorldRoomMode('offline')}
+                    className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                      newWorldRoomMode === 'offline'
+                        ? 'bg-amber-950/80 border-amber-500 text-amber-200 ring-1 ring-amber-500'
+                        : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700'
+                    }`}
+                  >
+                    <div className="font-cinzel font-bold text-xs flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-400" />
+                      <span>Modo Offline</span>
+                    </div>
+                    <p className="text-[10px] text-stone-400 mt-1">
+                      Edita mapas, NPCs y objetos en privado sin abrir la mesa.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
               <div className="p-3 rounded-xl bg-[#121316] border border-stone-800 text-[11px] text-stone-400 leading-relaxed">
                 ✨ <strong>Lienzo Limpio:</strong> Las carpetas, NPCs, monstruos y lugares comenzarán desde cero para esta campaña, con acceso al compendio genérico SRD.
               </div>
@@ -5447,7 +5752,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                   Editar Configuración de Mesa
                 </h3>
                 <p className="text-xs text-stone-400">
-                  Actualiza el nombre, código o contraseña de acceso.
+                  Actualiza el nombre, código, contraseña o modo Online / Offline.
                 </p>
               </div>
 
@@ -5507,6 +5812,52 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                   onChange={(e) => setEditWorldPassword(e.target.value)}
                   className="w-full bg-[#121316] border border-stone-700 rounded-xl px-3.5 py-2.5 text-stone-100 text-sm outline-none"
                 />
+              </div>
+
+              {/* Online vs Offline Mode Toggle */}
+              <div>
+                <label className="block text-xs font-cinzel font-bold uppercase text-amber-300 mb-1.5">
+                  Modo de Apertura de la Mesa
+                </label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    data-testid="edit-world-mode-online"
+                    onClick={() => setEditWorldRoomMode('online')}
+                    className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                      editWorldRoomMode === 'online'
+                        ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200 ring-1 ring-emerald-500'
+                        : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700'
+                    }`}
+                  >
+                    <div className="font-cinzel font-bold text-xs flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Modo Online</span>
+                    </div>
+                    <p className="text-[10px] text-stone-400 mt-1">
+                      Los jugadores pueden unirse a la mesa al abrirla.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="edit-world-mode-offline"
+                    onClick={() => setEditWorldRoomMode('offline')}
+                    className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                      editWorldRoomMode === 'offline'
+                        ? 'bg-amber-950/80 border-amber-500 text-amber-200 ring-1 ring-amber-500'
+                        : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700'
+                    }`}
+                  >
+                    <div className="font-cinzel font-bold text-xs flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-400" />
+                      <span>Modo Offline</span>
+                    </div>
+                    <p className="text-[10px] text-stone-400 mt-1">
+                      Para preparar y modificar tu mundo sin abrir la mesa.
+                    </p>
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2">
@@ -6008,7 +6359,9 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                     <option value="both">DM y Jugador</option>
                     <option value="player">Jugador</option>
                     <option value="dm">Dungeon Master</option>
-                    <option value="moderator">Administrador</option>
+                    <option value="creator">Creador de Contenido</option>
+                    <option value="moderator">Moderador</option>
+                    <option value="admin">Administrador</option>
                   </select>
                 </div>
               </div>

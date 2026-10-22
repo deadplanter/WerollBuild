@@ -51,11 +51,12 @@ export interface UserAccount {
   email: string;
   displayName: string;
   userTagId?: string;
+  avatarUrl?: string;
   friends?: string[];
   password: string;
-  role: 'player' | 'dm' | 'both' | 'moderator' | 'admin';
+  role: 'player' | 'dm' | 'both' | 'moderator' | 'creator' | 'admin';
   playerType?: PlayerType; // 'player' | 'dm' | 'both'
-  appRole?: AppRole; // 'client' | 'moderator' | 'admin'
+  appRole?: AppRole; // 'client' | 'moderator' | 'creator' | 'admin'
   canPostInForum?: boolean; // false for regular clients unless granted by mod/admin
   forumPermissionsRequested?: boolean;
   status: 'pending' | 'approved' | 'rejected';
@@ -104,6 +105,7 @@ export interface WorldSheetRecord {
   description?: string;
   roomCode: string;
   roomPassword?: string;
+  roomMode?: 'online' | 'offline';
   workspace: DMWorkspace;
   updatedAt: number;
 }
@@ -225,8 +227,10 @@ export const dataStore = {
           email: u.email,
           displayName: u.displayName,
           userTagId: u.userTagId || '',
+          avatarLen: (u.avatarUrl || '').length,
           friends: Array.isArray(u.friends) ? u.friends : [],
           role: u.role,
+          appRole: u.appRole,
           status: u.status,
           password: u.password,
           passwordResetRequested: u.passwordResetRequested,
@@ -483,6 +487,8 @@ export const dataStore = {
       if (!u.appRole) {
         if (u.role === 'admin' || u.email.toLowerCase() === 'admin@weroll.app' || u.email.toLowerCase() === 'deadplanter@gmail.com') {
           u.appRole = 'admin';
+        } else if (u.role === 'creator') {
+          u.appRole = 'creator';
         } else if (u.role === 'moderator') {
           u.appRole = 'moderator';
         } else {
@@ -490,7 +496,7 @@ export const dataStore = {
         }
         needsSave = true;
       }
-      if (u.appRole === 'admin' || u.appRole === 'moderator') {
+      if (u.appRole === 'admin' || u.appRole === 'creator' || u.appRole === 'moderator') {
         if (!u.canPostInForum) {
           u.canPostInForum = true;
           needsSave = true;
@@ -638,6 +644,18 @@ export const dataStore = {
     return users[idx];
   },
 
+  updateUserAvatar(id: string, avatarUrl?: string): UserAccount | null {
+    const users = this.getUsers();
+    const idx = users.findIndex((u) => u.id === id);
+    if (idx === -1) return null;
+    users[idx].avatarUrl = avatarUrl ? avatarUrl.trim() : undefined;
+    this.saveUsers(
+      users,
+      `Avatar de jugador actualizado: ${users[idx].displayName}@${users[idx].userTagId || '123'}`
+    );
+    return users[idx];
+  },
+
   adminUpdateUserAccount(
     id: string,
     updates: {
@@ -696,9 +714,12 @@ export const dataStore = {
     }
     if ((updates as any).appRole) {
       users[idx].appRole = (updates as any).appRole;
-      if (users[idx].appRole === 'admin' || users[idx].appRole === 'moderator') {
+      if (users[idx].appRole === 'admin' || users[idx].appRole === 'creator' || users[idx].appRole === 'moderator') {
         users[idx].canPostInForum = true;
       }
+    }
+    if ((updates as any).avatarUrl !== undefined) {
+      users[idx].avatarUrl = (updates as any).avatarUrl || undefined;
     }
     if ((updates as any).canPostInForum !== undefined) {
       users[idx].canPostInForum = Boolean((updates as any).canPostInForum);
@@ -749,7 +770,9 @@ export const dataStore = {
         displayName: u.displayName,
         userTagId: u.userTagId || '123',
         fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+        avatarUrl: u.avatarUrl,
         role: u.role,
+        appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'creator' ? 'creator' : u.role === 'moderator' ? 'moderator' : 'client'),
         status: u.status,
         lastActiveAt: u.lastActiveAt,
       }));
@@ -1242,6 +1265,24 @@ export const dataStore = {
   getForumPosts(category?: string, roleFilter?: string, query?: string): ForumPost[] {
     const defaultPosts: ForumPost[] = [
       {
+        id: 'post-update-100',
+        category: 'app-updates',
+        title: 'WeRoll 1.0 Beta • Rework Visual del Lobby, Pantalla del DM y Modo Online/Offline',
+        content: '¡Llega WeRoll 1.0 Beta! Un gran salto visual y funcional: nuevo Lobby ornamentado con marco dorado y avatar de jugador, Modo Online y Offline para World Sheets del DM, rediseño completo de la Pantalla del Dungeon Master y Atlas del Mundo con visualización jerárquica de lugares, avisos pop-up en vivo del Administrador/Moderador en tiempo real y paneles de gestión a pantalla completa.',
+        authorEmail: 'admin@weroll.app',
+        authorName: 'Administrador Supremo',
+        authorTagId: 'adm',
+        authorFullTag: 'Administrador Supremo@adm',
+        authorPlayerType: 'both',
+        authorAppRole: 'admin',
+        flair: 'Actualización',
+        createdAt: 1792600000000,
+        upvotes: 45,
+        upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
+        commentsCount: 5,
+        pinned: true,
+      },
+      {
         id: 'post-update-095',
         category: 'app-updates',
         title: 'WeRoll 0.9.5 Alfa • Paneles Dinámicos por Rol, Control Reversible de Publicación y Rediseño Compacto',
@@ -1257,7 +1298,7 @@ export const dataStore = {
         upvotes: 32,
         upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
         commentsCount: 3,
-        pinned: true,
+        pinned: false,
       },
       {
         id: 'post-update-090',
@@ -1408,6 +1449,9 @@ export const dataStore = {
     let posts = readJSON<ForumPost[]>('forum_posts.json', defaultPosts);
     if (!posts || posts.length === 0) {
       posts = defaultPosts;
+      writeJSON('forum_posts.json', posts);
+    } else if (!posts.some((p) => p.id === 'post-update-100')) {
+      posts = [defaultPosts[0], ...posts.map((p) => (p.pinned ? { ...p, pinned: false } : p))];
       writeJSON('forum_posts.json', posts);
     }
 
@@ -1721,6 +1765,21 @@ export const dataStore = {
 
   // --- PERSISTENT HOST SETTINGS & CHANGELOG ---
   getHostSettings(): HostSettings {
+    const v10BetaEntry: ChangelogEntry = {
+      version: '1.0 Beta',
+      date: '2026-10-21',
+      title: 'WeRoll 1.0 Beta • Rework Visual del Lobby y Pantalla del DM, Modo Online/Offline y Avisos en Vivo',
+      changes: [
+        'Rework Visual Completo del Lobby: Nuevo diseño refinado con marco dorado ornamentado, avatar circular de perfil de jugador, insignias dinámicas de rol y acceso directo a seguridad de cuenta.',
+        'Modo Online y Offline para World Sheets: Opción para que el DM abra sus mesas en Modo Online (para conexión en vivo de jugadores) o Modo Offline (para diseñar, preparar y editar campañas en privado sin abrir sala pública).',
+        'Rework Visual de la Pantalla del DM y Atlas del Mundo: Navegación jerárquica de ubicaciones geográficas y lugares, filtrado visual temático de PNJs, monstruos y objetos, y visualización táctica en vivo.',
+        'Avisos Pop-up en Vivo del Administrador / Moderador: Transmisión instantánea de comunicados importantes en tiempo real para todos los usuarios activos en el lobby y en partidas.',
+        'Imagen de Perfil de Jugador Personalizada: Sube tu propia foto o retrato de jugador (independiente de las fichas de personaje), visible en el banner del Lobby y en la lista de Amigos.',
+        'Aviso Oficial Reorganizado sobre el Foro: Reubicación compacta del comunicado oficial del administrador directamente sobre el Foro WeRoll para mayor claridad visual.',
+        'Paneles de Administración y Moderación a Pantalla Completa: Vistas dedicadas y fluidas para la gestión de usuarios, roles, bóvedas de respaldo y moderación de contenido comunitario.',
+      ],
+    };
+
     const v095Entry: ChangelogEntry = {
       version: '0.9.5 Alfa',
       date: '2026-10-20',
@@ -1811,7 +1870,7 @@ export const dataStore = {
 
     const defaultSettings: HostSettings = {
       headerTitle: 'WeRoll',
-      headerSubtitle: 'Companion & DM Suite v0.9.5 Alfa',
+      headerSubtitle: 'Companion & DM Suite v1.0 Beta',
       headerLogoIcon: 'shield',
       aiModel: 'gemini-flash-lite-latest',
       moderatorPassword: 'admin',
@@ -1824,18 +1883,19 @@ export const dataStore = {
         enabled: true,
         title: 'Comunicado del Administrador',
         message:
-          '¡Bienvenido a WeRoll 5E v0.9.5 Alfa! Paneles de control ajustados por rol, moderación reversible de foro y rediseño responsive compacto.',
+          '¡Bienvenido a WeRoll 5E v1.0 Beta! Rework visual del Lobby y Pantalla del DM, Modo Online/Offline para World Sheets y avisos en vivo.',
         type: 'info',
-        updatedAt: 1700000000000,
+        updatedAt: Date.now(),
       },
       developerNotice: {
         enabled: true,
-        title: 'WeRoll • Novedades v0.9.5 Alfa',
+        title: 'WeRoll • Novedades v1.0 Beta',
         content:
-          '¡Versión 0.9.5 Alfa disponible! Panel de Amigos unificado en una sola tarjeta, publicación en "Actualizaciones de la App" exclusiva para Administradores e historial de versiones.',
-        version: '0.9.5 Alfa',
+          '¡Versión 1.0 Beta disponible! Rework visual completo del Lobby y Pantalla del DM, Modo Online/Offline para World Sheets, avisos pop-up en vivo e imagen de perfil de jugador.',
+        version: '1.0 Beta',
       },
       changelog: [
+        v10BetaEntry,
         v095Entry,
         v09Entry,
         v08Entry,
@@ -1929,18 +1989,19 @@ export const dataStore = {
       finalChangelog[v08Idx] = v08Entry;
     }
 
-    const v09Idx = finalChangelog.findIndex(
-      (entry) => entry.version && entry.version.toLowerCase().includes('0.9')
+    const v10Idx = finalChangelog.findIndex(
+      (entry) => entry.version && entry.version.toLowerCase().includes('1.0')
     );
-    if (v09Idx === -1) {
-      finalChangelog = [v09Entry, ...finalChangelog];
+    if (v10Idx === -1) {
+      finalChangelog = [v10BetaEntry, ...finalChangelog];
     } else {
-      finalChangelog[v09Idx] = v09Entry;
+      finalChangelog[v10Idx] = v10BetaEntry;
     }
 
     const finalHeaderSubtitle =
       !current.headerSubtitle ||
-      /v0\.(1|2|3|4|5|6|65|8)\b/i.test(current.headerSubtitle)
+      /v0\.(1|2|3|4|5|6|65|8|9|95)\b/i.test(current.headerSubtitle) ||
+      current.headerSubtitle.includes('0.9')
         ? defaultSettings.headerSubtitle
         : current.headerSubtitle;
 
@@ -1952,13 +2013,17 @@ export const dataStore = {
       developerNotice: {
         ...defaultSettings.developerNotice!,
         ...(current.developerNotice || {}),
-        version: '0.9 Alfa',
-        title: 'WeRoll • Novedades v0.9 Alfa',
+        version: '1.0 Beta',
+        title: 'WeRoll • Novedades v1.0 Beta',
       },
       adminGreeting: current.adminGreeting
         ? {
             ...defaultSettings.adminGreeting!,
             ...current.adminGreeting,
+            message:
+              current.adminGreeting.message && current.adminGreeting.message.includes('0.9')
+                ? defaultSettings.adminGreeting!.message
+                : current.adminGreeting.message,
           }
         : defaultSettings.adminGreeting,
       changelog: finalChangelog,

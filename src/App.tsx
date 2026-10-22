@@ -45,6 +45,7 @@ import {
   LiveCombatantMini,
   PendingDmOffer,
   PlayerMessageToDM,
+  LiveBroadcastPopup,
 } from './types/dnd';
 import {
   loadCharacters,
@@ -97,14 +98,30 @@ export default function App() {
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
   const [isModeratorModalOpen, setIsModeratorModalOpen] = useState<boolean>(false);
+  const [activeLobbyPage, setActiveLobbyPage] = useState<'portal' | 'admin' | 'creator' | 'moderator'>('portal');
 
-  // App View Architecture: 'lobby' is the primary portal
-  const [appView, setAppView] = useState<'lobby' | 'player-session' | 'player-solo' | 'dm-session'>('lobby');
+  // App View Architecture: 'lobby' is the primary portal (supports ?view=player-solo | player-session or ?autostart=1)
+  const [appView, setAppView] = useState<'lobby' | 'player-session' | 'player-solo' | 'dm-session'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const viewParam = params.get('view');
+      if (viewParam === 'player-solo' || viewParam === 'player-session' || viewParam === 'dm-session') {
+        return viewParam;
+      }
+      if (params.get('autostart') === '1') {
+        return 'player-solo';
+      }
+    }
+    return 'lobby';
+  });
 
-  // Host Settings
+  // Host Settings & Live Admin Broadcast Pop-up (only triggers for pop-ups sent while user is online)
   const [hostSettings, setHostSettings] = useState<HostSettings>(() => loadHostSettings());
   const [isChangelogOpen, setIsChangelogOpen] = useState<boolean>(false);
   const [dismissedDevNotice, setDismissedDevNotice] = useState<boolean>(false);
+  const appMountTimeRef = useRef<number>(Date.now());
+  const seenLivePopupIdsRef = useRef<Set<string>>(new Set());
+  const [activeLiveAdminPopup, setActiveLiveAdminPopup] = useState<LiveBroadcastPopup | null>(null);
 
   // Persistence State
   const [characters, setCharacters] = useState<Character5e[]>(() => loadCharacters());
@@ -267,6 +284,19 @@ export default function App() {
         } else if (type === 'SETTINGS_UPDATED') {
           setHostSettings(payload);
           saveHostSettings(payload);
+          if (
+            payload?.liveBroadcastPopup?.id &&
+            payload.liveBroadcastPopup.sentAt >= appMountTimeRef.current - 5000 &&
+            !seenLivePopupIdsRef.current.has(payload.liveBroadcastPopup.id)
+          ) {
+            seenLivePopupIdsRef.current.add(payload.liveBroadcastPopup.id);
+            setActiveLiveAdminPopup(payload.liveBroadcastPopup);
+          }
+        } else if (type === 'LIVE_ADMIN_POPUP' && payload?.id) {
+          if (!seenLivePopupIdsRef.current.has(payload.id)) {
+            seenLivePopupIdsRef.current.add(payload.id);
+            setActiveLiveAdminPopup(payload);
+          }
         } else if (type === 'DM_OFFER_CREATED' && payload) {
           const offer = payload as PendingDmOffer;
           if (
@@ -331,6 +361,14 @@ export default function App() {
         if (res.ok && isMounted) {
           const fresh: HostSettings = await res.json();
           if (fresh && typeof fresh === 'object') {
+            if (
+              fresh.liveBroadcastPopup?.id &&
+              fresh.liveBroadcastPopup.sentAt >= appMountTimeRef.current - 5000 &&
+              !seenLivePopupIdsRef.current.has(fresh.liveBroadcastPopup.id)
+            ) {
+              seenLivePopupIdsRef.current.add(fresh.liveBroadcastPopup.id);
+              setActiveLiveAdminPopup(fresh.liveBroadcastPopup);
+            }
             setHostSettings((prev) => {
               if (JSON.stringify(prev) !== JSON.stringify(fresh)) {
                 saveHostSettings(fresh);
@@ -535,9 +573,12 @@ export default function App() {
     }
   }, [authUser?.email, authUser?.status]);
 
-  // Poll room server state & heartbeat active character / DM (Only when inside active session)
+  // Poll room server state & heartbeat active character / DM (Only when inside active online session)
   useEffect(() => {
     if (appView !== 'player-session' && appView !== 'dm-session') {
+      return;
+    }
+    if (appView === 'dm-session' && activeWorld?.roomMode === 'offline') {
       return;
     }
 
@@ -550,8 +591,8 @@ export default function App() {
           await sendPlayerHeartbeat(activeCharacterRef.current);
         }
 
-        // Send DM heartbeat if DM session
-        if (appView === 'dm-session') {
+        // Send DM heartbeat if DM session (online mode)
+        if (appView === 'dm-session' && activeWorld?.roomMode !== 'offline') {
           await sendDmHeartbeat(dmWorkspaceRef.current);
         }
 
@@ -559,10 +600,13 @@ export default function App() {
         const res = await fetch(`/api/session/room/${roomCode}`);
         if (!isMounted) return;
 
+        const isPreviewSessionUrl =
+          typeof window !== 'undefined' &&
+          new URLSearchParams(window.location.search).get('view') === 'player-session';
+
         if (res.status === 404) {
           const data = await res.json().catch(() => ({}));
-          // If the room was closed by DM or does not exist, return player to lobby
-          if (appView === 'player-session') {
+          if (appView === 'player-session' && data.closed && !isPreviewSessionUrl) {
             setRoomClosedAlert(data.error || 'La mesa ha sido cerrada por el Dungeon Master.');
             setAppView('lobby');
             return;
@@ -571,7 +615,7 @@ export default function App() {
 
         if (res.ok) {
           const data = await res.json();
-          if (data.closed && appView === 'player-session') {
+          if (data.closed && appView === 'player-session' && !isPreviewSessionUrl) {
             setRoomClosedAlert(data.error || 'El Dungeon Master ha cerrado la mesa.');
             setAppView('lobby');
             return;
@@ -668,7 +712,7 @@ export default function App() {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [appView, roomCode]);
+  }, [appView, roomCode, activeWorld?.roomMode]);
 
   // Auth / Role Selection Callback
   const handleSelectRole = (role: UserRole, user?: AuthSessionUser) => {
@@ -702,8 +746,11 @@ export default function App() {
             displayName: data.displayName,
             userTagId: data.userTagId || authUser.userTagId || '123',
             fullTag: data.fullTag || `${data.displayName}@${data.userTagId || '123'}`,
+            avatarUrl: data.avatarUrl !== undefined ? data.avatarUrl : authUser.avatarUrl,
             friends: Array.isArray(data.friends) ? data.friends : authUser.friends || [],
             role: data.role || authUser.role,
+            appRole: data.appRole || authUser.appRole,
+            playerType: data.playerType || authUser.playerType,
             status: data.status,
           };
           setAuthUser(updated);
@@ -903,7 +950,12 @@ export default function App() {
   };
 
   // Create World Sheet (Clean slate starting from zero)
-  const handleCreateWorldSheet = async (config: { name: string; roomCode: string; roomPassword?: string }) => {
+  const handleCreateWorldSheet = async (config: {
+    name: string;
+    roomCode: string;
+    roomPassword?: string;
+    roomMode?: 'online' | 'offline';
+  }) => {
     if (!authUser?.email) return;
 
     const newWorld: WorldSheetSummary = {
@@ -912,6 +964,7 @@ export default function App() {
       name: config.name,
       roomCode: config.roomCode,
       roomPassword: config.roomPassword,
+      roomMode: config.roomMode || 'online',
       lastPlayed: Date.now(),
       workspace: {
         ...SAMPLE_DM_WORKSPACE,
@@ -949,8 +1002,11 @@ export default function App() {
     setWorldSheets((prev) => [...prev, newWorld]);
   };
 
-  // Update World Sheet Config (Name, RoomCode, Password)
-  const handleUpdateWorldSheetConfig = async (worldId: string, updates: { name: string; roomCode: string; roomPassword?: string }) => {
+  // Update World Sheet Config (Name, RoomCode, Password, RoomMode)
+  const handleUpdateWorldSheetConfig = async (
+    worldId: string,
+    updates: { name: string; roomCode: string; roomPassword?: string; roomMode?: 'online' | 'offline' }
+  ) => {
     if (!authUser?.email) return;
     const res = await fetch(`/api/vault/worlds/${worldId}`, {
       method: 'PUT',
@@ -964,6 +1020,7 @@ export default function App() {
     setWorldSheets((prev) =>
       prev.map((w) => (w.id === worldId ? { ...w, ...updates } : w))
     );
+    setActiveWorld((prev) => (prev && prev.id === worldId ? { ...prev, ...updates } : prev));
   };
 
   // Delete World Sheet
@@ -981,39 +1038,99 @@ export default function App() {
     }
   };
 
-  // DM Opens World Sheet -> Room becomes ACTIVE on server (validates unique room name across DMs)
+  // DM Opens World Sheet -> Room becomes ACTIVE on server if online, or opens in solo/offline mode if offline
   const handleOpenWorldSheet = async (world: WorldSheetSummary) => {
-    try {
-      const res = await fetch('/api/rooms/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomCode: world.roomCode,
-          name: world.name,
-          dmEmail: authUser?.email || 'dm@weroll.app',
-          dmDisplayName: authUser?.displayName || 'Dungeon Master',
-          password: world.roomPassword,
-          worldSheetId: world.id,
-        }),
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        setRoomClosedAlert(
-          errData.error ||
-            `No se pudo abrir la sala "${world.roomCode}" porque ya existe una mesa con ese nombre creada por otro Dungeon Master.`
-        );
-        return;
+    const mode = world.roomMode || 'online';
+    if (mode === 'online') {
+      try {
+        const res = await fetch('/api/rooms/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomCode: world.roomCode,
+            name: world.name,
+            dmEmail: authUser?.email || 'dm@weroll.app',
+            dmDisplayName: authUser?.displayName || 'Dungeon Master',
+            password: world.roomPassword,
+            worldSheetId: world.id,
+          }),
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          setRoomClosedAlert(
+            errData.error ||
+              `No se pudo abrir la sala "${world.roomCode}" porque ya existe una mesa con ese nombre creada por otro Dungeon Master.`
+          );
+          return;
+        }
+      } catch (e) {
+        console.error('Error activating room:', e);
       }
-    } catch (e) {
-      console.error('Error activating room:', e);
+    } else {
+      // Ensure room is closed on server when opening in Offline edit mode
+      try {
+        await fetch('/api/rooms/close', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roomCode: world.roomCode }),
+        });
+      } catch {}
     }
 
-    setActiveWorld(world);
+    setActiveWorld({ ...world, roomMode: mode });
     setDmWorkspace(world.workspace);
     setRoomPlayerMessages(Array.isArray(world.workspace?.playerMessages) ? world.workspace.playerMessages : []);
     setRoomCode(world.roomCode);
     saveRoomCode(world.roomCode);
     setAppView('dm-session');
+  };
+
+  // Toggle Online/Offline Mode while inside DM Screen
+  const handleToggleDmOfflineMode = async (offline: boolean) => {
+    if (!activeWorld) return;
+    const nextMode: 'online' | 'offline' = offline ? 'offline' : 'online';
+    const updatedWorld: WorldSheetSummary = { ...activeWorld, roomMode: nextMode };
+    setActiveWorld(updatedWorld);
+    setWorldSheets((prev) => prev.map((w) => (w.id === activeWorld.id ? updatedWorld : w)));
+
+    if (authUser?.email) {
+      fetch(`/api/vault/worlds/${activeWorld.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: activeWorld.name,
+          roomCode: activeWorld.roomCode,
+          roomPassword: activeWorld.roomPassword,
+          roomMode: nextMode,
+          ownerEmail: authUser.email,
+        }),
+      }).catch(() => {});
+    }
+
+    if (offline) {
+      try {
+        await fetch('/api/rooms/close', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roomCode: activeWorld.roomCode }),
+        });
+      } catch {}
+    } else {
+      try {
+        await fetch('/api/rooms/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomCode: activeWorld.roomCode,
+            name: activeWorld.name,
+            dmEmail: authUser?.email || 'dm@weroll.app',
+            dmDisplayName: authUser?.displayName || 'Dungeon Master',
+            password: activeWorld.roomPassword,
+            worldSheetId: activeWorld.id,
+          }),
+        });
+      } catch {}
+    }
   };
 
   // DM Saves World Sheet to Cloud Vault
@@ -1202,46 +1319,60 @@ export default function App() {
       {/* =================================================================== */}
       {/* TOP COMPACT APPLICATION HEADER                                      */}
       {/* =================================================================== */}
-      <header className="sticky top-0 z-40 bg-[#14151b]/95 backdrop-blur-md border-b border-amber-900/40 shadow-xl">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
-          {/* Left: Branding & Return to Lobby */}
+      <header className="sticky top-0 z-40 bg-[#12131a]/95 backdrop-blur-md border-b border-[#c8a45c]/40 shadow-xl">
+        <div className="max-w-[1650px] mx-auto px-4 h-16 flex items-center justify-between gap-4">
+          {/* Left: Branding + Clickable Version Badge (?) */}
           <div className="flex items-center gap-3">
             <button
               onClick={() => setAppView('lobby')}
-              className="flex items-center gap-2.5 text-left group transition"
+              className="flex items-center gap-2.5 text-left group transition cursor-pointer"
             >
               <BrandLogo hostSettings={hostSettings} size="md" className="group-hover:scale-105 transition" />
-              <div>
-                <span className="font-cinzel font-black text-lg text-amber-300 tracking-wider block leading-tight group-hover:text-amber-200 transition">
-                  {hostSettings.headerTitle || 'WeRoll'}
-                </span>
-                <span className="text-[10px] text-stone-400 font-cinzel font-semibold tracking-wider block">
-                  {hostSettings.headerSubtitle || 'Companion & DM Suite v0.4'}
-                </span>
-              </div>
+              <span className="font-cinzel font-black text-xl sm:text-2xl text-[#f5e4be] tracking-wider uppercase leading-none group-hover:text-amber-300 transition">
+                {hostSettings.headerTitle || 'WEROLL'}
+              </span>
             </button>
 
-            {appView !== 'lobby' && (
-              <button
-                onClick={() => {
-                  if (appView === 'dm-session') {
-                    handleDmSaveAndReturnToLobby();
-                  } else {
-                    handlePlayerReturnToLobby();
-                  }
-                }}
-                className="ml-3 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 font-cinzel font-bold text-xs transition flex items-center gap-1.5 border border-stone-700 shadow"
-                title="Salir al portal principal"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Lobby</span>
-              </button>
+            {/* Version & Updates Button right next to Title */}
+            <button
+              type="button"
+              onClick={() => setIsChangelogOpen(true)}
+              className="px-2.5 py-1 rounded-full bg-[#1b1d28] hover:bg-[#252836] border border-[#c8a45c]/50 text-[#e2c275] text-[11px] font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
+              title="Ver historial de versiones y novedades"
+            >
+              <span>v1.0 Beta</span>
+              <span className="w-4 h-4 rounded-full bg-[#c8a45c]/25 border border-[#e2c275] text-[#f5e4be] flex items-center justify-center text-[10px] font-black">
+                ?
+              </span>
+            </button>
+
+            {appView === 'player-solo' && (
+              <div className="flex items-center gap-1.5 ml-2">
+                <button
+                  type="button"
+                  onClick={handlePlayerReturnToLobby}
+                  className="px-2.5 py-1 rounded-lg bg-[#1b1d28] hover:bg-[#252836] text-[#f5e4be] font-cinzel font-bold text-[11px] transition flex items-center gap-1 border border-[#c8a45c]/50 shadow cursor-pointer"
+                  title="Regresar al Lobby"
+                >
+                  <ArrowLeft className="w-3 h-3 text-[#e2c275]" />
+                  <span>Lobby</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePlayerSaveToCloud}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-900/80 hover:bg-emerald-800 text-emerald-100 font-cinzel font-bold text-[11px] transition flex items-center gap-1 border border-emerald-500/50 shadow cursor-pointer"
+                  title="Guardar hoja en la nube"
+                >
+                  <Upload className="w-3 h-3 text-emerald-300" />
+                  <span className="hidden sm:inline">Guardar</span>
+                </button>
+              </div>
             )}
           </div>
 
-          {/* Center: Quick Dice Roller - ONLY displayed inside active table / session */}
-          {(appView === 'player-session' || appView === 'dm-session') && (
-            <div className="hidden md:flex items-center">
+          {/* Center: Quick Dice Roller - ONLY displayed inside active PLAYER table / session (hidden on DM screen) */}
+          {appView === 'player-session' && (
+            <div className="hidden lg:flex items-center">
               <QuickDiceBar
                 onQuickRoll={(sides) => handleTriggerRoll(`d${sides}`, 0, sides)}
                 onOpenFullRoller={() => {
@@ -1256,81 +1387,114 @@ export default function App() {
             </div>
           )}
 
-          {/* Right: Tools & Utilities (Discreet, Sleek, Modern Icons) */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Right: Icon-Above-Label Utilities */}
+          <div className="flex items-center gap-2">
             {/* Manual SRD 5E */}
             <button
+              type="button"
               onClick={() => setIsCompendiumOpen(true)}
-              className="p-1.5 sm:p-2 rounded-xl bg-[#181920] hover:bg-[#20212b] border border-stone-800 hover:border-amber-700/60 text-stone-300 hover:text-amber-300 transition flex items-center justify-center shadow-sm"
+              className="px-3 py-1.5 rounded-xl bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/45 text-[#f5e4be] transition flex flex-col items-center justify-center gap-0.5 min-w-[68px] cursor-pointer shadow-sm"
               title="Manual SRD 5E"
             >
-              <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500" />
+              <BookOpen className="w-4 h-4 text-[#e2c275]" />
+              <span className="text-[10px] font-cinzel font-bold leading-none">Manual</span>
             </button>
 
-            {/* Oracle IA */}
+            {/* Saber Arcano IA */}
             <button
+              type="button"
               onClick={() => {
                 setOracleInitialPrompt('');
                 setIsOracleOpen(true);
               }}
-              className="p-1.5 sm:p-2 rounded-xl bg-purple-950/50 hover:bg-purple-900 border border-purple-800/60 text-purple-200 transition flex items-center justify-center shadow-sm"
-              title="Sabio Arcano IA"
+              className="px-3 py-1.5 rounded-xl bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/45 text-[#f5e4be] transition flex flex-col items-center justify-center gap-0.5 min-w-[86px] cursor-pointer shadow-sm"
+              title="Saber Arcano IA"
             >
-              <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400 animate-pulse" />
+              <Sparkles className="w-4 h-4 text-[#e2c275]" />
+              <span className="text-[10px] font-cinzel font-bold leading-none whitespace-nowrap">
+                Saber Arcano IA
+              </span>
             </button>
 
-            {/* Herramienta: Seguridad, @ID y Contraseña */}
-            {authUser && (
-              <button
-                onClick={() => setIsSecurityModalOpen(true)}
-                className="p-1.5 sm:p-2 rounded-xl bg-[#181920] hover:bg-[#20212b] border border-stone-800 hover:border-amber-600/70 text-stone-300 hover:text-amber-300 transition flex items-center justify-center shadow-sm"
-                title="Ajustar Seguridad, @ID y Contraseña"
-              >
-                <Wrench className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
-              </button>
-            )}
-
-            {/* Admin Panel (for admin) */}
-            {(authUser?.appRole === 'admin' || authUser?.role === 'admin') && (
-              <button
-                onClick={() => setIsAdminModalOpen(true)}
-                className="p-1.5 sm:p-2 rounded-xl bg-blue-950/70 hover:bg-blue-900 border border-blue-700/70 text-blue-300 hover:text-white transition flex items-center justify-center shadow-sm"
-                title="Panel de Administrador WeRoll"
-              >
-                <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-400" />
-              </button>
-            )}
-
-            {/* Moderator Panel (for moderator or admin) */}
-            {((authUser?.appRole === 'admin' || authUser?.role === 'admin') || (authUser?.appRole === 'moderator' || authUser?.role === 'moderator')) && (
-              <button
-                onClick={() => setIsModeratorModalOpen(true)}
-                className="p-1.5 sm:p-2 rounded-xl bg-purple-950/70 hover:bg-purple-900 border border-purple-700/70 text-purple-300 hover:text-white transition flex items-center justify-center shadow-sm"
-                title="Panel de Moderación Comunitaria"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400" />
-              </button>
-            )}
-
-            {/* Feedback (for normal players) */}
-            {!((authUser?.appRole === 'admin' || authUser?.role === 'admin') || (authUser?.appRole === 'moderator' || authUser?.role === 'moderator')) && (
-              <button
-                onClick={() => setIsFeedbackOpen(true)}
-                className="p-1.5 sm:p-2 rounded-xl bg-amber-950/60 hover:bg-amber-900 border border-amber-800/60 text-amber-300 hover:text-amber-100 transition flex items-center justify-center shadow-sm"
-                title="Enviar feedback o reportar un bug"
-              >
-                <MessageSquarePlus className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
-              </button>
-            )}
-
-            {/* Updates Blog */}
+            {/* Configuración de cuenta */}
             <button
-              onClick={() => setIsChangelogOpen(true)}
-              className="p-1.5 sm:p-2 rounded-xl bg-[#181920] hover:bg-[#20212b] border border-stone-800 hover:border-amber-700/60 text-stone-300 hover:text-amber-400 text-xs font-cinzel transition flex items-center justify-center shadow-sm"
-              title="Blog de actualizaciones v0.9.5 Alfa"
+              type="button"
+              onClick={() => {
+                if (authUser) {
+                  setIsSecurityModalOpen(true);
+                } else {
+                  setIsRoleModalOpen(true);
+                }
+              }}
+              className="px-3 py-1.5 rounded-xl bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/45 text-[#f5e4be] transition flex flex-col items-center justify-center gap-0.5 min-w-[96px] cursor-pointer shadow-sm"
+              title="Configuración de cuenta, @ID y seguridad"
             >
-              <HelpCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
+              <Settings className="w-4 h-4 text-[#e2c275]" />
+              <span className="text-[10px] font-cinzel font-bold leading-none whitespace-nowrap">
+                Configuración de cuenta
+              </span>
             </button>
+
+            {/* Role-Dependent Action Buttons: Admin, Moderación (open dedicated full pages) or Feedback */}
+            {(authUser?.appRole === 'admin' || authUser?.role === 'admin' || userRole === 'admin') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAppView('lobby');
+                  setActiveLobbyPage('admin');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/70 text-purple-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[68px] cursor-pointer shadow-md"
+                title="Página de Administrador"
+              >
+                <Shield className="w-4 h-4 text-purple-200" />
+                <span className="text-[10px] font-cinzel font-bold leading-none">Admin</span>
+              </button>
+            )}
+
+            {(authUser?.appRole === 'admin' ||
+              authUser?.role === 'admin' ||
+              userRole === 'admin' ||
+              authUser?.appRole === 'creator' ||
+              authUser?.role === 'creator' ||
+              userRole === 'creator' ||
+              authUser?.appRole === 'moderator' ||
+              authUser?.role === 'moderator' ||
+              userRole === 'moderator') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAppView('lobby');
+                  setActiveLobbyPage('moderator');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/70 text-purple-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[74px] cursor-pointer shadow-md"
+                title="Página de Moderación"
+              >
+                <ShieldCheck className="w-4 h-4 text-purple-200" />
+                <span className="text-[10px] font-cinzel font-bold leading-none">Moderación</span>
+              </button>
+            )}
+
+            {!(
+              authUser?.appRole === 'admin' ||
+              authUser?.role === 'admin' ||
+              userRole === 'admin' ||
+              authUser?.appRole === 'creator' ||
+              authUser?.role === 'creator' ||
+              userRole === 'creator' ||
+              authUser?.appRole === 'moderator' ||
+              authUser?.role === 'moderator' ||
+              userRole === 'moderator'
+            ) && (
+              <button
+                type="button"
+                onClick={() => setIsFeedbackOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/70 text-purple-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[74px] cursor-pointer shadow-md"
+                title="Enviar Feedback o Sugerencia"
+              >
+                <MessageSquarePlus className="w-4 h-4 text-purple-200" />
+                <span className="text-[10px] font-cinzel font-bold leading-none">Feedback</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -1338,7 +1502,7 @@ export default function App() {
       {/* =================================================================== */}
       {/* MAIN CONTENT AREA (Extended Viewport - Anti Slop Layout)            */}
       {/* =================================================================== */}
-      <main className="w-full max-w-[1650px] mx-auto px-3 sm:px-6 py-5 space-y-6 flex-1">
+      <main className={`w-full max-w-[1650px] mx-auto px-3 sm:px-5 ${appView === 'lobby' ? 'py-4 space-y-5' : 'py-2 space-y-2'} flex-1`}>
         {/* Room Closed Notification Alert */}
         {roomClosedAlert && (
           <div className="bg-red-950/80 border border-red-700 rounded-2xl p-4 shadow-lg flex items-center justify-between gap-3 animate-in fade-in">
@@ -1424,84 +1588,16 @@ export default function App() {
             }}
             onOpenFeedback={() => setIsFeedbackOpen(true)}
             onOpenSecurityModal={() => setIsSecurityModalOpen(true)}
-            onOpenAdminPanel={() => setIsAdminModalOpen(true)}
-            onOpenModeratorPanel={() => setIsModeratorModalOpen(true)}
+            onOpenAdminPanel={() => setActiveLobbyPage('admin')}
+            onOpenModeratorPanel={() => setActiveLobbyPage('moderator')}
             isAdminModalOpen={isAdminModalOpen}
             onCloseAdminModal={() => setIsAdminModalOpen(false)}
+            activeLobbyPage={activeLobbyPage}
+            onChangeLobbyPage={setActiveLobbyPage}
           />
         )}
 
-        {/* 2. ACTIVE SESSION: PARTY STATUS BAR (In Session Only) */}
-        {(appView === 'player-session' || appView === 'dm-session') && (
-          <PartySessionBar
-            roomCode={roomCode}
-            onChangeRoomCode={(code) => {
-              setRoomCode(code);
-              saveRoomCode(code);
-            }}
-            partyMembers={partyMembers}
-            recentRollsCount={rollFeed.length}
-            dmLastRoll={serverDmLastRoll}
-            onOpenRollFeed={() => setIsRollFeedOpen(true)}
-            activeAnnouncement={activeAnnouncement}
-            onDismissAnnouncement={() => setActiveAnnouncement(null)}
-            isDmMode={appView === 'dm-session'}
-            dmConnected={serverDmConnected}
-            dmLiveMessage={serverDmLiveMessage}
-            showCombatantsOnTable={showCombatantsOnTable}
-            liveCombatants={liveCombatants}
-            currentCharacterId={activeCharacter?.id}
-            currentCharacterName={activeCharacter?.name}
-            currentPlayerName={activeCharacter?.playerName || authUser?.displayName || 'Jugador'}
-            currentPlayerTagId={authUser?.userTagId || '123'}
-            currentPlayerEmail={authUser?.email}
-            onSendPlayerMessageToDM={async (title, description) => {
-              const pName = activeCharacter?.playerName || authUser?.displayName || 'Jugador';
-              const pTag = (authUser?.userTagId || '123').replace(/^@+/, '').trim() || '123';
-              try {
-                const res = await fetch(
-                  `/api/session/room/${encodeURIComponent(roomCode)}/player-message`,
-                  {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      characterId: activeCharacter?.id || 'char-live',
-                      characterName: activeCharacter?.name || 'Aventurero',
-                      playerName: pName,
-                      playerTagId: pTag,
-                      playerFullTag: `${pName}@${pTag}`,
-                      playerEmail: authUser?.email,
-                      title,
-                      description,
-                    }),
-                  }
-                );
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                  return { ok: false, error: data.error || 'Error al enviar el mensaje al DM.' };
-                }
-                if (Array.isArray(data.playerMessages)) {
-                  setRoomPlayerMessages(data.playerMessages);
-                }
-                return {
-                  ok: true,
-                  message: data.message || '¡Mensaje privado enviado al Dungeon Master!',
-                };
-              } catch {
-                return { ok: false, error: 'Error de conexión con la sala.' };
-              }
-            }}
-            onUpdateDmLiveMessage={(msg) => {
-              setServerDmLiveMessage(msg);
-              if (broadcastChannelRef.current) {
-                broadcastChannelRef.current.postMessage({
-                  type: 'DM_LIVE_MESSAGE',
-                  payload: msg,
-                });
-              }
-            }}
-          />
-        )}
+        {/* 2. ACTIVE SESSION: Integrated directly inside CharacterSheetView (Table Mode) and DMScreenView */}
 
         {/* DM OFFER RESOLUTION NOTIFICATIONS (Shown to DM when a player Accepts or Declines a shared item/spell/ability) */}
         {appView === 'dm-session' && dmOfferNotifications.length > 0 && (
@@ -1656,6 +1752,51 @@ export default function App() {
             roomCode={roomCode}
             onReturnToLobby={handlePlayerReturnToLobby}
             onSaveToCloud={handlePlayerSaveToCloud}
+            partyMembers={partyMembers}
+            dmConnected={serverDmConnected}
+            dmLiveMessage={serverDmLiveMessage}
+            showCombatantsOnTable={showCombatantsOnTable}
+            liveCombatants={liveCombatants}
+            activeAnnouncement={activeAnnouncement}
+            onDismissAnnouncement={() => setActiveAnnouncement(null)}
+            onOpenRollFeed={() => setIsRollFeedOpen(true)}
+            rollFeed={rollFeed}
+            onSendPlayerMessageToDM={async (title, description) => {
+              const pName = activeCharacter?.playerName || authUser?.displayName || 'Jugador';
+              const pTag = (authUser?.userTagId || '123').replace(/^@+/, '').trim() || '123';
+              try {
+                const res = await fetch(
+                  `/api/session/room/${encodeURIComponent(roomCode)}/player-message`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      characterId: activeCharacter?.id || 'char-live',
+                      characterName: activeCharacter?.name || 'Aventurero',
+                      playerName: pName,
+                      playerTagId: pTag,
+                      playerFullTag: `${pName}@${pTag}`,
+                      playerEmail: authUser?.email,
+                      title,
+                      description,
+                    }),
+                  }
+                );
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                  return { ok: false, error: data.error || 'Error al enviar el mensaje al DM.' };
+                }
+                if (Array.isArray(data.playerMessages)) {
+                  setRoomPlayerMessages(data.playerMessages);
+                }
+                return {
+                  ok: true,
+                  message: data.message || '¡Mensaje privado enviado al Dungeon Master!',
+                };
+              } catch {
+                return { ok: false, error: 'Error de conexión con la sala.' };
+              }
+            }}
             isLocked={!isCharacterUnlocked(activeCharacter.id, activeCharacter.password)}
             onUnlockRequest={() => {
               setPasswordModalConfig({
@@ -1731,6 +1872,8 @@ export default function App() {
             onTriggerRoll={handleTriggerRoll}
             onBroadcastAnnouncement={handleBroadcastAnnouncement}
             onOpenAIOracle={handleOpenAIOracle}
+            onOpenRollFeed={() => setIsRollFeedOpen(true)}
+            recentRollsCount={rollFeed.length}
             onUpdateDmLiveMessage={(msg) => {
               setServerDmLiveMessage(msg);
               if (broadcastChannelRef.current) {
@@ -1740,6 +1883,8 @@ export default function App() {
                 });
               }
             }}
+            isOfflineMode={activeWorld?.roomMode === 'offline'}
+            onToggleOfflineMode={handleToggleDmOfflineMode}
           />
         )}
       </main>
@@ -1968,8 +2113,71 @@ export default function App() {
           isOpen={isModeratorModalOpen}
           onClose={() => setIsModeratorModalOpen(false)}
           authUser={authUser}
-          onSwitchToAdminPanel={() => setIsAdminModalOpen(true)}
+          onSwitchToAdminPanel={() => {
+            setIsModeratorModalOpen(false);
+            setAppView('lobby');
+            setActiveLobbyPage('admin');
+          }}
         />
+      )}
+
+      {/* LIVE BROADCAST POP-UP MODAL FROM ADMIN / CREATOR / MODERATOR */}
+      {activeLiveAdminPopup && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in"
+          role="dialog"
+          aria-modal="true"
+          data-testid="live-admin-popup-modal"
+        >
+          <div className="relative w-full max-w-lg bg-gradient-to-b from-[#1e152a] via-[#15121e] to-[#110f18] border-2 border-[#c8a45c] rounded-3xl shadow-[0_25px_70px_rgba(0,0,0,0.95)] p-6 text-stone-100 space-y-4">
+            <div className="flex items-start justify-between gap-3 border-b border-[#c8a45c]/30 pb-3.5">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-amber-950/90 border-2 border-[#c8a45c] flex items-center justify-center text-[#f3d382] shadow-lg shrink-0">
+                  <Radio className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-cinzel font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-900/60 border border-amber-500/60 text-amber-200">
+                      Aviso en Vivo del {activeLiveAdminPopup.senderRole || 'Administrador'}
+                    </span>
+                    <span className="text-[11px] text-purple-300 font-cinzel font-bold">
+                      Por: {activeLiveAdminPopup.senderName}
+                    </span>
+                  </div>
+                  <h3 className="font-cinzel font-black text-lg text-[#f5e4be] mt-1">
+                    {activeLiveAdminPopup.title || 'Aviso del Administrador'}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveLiveAdminPopup(null)}
+                className="p-1.5 rounded-xl bg-stone-900/80 hover:bg-stone-800 border border-stone-700 text-stone-400 hover:text-white transition cursor-pointer"
+                title="Cerrar aviso"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#0e0d14]/90 border border-[#c8a45c]/30 text-sm text-stone-200 leading-relaxed whitespace-pre-line font-sans shadow-inner">
+              {activeLiveAdminPopup.message}
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-[11px] text-stone-400 font-mono">
+                Enviado a las {new Date(activeLiveAdminPopup.sentAt).toLocaleTimeString()}
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveLiveAdminPopup(null)}
+                data-testid="btn-dismiss-live-popup"
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 font-cinzel font-black text-xs uppercase tracking-wider shadow-lg transition cursor-pointer"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

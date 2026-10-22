@@ -148,7 +148,7 @@ apiRouter.post('/auth/register', (req, res) => {
   const reqPlayerType: PlayerType = ['dm', 'player', 'both'].includes(req.body.playerType || requestedRole)
     ? (req.body.playerType || requestedRole)
     : 'player';
-  const reqAppRole: AppRole = ['admin', 'moderator', 'client'].includes(req.body.appRole)
+  const reqAppRole: AppRole = ['admin', 'creator', 'moderator', 'client'].includes(req.body.appRole)
     ? req.body.appRole
     : 'client';
 
@@ -160,10 +160,10 @@ apiRouter.post('/auth/register', (req, res) => {
       userTagId: cleanedTag || undefined,
       friends: [],
       password: password.trim(),
-      role: (reqAppRole === 'admin' ? 'moderator' : reqPlayerType) as UserRole,
+      role: (reqAppRole === 'admin' ? 'moderator' : reqAppRole === 'creator' ? 'creator' : reqPlayerType) as UserRole,
       playerType: reqPlayerType,
       appRole: reqAppRole,
-      canPostInForum: reqAppRole === 'admin' || reqAppRole === 'moderator',
+      canPostInForum: reqAppRole === 'admin' || reqAppRole === 'creator' || reqAppRole === 'moderator',
       status: isAutoApproved ? 'approved' : 'pending',
     });
 
@@ -177,6 +177,7 @@ apiRouter.post('/auth/register', (req, res) => {
         displayName: newUser.displayName,
         userTagId: newUser.userTagId,
         fullTag: `${newUser.displayName}@${newUser.userTagId}`,
+        avatarUrl: newUser.avatarUrl,
         friends: newUser.friends || [],
         role: newUser.role,
         playerType: newUser.playerType || reqPlayerType,
@@ -259,11 +260,12 @@ apiRouter.post('/auth/login', (req, res) => {
       displayName: user.displayName,
       userTagId: user.userTagId || '123',
       fullTag: `${user.displayName}@${user.userTagId || '123'}`,
+      avatarUrl: user.avatarUrl,
       friends: user.friends || [],
       role: user.role,
       playerType: user.playerType || (user.role === 'dm' ? 'dm' : user.role === 'player' ? 'player' : 'both'),
-      appRole: user.appRole || (user.role === 'admin' ? 'admin' : user.role === 'moderator' ? 'moderator' : 'client'),
-      canPostInForum: user.appRole === 'admin' || user.appRole === 'moderator' ? true : Boolean(user.canPostInForum),
+      appRole: user.appRole || (user.role === 'admin' ? 'admin' : user.role === 'creator' ? 'creator' : user.role === 'moderator' ? 'moderator' : 'client'),
+      canPostInForum: user.appRole === 'admin' || user.appRole === 'creator' || user.appRole === 'moderator' ? true : Boolean(user.canPostInForum),
       forumPermissionsRequested: Boolean(user.forumPermissionsRequested),
       status: user.status,
     },
@@ -290,11 +292,12 @@ apiRouter.get('/auth/me', (req, res) => {
     displayName: freshUser.displayName,
     userTagId: freshUser.userTagId || '123',
     fullTag: `${freshUser.displayName}@${freshUser.userTagId || '123'}`,
+    avatarUrl: freshUser.avatarUrl,
     friends: freshUser.friends || [],
     role: freshUser.role,
     playerType: freshUser.playerType || (freshUser.role === 'dm' ? 'dm' : freshUser.role === 'player' ? 'player' : 'both'),
-    appRole: freshUser.appRole || (freshUser.role === 'admin' ? 'admin' : freshUser.role === 'moderator' ? 'moderator' : 'client'),
-    canPostInForum: freshUser.appRole === 'admin' || freshUser.appRole === 'moderator' ? true : Boolean(freshUser.canPostInForum),
+    appRole: freshUser.appRole || (freshUser.role === 'admin' ? 'admin' : freshUser.role === 'creator' ? 'creator' : freshUser.role === 'moderator' ? 'moderator' : 'client'),
+    canPostInForum: freshUser.appRole === 'admin' || freshUser.appRole === 'creator' || freshUser.appRole === 'moderator' ? true : Boolean(freshUser.canPostInForum),
     forumPermissionsRequested: Boolean(freshUser.forumPermissionsRequested),
     status: freshUser.status,
     passwordResetRequested: freshUser.passwordResetRequested,
@@ -339,12 +342,15 @@ apiRouter.post('/auth/change-tag', (req, res) => {
     res.json({
       success: true,
       message: `¡Tu ID ha sido actualizado con éxito! Ahora tus amigos pueden agregarte como: ${updated.displayName}@${updated.userTagId}`,
+      userTagId: updated.userTagId,
+      fullTag: `${updated.displayName}@${updated.userTagId}`,
       user: {
         id: updated.id,
         email: updated.email,
         displayName: updated.displayName,
         userTagId: updated.userTagId,
         fullTag: `${updated.displayName}@${updated.userTagId}`,
+        avatarUrl: updated.avatarUrl,
         role: updated.role,
         status: updated.status,
       },
@@ -352,6 +358,75 @@ apiRouter.post('/auth/change-tag', (req, res) => {
   } catch (err: any) {
     res.status(400).json({ error: err.message || 'Error al actualizar el ID.' });
   }
+});
+
+// User self-service update player profile avatar (avatarUrl)
+apiRouter.post('/auth/avatar', (req, res) => {
+  try {
+    const { userId, email, avatarUrl } = req.body;
+    const targetUser = userId
+      ? dataStore.findUserById(userId) || (email ? dataStore.findUserByEmail(email) : undefined)
+      : email
+      ? dataStore.findUserByEmail(email)
+      : undefined;
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Usuario no encontrado.' });
+    }
+
+    const updated = dataStore.updateUserAvatar(targetUser.id, avatarUrl);
+    if (!updated) {
+      return res.status(404).json({ error: 'No se pudo actualizar la imagen de perfil.' });
+    }
+
+    res.json({
+      success: true,
+      message: avatarUrl
+        ? '¡Imagen de perfil de jugador actualizada con éxito! Tus amigos verán esta imagen en su lista.'
+        : 'Imagen de perfil restablecida al icono por defecto.',
+      avatarUrl: updated.avatarUrl,
+      user: {
+        id: updated.id,
+        email: updated.email,
+        displayName: updated.displayName,
+        userTagId: updated.userTagId,
+        fullTag: `${updated.displayName}@${updated.userTagId}`,
+        avatarUrl: updated.avatarUrl,
+        role: updated.role,
+        status: updated.status,
+      },
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al actualizar imagen de jugador.' });
+  }
+});
+
+// Alias for UserSecurityModal tag-id update
+apiRouter.post('/users/:id/tag-id', (req, res) => {
+  try {
+    const { newTagId } = req.body;
+    const updated = dataStore.updateUserTagId(req.params.id, newTagId);
+    if (!updated) return res.status(404).json({ error: 'Usuario no encontrado.' });
+    res.json({
+      success: true,
+      message: `¡ID actualizado con éxito a ${updated.displayName}@${updated.userTagId}!`,
+      user: updated,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al actualizar ID.' });
+  }
+});
+
+// Alias for UserSecurityModal change-password
+apiRouter.post('/users/:id/change-password', (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const user = dataStore.findUserById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado.' });
+  if (user.password !== (currentPassword || '').trim()) {
+    return res.status(401).json({ error: 'La contraseña actual no es correcta.' });
+  }
+  dataStore.updateUserPassword(user.id, (newPassword || '').trim(), true);
+  res.json({ success: true, message: '¡Contraseña actualizada con éxito!' });
 });
 
 // ==========================================
@@ -486,12 +561,13 @@ apiRouter.get('/admin/users', (req, res) => {
     displayName: u.displayName,
     userTagId: u.userTagId || '123',
     fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+    avatarUrl: u.avatarUrl,
     friends: Array.isArray(u.friends) ? u.friends : [],
     password: u.password,
     role: u.role,
     playerType: u.playerType || (u.role === 'dm' ? 'dm' : u.role === 'player' ? 'player' : 'both'),
-    appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'moderator' ? 'moderator' : 'client'),
-    canPostInForum: u.appRole === 'admin' || u.appRole === 'moderator' ? true : Boolean(u.canPostInForum),
+    appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'creator' ? 'creator' : u.role === 'moderator' ? 'moderator' : 'client'),
+    canPostInForum: u.appRole === 'admin' || u.appRole === 'creator' || u.appRole === 'moderator' ? true : Boolean(u.canPostInForum),
     forumPermissionsRequested: Boolean(u.forumPermissionsRequested),
     status: u.status,
     registeredAt: u.registeredAt,
@@ -524,7 +600,7 @@ apiRouter.post('/admin/users/create', (req, res) => {
     }
 
     const cleanedTag = (userTagId || '').replace(/^@+/, '').trim().slice(0, 3);
-    const validRole = ['player', 'dm', 'both', 'moderator', 'admin'].includes(role)
+    const validRole = ['player', 'dm', 'both', 'moderator', 'creator', 'admin'].includes(role)
       ? role
       : 'player';
     const validStatus = ['approved', 'pending', 'rejected'].includes(status)
@@ -622,18 +698,50 @@ apiRouter.post('/admin/users/:id/role', (req, res) => {
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado.' });
 
   const nextPlayerType = playerType || user.playerType || (role === 'dm' ? 'dm' : role === 'player' ? 'player' : 'both');
-  const nextAppRole = appRole || user.appRole || (role === 'admin' ? 'admin' : role === 'moderator' ? 'moderator' : 'client');
-  const nextRole = role || (nextAppRole === 'admin' ? 'admin' : nextAppRole === 'moderator' ? 'moderator' : nextPlayerType);
+  const nextAppRole = appRole || user.appRole || (role === 'admin' ? 'admin' : role === 'creator' ? 'creator' : role === 'moderator' ? 'moderator' : 'client');
+  const nextRole = role || (nextAppRole === 'admin' ? 'admin' : nextAppRole === 'creator' ? 'creator' : nextAppRole === 'moderator' ? 'moderator' : nextPlayerType);
 
   const updated = dataStore.adminUpdateUserAccount(req.params.id, {
     role: nextRole as any,
     playerType: nextPlayerType as any,
     appRole: nextAppRole as any,
-    canPostInForum: nextAppRole === 'admin' || nextAppRole === 'moderator' ? true : user.canPostInForum,
+    canPostInForum: nextAppRole === 'admin' || nextAppRole === 'creator' || nextAppRole === 'moderator' ? true : user.canPostInForum,
   } as any);
 
   if (!updated) return res.status(404).json({ error: 'Usuario no encontrado.' });
   res.json({ success: true, user: updated });
+});
+
+// Admin / Moderator / Creator broadcasts a live pop-up notification to all online users
+apiRouter.post('/admin/live-popup', (req, res) => {
+  const { title, message, senderName, senderTag, senderRole } = req.body;
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'El mensaje del aviso pop-up es obligatorio.' });
+  }
+
+  const currentSettings = dataStore.getHostSettings();
+  const popupPayload = {
+    id: `popup-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    title: (title || '').trim() || 'Aviso en Vivo del Administrador',
+    message: message.trim(),
+    senderName: (senderName || '').trim() || 'Administrador',
+    senderTag: senderTag || 'adm',
+    senderRole: senderRole || 'admin',
+    sentAt: Date.now(),
+  };
+
+  const updatedSettings = {
+    ...currentSettings,
+    liveBroadcastPopup: popupPayload,
+  };
+  dataStore.saveHostSettings(updatedSettings);
+
+  res.json({
+    success: true,
+    popup: popupPayload,
+    settings: updatedSettings,
+    message: '¡Aviso pop-up en vivo enviado a todos los usuarios conectados!',
+  });
 });
 
 // Admin updates user password directly
@@ -728,9 +836,10 @@ apiRouter.get('/moderator/users', (req, res) => {
     displayName: u.displayName,
     userTagId: u.userTagId || '123',
     fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+    avatarUrl: u.avatarUrl,
     playerType: u.playerType || (u.role === 'dm' ? 'dm' : u.role === 'player' ? 'player' : 'both'),
-    appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'moderator' ? 'moderator' : 'client'),
-    canPostInForum: u.appRole === 'admin' || u.appRole === 'moderator' ? true : Boolean(u.canPostInForum),
+    appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'creator' ? 'creator' : u.role === 'moderator' ? 'moderator' : 'client'),
+    canPostInForum: u.appRole === 'admin' || u.appRole === 'creator' || u.appRole === 'moderator' ? true : Boolean(u.canPostInForum),
     forumPermissionsRequested: Boolean(u.forumPermissionsRequested),
     status: u.status,
     registeredAt: u.registeredAt,
@@ -1153,10 +1262,11 @@ apiRouter.post('/rooms/close', (req, res) => {
 apiRouter.get('/session/room/:roomCode', (req, res) => {
   const normCode = req.params.roomCode.trim().toUpperCase();
   const roomRecord = dataStore.getRoom(normCode);
+  const inMemoryRoom = rooms[normCode];
 
-  // If room does not exist or was closed by DM, return closed error
-  if (!roomRecord) {
-    return res.status(404).json({
+  // If room does not exist in dataStore AND has no active DM in memory, return closed flag with 200 status
+  if (!roomRecord && (!inMemoryRoom || !inMemoryRoom.dmConnected)) {
+    return res.status(200).json({
       roomCode: normCode,
       closed: true,
       error: 'La mesa no existe o ha sido cerrada por el Dungeon Master.',
@@ -1771,6 +1881,7 @@ apiRouter.post('/vault/worlds', (req, res) => {
       description: world.description,
       roomCode: normalizeRoomIdentifier(world.roomCode || world.name || 'MESA-DRAGON') || 'MESA-DRAGON',
       roomPassword: world.roomPassword,
+      roomMode: world.roomMode === 'offline' ? 'offline' : 'online',
       workspace: world.workspace,
       updatedAt: Date.now(),
     });
@@ -1783,10 +1894,10 @@ apiRouter.post('/vault/worlds', (req, res) => {
   }
 });
 
-// Update World Sheet Config (Name, RoomCode, Password)
+// Update World Sheet Config (Name, RoomCode, Password, RoomMode)
 apiRouter.put('/vault/worlds/:id', (req, res) => {
   try {
-    const { name, roomCode, roomPassword, description, workspace, ownerEmail } = req.body;
+    const { name, roomCode, roomPassword, roomMode, description, workspace, ownerEmail } = req.body;
     const email = (ownerEmail || '').toLowerCase();
 
     const updated = dataStore.updateWorldSheet(
@@ -1795,6 +1906,7 @@ apiRouter.put('/vault/worlds/:id', (req, res) => {
         ...(name ? { name } : {}),
         ...(roomCode ? { roomCode: roomCode.trim().toUpperCase() } : {}),
         ...(roomPassword !== undefined ? { roomPassword } : {}),
+        ...(roomMode === 'online' || roomMode === 'offline' ? { roomMode } : {}),
         ...(description !== undefined ? { description } : {}),
         ...(workspace ? { workspace } : {}),
       },

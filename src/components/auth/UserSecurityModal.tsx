@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { KeyRound, Lock, Tag, CheckCircle, AlertCircle, Save, Mail, HelpCircle, X, Shield, Copy, Check } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { KeyRound, Lock, Tag, CheckCircle, AlertCircle, Save, Mail, HelpCircle, X, Shield, Copy, Check, Upload, Trash2, User } from 'lucide-react';
 import { AuthSessionUser } from '../auth/RoleSelectionModal';
+import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 
 interface UserSecurityModalProps {
   isOpen: boolean;
@@ -17,6 +18,13 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
 }) => {
   const currentTagId = authUser.userTagId || '123';
   const myFullTag = `${authUser.displayName}@${currentTagId}`;
+
+  // Player Profile Avatar state
+  const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string>(authUser.avatarUrl || '');
+  const [isSavingAvatar, setIsSavingAvatar] = useState<boolean>(false);
+  const [avatarStatusMsg, setAvatarStatusMsg] = useState<string>('');
+  const [avatarErrorMsg, setAvatarErrorMsg] = useState<string>('');
 
   // Tag ID state
   const [newTagId, setNewTagId] = useState<string>(currentTagId);
@@ -39,6 +47,69 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
   const [userForgotMsg, setUserForgotMsg] = useState<string>('');
 
   if (!isOpen) return null;
+
+  const handleUploadPlayerAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarStatusMsg('');
+    setAvatarErrorMsg('');
+    setIsSavingAvatar(true);
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file, 256, 0.85);
+      setAvatarPreviewUrl(dataUrl);
+      const res = await fetch('/api/auth/avatar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: authUser.email,
+          userId: authUser.id,
+          avatarUrl: dataUrl,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAvatarErrorMsg(data.error || 'No se pudo guardar tu imagen de jugador.');
+      } else {
+        setAvatarStatusMsg('¡Imagen de jugador actualizada! Ahora se verá en el Lobby y en la lista de Amigos.');
+        if (onRefreshAuthStatus) {
+          await onRefreshAuthStatus();
+        }
+      }
+    } catch (err: any) {
+      setAvatarErrorMsg(err?.message || 'Error al procesar la imagen.');
+    } finally {
+      setIsSavingAvatar(false);
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const handleRemovePlayerAvatar = async () => {
+    setAvatarStatusMsg('');
+    setAvatarErrorMsg('');
+    setIsSavingAvatar(true);
+    try {
+      const res = await fetch('/api/auth/avatar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: authUser.email,
+          userId: authUser.id,
+          avatarUrl: '',
+        }),
+      });
+      if (res.ok) {
+        setAvatarPreviewUrl('');
+        setAvatarStatusMsg('Imagen de jugador restaurada al icono por defecto.');
+        if (onRefreshAuthStatus) {
+          await onRefreshAuthStatus();
+        }
+      }
+    } catch {
+      setAvatarErrorMsg('Error al quitar la imagen.');
+    } finally {
+      setIsSavingAvatar(false);
+    }
+  };
 
   const handleCopyTag = () => {
     navigator.clipboard.writeText(myFullTag);
@@ -163,14 +234,14 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-cinzel font-black text-base text-amber-200">
-                  Seguridad & Contraseña
+                  Seguridad & Perfil de Cuenta
                 </h3>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-950 border border-amber-700/60 text-amber-300 font-bold">
                   {myFullTag}
                 </span>
               </div>
               <p className="text-xs text-stone-400">
-                Ajusta tu ID único (@ID) para amigos y actualiza tus credenciales de forma segura.
+                Sube tu imagen de jugador para Amigos, ajusta tu @ID y actualiza tus credenciales.
               </p>
             </div>
           </div>
@@ -185,6 +256,91 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
 
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-[#101115]">
+          {/* Section 0: Player Profile Image (Avatar de Jugador para Lobby y Lista de Amigos) */}
+          <div className="bg-[#161720] border border-amber-800/50 rounded-2xl p-5 shadow space-y-3">
+            <input
+              ref={avatarFileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+              onChange={handleUploadPlayerAvatar}
+              className="hidden"
+            />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-800/80 pb-3">
+              <div>
+                <h4 className="font-cinzel font-bold text-sm text-amber-300 flex items-center gap-2">
+                  <User className="w-4 h-4 text-amber-400" />
+                  Imagen de Perfil de Jugador (No de Personaje)
+                </h4>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  Esta imagen aparece en tu bienvenida del Lobby y en el cuadrito junto a tu nombre en la lista de Amigos.
+                </p>
+              </div>
+            </div>
+
+            {avatarStatusMsg && (
+              <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-600 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{avatarStatusMsg}</span>
+              </div>
+            )}
+            {avatarErrorMsg && (
+              <div className="p-3 rounded-xl bg-red-950/80 border border-red-700 text-red-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{avatarErrorMsg}</span>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-1">
+              <div className="flex items-center gap-3.5">
+                <div className="w-16 h-16 rounded-2xl overflow-hidden bg-[#111216] border-2 border-[#c8a45c] flex items-center justify-center shadow-lg shrink-0">
+                  {(avatarPreviewUrl || authUser.avatarUrl) ? (
+                    <img
+                      src={avatarPreviewUrl || authUser.avatarUrl}
+                      alt={authUser.displayName}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="font-cinzel font-black text-lg text-amber-300">
+                      {authUser.displayName.slice(0, 2).toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <span className="font-cinzel font-bold text-sm text-stone-100 block">
+                    {authUser.displayName} <span className="font-mono text-amber-400 text-xs">#{currentTagId}</span>
+                  </span>
+                  <span className="text-[11px] text-stone-400 block">
+                    Formatos soportados: PNG, JPG, WebP (se ajusta automáticamente a cuadrito).
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="btn-upload-player-avatar"
+                  disabled={isSavingAvatar}
+                  onClick={() => avatarFileInputRef.current?.click()}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 font-cinzel font-bold text-xs shadow transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{isSavingAvatar ? 'Subiendo...' : 'Subir Imagen PNG/JPG'}</span>
+                </button>
+                {(avatarPreviewUrl || authUser.avatarUrl) && (
+                  <button
+                    type="button"
+                    disabled={isSavingAvatar}
+                    onClick={handleRemovePlayerAvatar}
+                    className="p-2 rounded-xl bg-red-950/60 hover:bg-red-900 border border-red-800 text-red-300 transition cursor-pointer"
+                    title="Quitar imagen de jugador"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Section 1: Username & Tag ID */}
           <form
             onSubmit={handleUserChangeTagId}
