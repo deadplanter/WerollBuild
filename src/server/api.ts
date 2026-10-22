@@ -429,6 +429,31 @@ apiRouter.post('/users/:id/change-password', (req, res) => {
   res.json({ success: true, message: '¡Contraseña actualizada con éxito!' });
 });
 
+// Self-service change playerType ('player' | 'dm' | 'both')
+apiRouter.post('/users/:id/player-type', (req, res) => {
+  try {
+    const { playerType } = req.body;
+    if (!['player', 'dm', 'both'].includes(playerType)) {
+      return res.status(400).json({ error: 'Tipo de jugador inválido. Debe ser player, dm o both.' });
+    }
+    const user = dataStore.findUserById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado.' });
+
+    const updated = dataStore.adminUpdateUserAccount(user.id, {
+      playerType,
+      role: user.appRole === 'admin' ? 'admin' : user.appRole === 'creator' ? 'creator' : user.appRole === 'moderator' ? 'moderator' : playerType,
+    } as any);
+
+    res.json({
+      success: true,
+      message: `¡Rol de mesa actualizado a "${playerType === 'dm' ? 'Dungeon Master únicamente' : playerType === 'player' ? 'Jugador únicamente' : 'DM y Jugador'}"!`,
+      user: updated,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al actualizar tipo de jugador.' });
+  }
+});
+
 // ==========================================
 // FRIENDS MANAGEMENT ENDPOINTS (LOBBY)
 // ==========================================

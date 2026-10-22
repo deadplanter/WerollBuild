@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { KeyRound, Lock, Tag, CheckCircle, AlertCircle, Save, Mail, HelpCircle, X, Shield, Copy, Check, Upload, Trash2, User } from 'lucide-react';
+import { KeyRound, Lock, Tag, CheckCircle, AlertCircle, Save, Mail, HelpCircle, X, Shield, Copy, Check, Upload, Trash2, User, Crown, Sparkles } from 'lucide-react';
 import { AuthSessionUser } from '../auth/RoleSelectionModal';
 import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
+import { PlayerType } from '../../types/dnd';
 
 interface UserSecurityModalProps {
   isOpen: boolean;
@@ -26,6 +27,14 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
   const [avatarStatusMsg, setAvatarStatusMsg] = useState<string>('');
   const [avatarErrorMsg, setAvatarErrorMsg] = useState<string>('');
 
+  // Table Player Type state ('player' | 'dm' | 'both')
+  const [currentPlayerType, setCurrentPlayerType] = useState<PlayerType>(
+    authUser.playerType || (authUser.role === 'dm' ? 'dm' : authUser.role === 'player' ? 'player' : 'both')
+  );
+  const [isUpdatingPlayerType, setIsUpdatingPlayerType] = useState<boolean>(false);
+  const [playerTypeStatusMsg, setPlayerTypeStatusMsg] = useState<string>('');
+  const [playerTypeErrorMsg, setPlayerTypeErrorMsg] = useState<string>('');
+
   // Tag ID state
   const [newTagId, setNewTagId] = useState<string>(currentTagId);
   const [isUpdatingTagId, setIsUpdatingTagId] = useState<boolean>(false);
@@ -45,6 +54,34 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
   const [userForgotNote, setUserForgotNote] = useState<string>('');
   const [isRequestingForgot, setIsRequestingForgot] = useState<boolean>(false);
   const [userForgotMsg, setUserForgotMsg] = useState<string>('');
+
+  const handleSelectPlayerType = async (type: PlayerType) => {
+    if (type === currentPlayerType) return;
+    setCurrentPlayerType(type);
+    setPlayerTypeStatusMsg('');
+    setPlayerTypeErrorMsg('');
+    setIsUpdatingPlayerType(true);
+    try {
+      const res = await fetch(`/api/users/${authUser.id}/player-type`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerType: type }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setPlayerTypeErrorMsg(data.error || 'Error al actualizar tipo de jugador.');
+        return;
+      }
+      setPlayerTypeStatusMsg(data.message || '¡Rol de mesa actualizado con éxito!');
+      if (onRefreshAuthStatus) {
+        await onRefreshAuthStatus();
+      }
+    } catch {
+      setPlayerTypeErrorMsg('Error de red al actualizar rol de mesa.');
+    } finally {
+      setIsUpdatingPlayerType(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -428,7 +465,100 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
             </div>
           </form>
 
-          {/* Section 2: Change Password */}
+          {/* Section 2: Table Player Type (Preferencia del Lobby) */}
+          <div className="bg-[#161720] border border-stone-800 rounded-2xl p-5 shadow space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800/80 pb-3">
+              <h4 className="font-cinzel font-bold text-sm text-stone-200 flex items-center gap-2">
+                <Crown className="w-4 h-4 text-purple-400" />
+                Rol de Mesa (Preferencia del Lobby)
+              </h4>
+              <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-stone-900 border border-stone-700 text-amber-300 font-bold">
+                Actual: {currentPlayerType === 'dm' ? 'Dungeon Master únicamente' : currentPlayerType === 'player' ? 'Jugador únicamente' : 'DM y Jugador'}
+              </span>
+            </div>
+
+            <p className="text-xs text-stone-400 leading-relaxed">
+              Define qué apartados se muestran en tu vista principal del Lobby. Si eres únicamente Jugador solo verás tus Fichas de Personajes; si eres únicamente DM solo verás tus World Sheets; y si eres DM y Jugador tendrás ambas opciones disponibles con selector.
+            </p>
+
+            {playerTypeStatusMsg && (
+              <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-600 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{playerTypeStatusMsg}</span>
+              </div>
+            )}
+
+            {playerTypeErrorMsg && (
+              <div className="p-3 rounded-xl bg-red-950/80 border border-red-700 text-red-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{playerTypeErrorMsg}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+              {/* Dungeon Master únicamente */}
+              <button
+                type="button"
+                disabled={isUpdatingPlayerType}
+                onClick={() => handleSelectPlayerType('dm')}
+                className={`p-3.5 rounded-2xl border text-left transition flex flex-col items-center sm:items-start text-center sm:text-left cursor-pointer ${
+                  currentPlayerType === 'dm'
+                    ? 'bg-purple-950/90 border-purple-500 text-purple-200 shadow-lg ring-2 ring-purple-500/50'
+                    : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700 hover:text-stone-300'
+                }`}
+              >
+                <Crown className="w-5 h-5 mb-1.5 text-purple-400" />
+                <span className="font-cinzel font-bold text-xs text-stone-200 block">
+                  Dungeon Master únicamente
+                </span>
+                <span className="text-[10px] text-stone-400 mt-0.5">
+                  Solo World Sheets y pantallas DM
+                </span>
+              </button>
+
+              {/* Jugador únicamente */}
+              <button
+                type="button"
+                disabled={isUpdatingPlayerType}
+                onClick={() => handleSelectPlayerType('player')}
+                className={`p-3.5 rounded-2xl border text-left transition flex flex-col items-center sm:items-start text-center sm:text-left cursor-pointer ${
+                  currentPlayerType === 'player'
+                    ? 'bg-amber-950/90 border-amber-500 text-amber-200 shadow-lg ring-2 ring-amber-500/50'
+                    : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700 hover:text-stone-300'
+                }`}
+              >
+                <User className="w-5 h-5 mb-1.5 text-amber-400" />
+                <span className="font-cinzel font-bold text-xs text-stone-200 block">
+                  Jugador únicamente
+                </span>
+                <span className="text-[10px] text-stone-400 mt-0.5">
+                  Solo Fichas de personajes D&D 5e
+                </span>
+              </button>
+
+              {/* DM y Jugador */}
+              <button
+                type="button"
+                disabled={isUpdatingPlayerType}
+                onClick={() => handleSelectPlayerType('both')}
+                className={`p-3.5 rounded-2xl border text-left transition flex flex-col items-center sm:items-start text-center sm:text-left cursor-pointer ${
+                  currentPlayerType === 'both'
+                    ? 'bg-gradient-to-br from-amber-950/90 to-purple-950/90 border-amber-400 text-amber-100 shadow-lg ring-2 ring-amber-400/50'
+                    : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700 hover:text-stone-300'
+                }`}
+              >
+                <Sparkles className="w-5 h-5 mb-1.5 text-amber-300" />
+                <span className="font-cinzel font-bold text-xs text-stone-200 block">
+                  DM y Jugador
+                </span>
+                <span className="text-[10px] text-stone-400 mt-0.5">
+                  Ambas pestañas con selector
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Section 3: Change Password */}
           <form
             onSubmit={handleUserChangePassword}
             className="bg-[#161720] border border-stone-800 rounded-2xl p-5 shadow space-y-3"

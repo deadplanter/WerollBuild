@@ -163,13 +163,27 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
     (userAppRole === 'moderator' || authUser?.role === 'moderator') && !isCreatorOrAbove;
   const isModerator = isCreatorOrAbove || isModeratorRole;
 
-  const canPlay = !authUser || userPlayerType === 'player' || userPlayerType === 'both' || isModerator;
-  const canDm = userPlayerType === 'dm' || userPlayerType === 'both' || isModerator;
+  // Table capabilities strictly governed by userPlayerType:
+  // - 'player': canPlay is true, canDm is false (ONLY character sheets appear)
+  // - 'dm': canPlay is false, canDm is true (ONLY world sheets appear)
+  // - 'both': canPlay is true, canDm is true (both appear with tab switcher)
+  // - unauthenticated / guest: canPlay is true, canDm is false
+  const canPlay = !authUser || userPlayerType === 'player' || userPlayerType === 'both';
+  const canDm = Boolean(authUser) && (userPlayerType === 'dm' || userPlayerType === 'both');
 
   // Left column navigation tab: 'characters' | 'worlds' | 'friends'
   const [leftTab, setLeftTab] = useState<'characters' | 'worlds' | 'friends'>(
-    canPlay ? 'characters' : canDm ? 'worlds' : 'characters'
+    canDm && !canPlay ? 'worlds' : 'characters'
   );
+
+  // Keep leftTab strictly aligned if userPlayerType changes
+  useEffect(() => {
+    if (canDm && !canPlay && leftTab === 'characters') {
+      setLeftTab('worlds');
+    } else if (canPlay && !canDm && leftTab === 'worlds') {
+      setLeftTab('characters');
+    }
+  }, [canPlay, canDm, leftTab]);
 
   // Full-Page Navigation inside Lobby ('portal' | 'admin' | 'creator' | 'moderator')
   const [internalLobbyPage, setInternalLobbyPage] = useState<'portal' | 'admin' | 'creator' | 'moderator'>('portal');
@@ -1467,6 +1481,9 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       });
       if (res.ok) {
         fetchAdminUsers();
+        if (onRefreshAuthStatus && authUser?.id === userId) {
+          await onRefreshAuthStatus();
+        }
       }
     } catch (e) {
       console.error('Error changing player type:', e);
@@ -1482,6 +1499,9 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       });
       if (res.ok) {
         fetchAdminUsers();
+        if (onRefreshAuthStatus && authUser?.id === userId) {
+          await onRefreshAuthStatus();
+        }
       }
     } catch (e) {
       console.error('Error changing app role:', e);

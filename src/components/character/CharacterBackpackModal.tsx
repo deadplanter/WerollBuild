@@ -712,7 +712,11 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => handleOpenNewItemForm(activeTab)}
+                  onClick={() =>
+                    handleOpenNewItemForm(
+                      activeTab === 'weapons' ? 'weapon' : activeTab === 'armor' ? 'armor' : 'common'
+                    )
+                  }
                   className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#b88c38] to-[#d6ab54] hover:from-[#c99b42] hover:to-[#e3ba64] text-stone-950 font-cinzel font-black text-xs transition cursor-pointer shadow"
                 >
                   <Plus className="w-4 h-4" />

@@ -2112,9 +2112,9 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                 >
                   <EntityAvatar
                     avatarType={workspace.dmAvatarType || 'icon'}
-                    avatarUrl={workspace.dmAvatarUrl}
+                    customUrl={workspace.dmAvatarUrl}
                     iconId={workspace.dmAvatarIcon || 'crown'}
-                    category="player"
+                    category="character"
                     size="sm"
                     className="rounded-md bg-[#12141d]"
                   />
@@ -2554,9 +2554,9 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
           >
             <EntityAvatar
               avatarType={workspace.dmAvatarType || 'icon'}
-              avatarUrl={workspace.dmAvatarUrl}
+              customUrl={workspace.dmAvatarUrl}
               iconId={workspace.dmAvatarIcon || 'crown'}
-              category="player"
+              category="character"
               size="md"
               className="w-full h-full"
             />

@@ -1841,16 +1841,16 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
           isOpen={isAvatarModalOpen}
           onClose={() => setIsAvatarModalOpen(false)}
           title={`Retrato de ${character.name}`}
-          currentAvatarType={character.avatarType || (character.avatarUrl ? 'custom' : 'icon')}
+          currentType={character.avatarType || (character.avatarUrl ? 'custom' : 'icon')}
           currentCustomUrl={character.avatarCustomUrl || character.avatarUrl || ''}
           currentIconId={character.avatarIcon || 'anonymous'}
-          onSave={(newType, newUrl, newIcon) => {
+          onSave={({ type, customUrl, iconId }) => {
             onUpdateCharacter({
               ...character,
-              avatarType: newType,
-              avatarCustomUrl: newUrl,
-              avatarIcon: newIcon,
-              avatarUrl: newType === 'custom' ? newUrl : undefined,
+              avatarType: type,
+              avatarCustomUrl: customUrl,
+              avatarIcon: iconId,
+              avatarUrl: type === 'custom' ? customUrl : undefined,
             });
             setIsAvatarModalOpen(false);
           }}
