@@ -46,6 +46,7 @@ import {
   PendingDmOffer,
   PlayerMessageToDM,
   LiveBroadcastPopup,
+  LiveRoomProjection,
 } from './types/dnd';
 import {
   loadCharacters,
@@ -73,8 +74,8 @@ import {
 import { CharacterSheetView } from './components/character/CharacterSheetView';
 import { CharacterCreatorModal } from './components/character/CharacterCreatorModal';
 import { DMScreenView } from './components/dm/DMScreenView';
+import { TableMapView } from './components/session/TableMapView';
 import { DiceRollerModal } from './components/dice/DiceRollerModal';
-import { QuickDiceBar } from './components/dice/QuickDiceBar';
 import { RulesCompendiumModal } from './components/rules/RulesCompendiumModal';
 import { ArcaneOracleModal } from './components/ai/ArcaneOracleModal';
 import { PartySessionBar } from './components/session/PartySessionBar';
@@ -87,7 +88,13 @@ import { FeedbackModal } from './components/feedback/FeedbackModal';
 import { UserSecurityModal } from './components/auth/UserSecurityModal';
 import { ModeratorPanelModal } from './components/admin/ModeratorPanelModal';
 import { BrandLogo } from './components/common/BrandLogo';
-import { calculateProficiencyBonus, calculatePassivePerception } from './utils/dnd-math';
+import {
+  calculateProficiencyBonus,
+  calculatePassivePerception,
+  calculateModifier,
+  filterAlbumPhotosByPlace,
+  buildLiveProjectionFromWorkspace as computeLiveProjectionFromWorkspace,
+} from './utils/dnd-math';
 import { SAMPLE_DM_WORKSPACE } from './data/srd';
 
 export default function App() {
@@ -230,6 +237,14 @@ export default function App() {
   const [roomClosedAlert, setRoomClosedAlert] = useState<string>('');
   const [showCombatantsOnTable, setShowCombatantsOnTable] = useState<boolean>(false);
   const [liveCombatants, setLiveCombatants] = useState<LiveCombatantMini[]>([]);
+  const [isSessionMapViewOpen, setIsSessionMapViewOpen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('map') === '1';
+    }
+    return false;
+  });
+  const [liveProjection, setLiveProjection] = useState<LiveRoomProjection | undefined>(undefined);
+  const lastSeenDmModifiedAtRef = useRef<number>(0);
 
   // DM -> Player Share Offer Notifications & Resolutions
   const [pendingPlayerOffers, setPendingPlayerOffers] = useState<PendingDmOffer[]>([]);
@@ -281,6 +296,9 @@ export default function App() {
         } else if (type === 'COMBATANTS_UPDATE') {
           setShowCombatantsOnTable(payload.showCombatantsOnTable);
           setLiveCombatants(payload.liveCombatants || []);
+          if (payload.liveProjection) {
+            setLiveProjection(payload.liveProjection);
+          }
         } else if (type === 'SETTINGS_UPDATED') {
           setHostSettings(payload);
           saveHostSettings(payload);
@@ -503,6 +521,11 @@ export default function App() {
           ac: target.armorClass,
           passivePerception: pp,
           level: target.level,
+          experience: target.experience ?? target.xp ?? 0,
+          alignment: target.alignment,
+          speed: target.speed,
+          initiative: target.initiativeBonus,
+          race: target.race,
           characterClass: `${target.race} ${target.characterClass}`,
           lastRoll: recentRoll,
           abilities: {
@@ -519,6 +542,11 @@ export default function App() {
     } catch (e) {}
   };
 
+  // Helper to build LiveRoomProjection from DMWorkspace
+  const buildLiveProjectionFromWorkspace = (targetWs: DMWorkspace): LiveRoomProjection => {
+    return computeLiveProjectionFromWorkspace(targetWs, activeWorld?.name);
+  };
+
   // Send DM heartbeat & active combatants to room server
   const sendDmHeartbeat = async (ws?: DMWorkspace) => {
     const targetWs = ws || dmWorkspaceRef.current;
@@ -526,17 +554,29 @@ export default function App() {
 
     try {
       const shouldBroadcast = Boolean(targetWs.activeEncounter?.broadcastEnemiesToTable);
-      const combatantsMini: LiveCombatantMini[] = (targetWs.activeEncounter?.combatants || []).map((c) => ({
-        id: c.id,
-        name: c.name,
-        hp: c.hp,
-        maxHp: c.maxHp,
-        ac: c.ac,
-        passivePerception: c.passivePerception ?? 10,
-        faction: c.faction || (c.isPlayer ? 'ally' : 'enemy'),
-        isPlayer: Boolean(c.isPlayer),
-        conditions: c.conditions || [],
-      }));
+      const combatantsMini: LiveCombatantMini[] = (targetWs.activeEncounter?.combatants || []).map((c) => {
+        const matchedMonster = (targetWs.monsters || []).find(
+          (m) => m.name.toLowerCase() === c.name.toLowerCase()
+        );
+        return {
+          id: c.id,
+          name: c.name,
+          hp: c.hp,
+          maxHp: c.maxHp,
+          ac: c.ac,
+          passivePerception: c.passivePerception ?? 10,
+          faction: c.faction || (c.isPlayer ? 'ally' : 'enemy'),
+          isPlayer: Boolean(c.isPlayer),
+          conditions: c.conditions || [],
+          levelOrCr: matchedMonster?.cr ? `CR ${matchedMonster.cr}` : 'Niv 1',
+          initiative: c.initiative,
+          speed: matchedMonster?.speed || '30 ft.',
+          avatarType: c.avatarType || matchedMonster?.avatarType,
+          avatarCustomUrl: c.avatarCustomUrl || matchedMonster?.avatarCustomUrl,
+          avatarIcon: c.avatarIcon || matchedMonster?.avatarIcon,
+        };
+      });
+      const projection = buildLiveProjectionFromWorkspace(targetWs);
 
       await fetch(`/api/session/room/${roomCode}/dm-heartbeat`, {
         method: 'POST',
@@ -546,9 +586,59 @@ export default function App() {
           dmConnected: true,
           showCombatantsOnTable: shouldBroadcast,
           liveCombatants: combatantsMini,
+          liveProjection: projection,
         }),
       });
     } catch (e) {}
+  };
+
+  // DM directly adjusts a player's HP or Gold in the active room
+  const handleDmAdjustPlayer = async (
+    characterId: string,
+    updates: { hpDelta?: number; setHp?: number; gpDelta?: number }
+  ) => {
+    // Optimistic update on partyMembers
+    setPartyMembers((prev) =>
+      prev.map((m) => {
+        if (m.characterId !== characterId) return m;
+        const maxHp = Number(m.maxHp ?? 10);
+        let nextHp = Number(m.currentHp ?? 10);
+        if (typeof updates.setHp === 'number') {
+          nextHp = Math.max(0, Math.min(maxHp, updates.setHp));
+        } else if (typeof updates.hpDelta === 'number') {
+          nextHp = Math.max(0, Math.min(maxHp, nextHp + updates.hpDelta));
+        }
+        const prevGp = Number(m.currency?.gp ?? 0);
+        const nextGp =
+          typeof updates.gpDelta === 'number' ? Math.max(0, prevGp + updates.gpDelta) : prevGp;
+        return {
+          ...m,
+          currentHp: nextHp,
+          currency: {
+            ...(m.currency || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 }),
+            gp: nextGp,
+          },
+          dmModifiedAt: Date.now(),
+        };
+      })
+    );
+
+    try {
+      const res = await fetch(
+        `/api/session/room/${encodeURIComponent(roomCode)}/dm-adjust-player`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ characterId, ...updates }),
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.party)) {
+          setPartyMembers(data.party);
+        }
+      }
+    } catch {}
   };
 
   // Fetch world sheets for the authenticated DM
@@ -622,6 +712,33 @@ export default function App() {
           }
 
           setPartyMembers(data.party || []);
+          // If the DM adjusted this player's HP or gold, apply it to activeCharacter immediately
+          if (appView === 'player-session' && activeCharacterRef.current && Array.isArray(data.party)) {
+            const myEntry = data.party.find(
+              (p: any) => p.characterId === activeCharacterRef.current?.id
+            );
+            if (
+              myEntry &&
+              myEntry.dmModifiedAt &&
+              myEntry.dmModifiedAt > lastSeenDmModifiedAtRef.current
+            ) {
+              lastSeenDmModifiedAtRef.current = myEntry.dmModifiedAt;
+              const currentChar = activeCharacterRef.current;
+              const updatedChar: Character5e = {
+                ...currentChar,
+                currentHp:
+                  typeof myEntry.currentHp === 'number' ? myEntry.currentHp : currentChar.currentHp,
+                currency: myEntry.currency || currentChar.currency,
+              };
+              activeCharacterRef.current = updatedChar;
+              setCharacters((prev) =>
+                prev.map((c) => (c.id === updatedChar.id ? updatedChar : c))
+              );
+              saveCharacters(
+                characters.map((c) => (c.id === updatedChar.id ? updatedChar : c))
+              );
+            }
+          }
           if (Array.isArray(data.rollFeed)) {
             setRollFeed(data.rollFeed);
           }
@@ -635,6 +752,9 @@ export default function App() {
           }
           if (Array.isArray(data.liveCombatants)) {
             setLiveCombatants(data.liveCombatants);
+          }
+          if (data.liveProjection) {
+            setLiveProjection(data.liveProjection);
           }
           if (Array.isArray(data.playerMessages)) {
             setRoomPlayerMessages(data.playerMessages);
@@ -736,7 +856,9 @@ export default function App() {
   const handleRefreshAuthStatus = async () => {
     if (!authUser?.email) return;
     try {
-      const res = await fetch(`/api/auth/me?email=${encodeURIComponent(authUser.email)}`);
+      const res = await fetch(`/api/auth/me?email=${encodeURIComponent(authUser.email)}`, {
+        cache: 'no-store',
+      });
       if (res.ok) {
         const data = await res.json();
         if (data && data.status) {
@@ -751,6 +873,8 @@ export default function App() {
             role: data.role || authUser.role,
             appRole: data.appRole || authUser.appRole,
             playerType: data.playerType || authUser.playerType,
+            requestedPlayerType: data.requestedPlayerType,
+            playerTypeChangeRequested: Boolean(data.playerTypeChangeRequested),
             status: data.status,
           };
           setAuthUser(updated);
@@ -761,6 +885,13 @@ export default function App() {
       console.error(e);
     }
   };
+
+  useEffect(() => {
+    if (!authUser?.email) return;
+    handleRefreshAuthStatus();
+    const interval = setInterval(handleRefreshAuthStatus, 4000);
+    return () => clearInterval(interval);
+  }, [authUser?.email]);
 
   // Launch Player Sheet into active table
   const handleSelectCharacterToPlay = (character: Character5e, code: string) => {
@@ -946,6 +1077,7 @@ export default function App() {
         });
       } catch (e) {}
     }
+    setIsSessionMapViewOpen(false);
     setAppView('lobby');
   };
 
@@ -1082,6 +1214,7 @@ export default function App() {
     setRoomPlayerMessages(Array.isArray(world.workspace?.playerMessages) ? world.workspace.playerMessages : []);
     setRoomCode(world.roomCode);
     saveRoomCode(world.roomCode);
+    setIsSessionMapViewOpen(false);
     setAppView('dm-session');
   };
 
@@ -1169,6 +1302,7 @@ export default function App() {
       console.error('Error closing room:', e);
     }
 
+    setIsSessionMapViewOpen(false);
     setAppView('lobby');
     fetchWorldSheets();
   };
@@ -1215,6 +1349,11 @@ export default function App() {
                 avatarIcon: updated.avatarIcon,
                 avatarUrl: updated.avatarUrl,
                 level: updated.level,
+                experience: updated.experience ?? updated.xp ?? 0,
+                alignment: updated.alignment,
+                speed: updated.speed,
+                initiative: updated.initiativeBonus,
+                race: updated.race,
                 characterClass: `${updated.race} ${updated.characterClass}`,
                 currentHp: updated.currentHp,
                 maxHp: updated.maxHp,
@@ -1340,7 +1479,7 @@ export default function App() {
               className="px-2.5 py-1 rounded-full bg-[#1b1d28] hover:bg-[#252836] border border-[#c8a45c]/50 text-[#e2c275] text-[11px] font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
               title="Ver historial de versiones y novedades"
             >
-              <span>v1.0 Beta</span>
+              <span>v1.1 Beta</span>
               <span className="w-4 h-4 rounded-full bg-[#c8a45c]/25 border border-[#e2c275] text-[#f5e4be] flex items-center justify-center text-[10px] font-black">
                 ?
               </span>
@@ -1369,23 +1508,6 @@ export default function App() {
               </div>
             )}
           </div>
-
-          {/* Center: Quick Dice Roller - ONLY displayed inside active PLAYER table / session (hidden on DM screen) */}
-          {appView === 'player-session' && (
-            <div className="hidden lg:flex items-center">
-              <QuickDiceBar
-                onQuickRoll={(sides) => handleTriggerRoll(`d${sides}`, 0, sides)}
-                onOpenFullRoller={() => {
-                  setRollerTitle('Tirada General');
-                  setRollerMod(0);
-                  setRollerSides(20);
-                  setRollerMode('normal');
-                  setIsRollerOpen(true);
-                }}
-                recentRoll={recentRoll}
-              />
-            </div>
-          )}
 
           {/* Right: Icon-Above-Label Utilities */}
           <div className="flex items-center gap-2">
@@ -1502,7 +1624,13 @@ export default function App() {
       {/* =================================================================== */}
       {/* MAIN CONTENT AREA (Extended Viewport - Anti Slop Layout)            */}
       {/* =================================================================== */}
-      <main className={`w-full max-w-[1650px] mx-auto px-3 sm:px-5 ${appView === 'lobby' ? 'py-4 space-y-5' : 'py-2 space-y-2'} flex-1`}>
+      <main
+        className={`w-full ${
+          isSessionMapViewOpen
+            ? 'max-w-[1920px] px-1.5 sm:px-3'
+            : 'max-w-[1650px] px-3 sm:px-5'
+        } mx-auto ${appView === 'lobby' ? 'py-4 space-y-5' : 'py-2 space-y-2'} flex-1`}
+      >
         {/* Room Closed Notification Alert */}
         {roomClosedAlert && (
           <div className="bg-red-950/80 border border-red-700 rounded-2xl p-4 shadow-lg flex items-center justify-between gap-3 animate-in fade-in">
@@ -1742,8 +1870,133 @@ export default function App() {
           </div>
         )}
 
-        {/* 3. PLAYER SHEET (Active Session or Solo Edit) */}
-        {(appView === 'player-session' || appView === 'player-solo') && activeCharacter && (
+        {/* 3. TABLE MAP VIEW (Inside Active Session for Player or DM) */}
+        {(appView === 'player-session' || appView === 'dm-session') && isSessionMapViewOpen && (
+          <TableMapView
+            mode={appView === 'dm-session' ? 'dm' : 'player'}
+            roomCode={roomCode}
+            worldName={activeWorld?.name}
+            character={activeCharacter}
+            onUpdateCharacter={handleUpdateCharacter}
+            workspace={dmWorkspace}
+            onUpdateWorkspace={(updated) => {
+              dmWorkspaceRef.current = updated;
+              setDmWorkspace(updated);
+              saveDMWorkspace(updated);
+
+              const shouldBroadcast = Boolean(updated.activeEncounter?.broadcastEnemiesToTable);
+              setShowCombatantsOnTable(shouldBroadcast);
+
+              const combatantsMini: LiveCombatantMini[] = (updated.activeEncounter?.combatants || []).map((c) => {
+                const matchedMonster = (updated.monsters || []).find(
+                  (m) => m.name.toLowerCase() === c.name.toLowerCase()
+                );
+                return {
+                  id: c.id,
+                  name: c.name,
+                  hp: c.hp,
+                  maxHp: c.maxHp,
+                  ac: c.ac,
+                  passivePerception: c.passivePerception ?? 10,
+                  faction: c.faction || (c.isPlayer ? 'ally' : 'enemy'),
+                  isPlayer: Boolean(c.isPlayer),
+                  conditions: c.conditions || [],
+                  levelOrCr: matchedMonster?.cr ? `CR ${matchedMonster.cr}` : 'Niv 1',
+                  initiative: c.initiative,
+                  speed: matchedMonster?.speed || '30 ft.',
+                  avatarType: c.avatarType || matchedMonster?.avatarType,
+                  avatarCustomUrl: c.avatarCustomUrl || matchedMonster?.avatarCustomUrl,
+                  avatarIcon: c.avatarIcon || matchedMonster?.avatarIcon,
+                };
+              });
+              setLiveCombatants(combatantsMini);
+              const proj = buildLiveProjectionFromWorkspace(updated);
+              setLiveProjection(proj);
+
+              if (broadcastChannelRef.current) {
+                broadcastChannelRef.current.postMessage({
+                  type: 'COMBATANTS_UPDATE',
+                  payload: {
+                    showCombatantsOnTable: shouldBroadcast,
+                    liveCombatants: combatantsMini,
+                    liveProjection: proj,
+                  },
+                });
+              }
+
+              sendDmHeartbeat(updated);
+            }}
+            partyMembers={partyMembers}
+            dmConnected={appView === 'dm-session' ? true : serverDmConnected}
+            dmLiveMessage={appView === 'dm-session' ? dmWorkspace.dmLiveMessage || serverDmLiveMessage : serverDmLiveMessage}
+            onUpdateDmLiveMessage={(msg) => {
+              setServerDmLiveMessage(msg);
+              if (broadcastChannelRef.current) {
+                broadcastChannelRef.current.postMessage({
+                  type: 'DM_LIVE_MESSAGE',
+                  payload: msg,
+                });
+              }
+            }}
+            showCombatantsOnTable={showCombatantsOnTable}
+            liveCombatants={liveCombatants}
+            liveProjection={
+              appView === 'dm-session'
+                ? buildLiveProjectionFromWorkspace(dmWorkspace)
+                : liveProjection
+            }
+            rollFeed={rollFeed}
+            onRollComplete={handleRollComplete}
+            onTriggerRoll={handleTriggerRoll}
+            onOpenRollFeed={() => setIsRollFeedOpen(true)}
+            onReturnToSheet={() => setIsSessionMapViewOpen(false)}
+            onSaveToCloud={
+              appView === 'dm-session' ? handleDmSaveToCloud : handlePlayerSaveToCloud
+            }
+            onDmAdjustPlayer={handleDmAdjustPlayer}
+            onSendPlayerMessageToDM={async (title, description) => {
+              const pName = activeCharacter?.playerName || authUser?.displayName || 'Jugador';
+              const pTag = (authUser?.userTagId || '123').replace(/^@+/, '').trim() || '123';
+              try {
+                const res = await fetch(
+                  `/api/session/room/${encodeURIComponent(roomCode)}/player-message`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      characterId: activeCharacter?.id || 'char-live',
+                      characterName: activeCharacter?.name || 'Aventurero',
+                      playerName: pName,
+                      playerTagId: pTag,
+                      playerFullTag: `${pName}@${pTag}`,
+                      playerEmail: authUser?.email,
+                      title,
+                      description,
+                    }),
+                  }
+                );
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                  return { ok: false, error: data.error || 'Error al enviar el mensaje al DM.' };
+                }
+                if (Array.isArray(data.playerMessages)) {
+                  setRoomPlayerMessages(data.playerMessages);
+                }
+                return {
+                  ok: true,
+                  message: data.message || '¡Mensaje privado enviado al Dungeon Master!',
+                };
+              } catch {
+                return { ok: false, error: 'Error de conexión con la sala.' };
+              }
+            }}
+          />
+        )}
+
+        {/* 3B. PLAYER SHEET (Active Session or Solo Edit) */}
+        {(appView === 'player-session' || appView === 'player-solo') &&
+          !isSessionMapViewOpen &&
+          activeCharacter && (
           <CharacterSheetView
             character={activeCharacter}
             onUpdateCharacter={handleUpdateCharacter}
@@ -1761,6 +2014,8 @@ export default function App() {
             onDismissAnnouncement={() => setActiveAnnouncement(null)}
             onOpenRollFeed={() => setIsRollFeedOpen(true)}
             rollFeed={rollFeed}
+            onOpenTableMapView={() => setIsSessionMapViewOpen(true)}
+            activeLocationName={liveProjection?.locationName}
             onSendPlayerMessageToDM={async (title, description) => {
               const pName = activeCharacter?.playerName || authUser?.displayName || 'Jugador';
               const pTag = (authUser?.userTagId || '123').replace(/^@+/, '').trim() || '123';
@@ -1811,7 +2066,7 @@ export default function App() {
         )}
 
         {/* 4. DUNGEON MASTER SCREEN (Active Session) */}
-        {appView === 'dm-session' && (
+        {appView === 'dm-session' && !isSessionMapViewOpen && (
           <DMScreenView
             workspace={dmWorkspace}
             onUpdateWorkspace={(updated) => {
@@ -1822,18 +2077,31 @@ export default function App() {
               const shouldBroadcast = Boolean(updated.activeEncounter?.broadcastEnemiesToTable);
               setShowCombatantsOnTable(shouldBroadcast);
 
-              const combatantsMini: LiveCombatantMini[] = (updated.activeEncounter?.combatants || []).map((c) => ({
-                id: c.id,
-                name: c.name,
-                hp: c.hp,
-                maxHp: c.maxHp,
-                ac: c.ac,
-                passivePerception: c.passivePerception ?? 10,
-                faction: c.faction || (c.isPlayer ? 'ally' : 'enemy'),
-                isPlayer: Boolean(c.isPlayer),
-                conditions: c.conditions || [],
-              }));
+              const combatantsMini: LiveCombatantMini[] = (updated.activeEncounter?.combatants || []).map((c) => {
+                const matchedMonster = (updated.monsters || []).find(
+                  (m) => m.name.toLowerCase() === c.name.toLowerCase()
+                );
+                return {
+                  id: c.id,
+                  name: c.name,
+                  hp: c.hp,
+                  maxHp: c.maxHp,
+                  ac: c.ac,
+                  passivePerception: c.passivePerception ?? 10,
+                  faction: c.faction || (c.isPlayer ? 'ally' : 'enemy'),
+                  isPlayer: Boolean(c.isPlayer),
+                  conditions: c.conditions || [],
+                  levelOrCr: matchedMonster?.cr ? `CR ${matchedMonster.cr}` : 'Niv 1',
+                  initiative: c.initiative,
+                  speed: matchedMonster?.speed || '30 ft.',
+                  avatarType: c.avatarType || matchedMonster?.avatarType,
+                  avatarCustomUrl: c.avatarCustomUrl || matchedMonster?.avatarCustomUrl,
+                  avatarIcon: c.avatarIcon || matchedMonster?.avatarIcon,
+                };
+              });
               setLiveCombatants(combatantsMini);
+              const proj = buildLiveProjectionFromWorkspace(updated);
+              setLiveProjection(proj);
 
               if (broadcastChannelRef.current) {
                 broadcastChannelRef.current.postMessage({
@@ -1841,6 +2109,7 @@ export default function App() {
                   payload: {
                     showCombatantsOnTable: shouldBroadcast,
                     liveCombatants: combatantsMini,
+                    liveProjection: proj,
                   },
                 });
               }
@@ -1885,6 +2154,8 @@ export default function App() {
             }}
             isOfflineMode={activeWorld?.roomMode === 'offline'}
             onToggleOfflineMode={handleToggleDmOfflineMode}
+            onOpenTableMapView={() => setIsSessionMapViewOpen(true)}
+            onDmAdjustPlayer={handleDmAdjustPlayer}
           />
         )}
       </main>
@@ -2029,7 +2300,7 @@ export default function App() {
           isOpen={isChangelogOpen}
           onClose={() => setIsChangelogOpen(false)}
           changelog={hostSettings.changelog || []}
-          currentVersion={hostSettings.headerSubtitle?.replace(/[^0-9.]/g, '') || '0.1'}
+          currentVersion={hostSettings.headerSubtitle?.replace(/[^0-9.]/g, '') ? `${hostSettings.headerSubtitle.replace(/[^0-9.]/g, '')} Beta` : '1.1 Beta'}
         />
       )}
 

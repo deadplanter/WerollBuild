@@ -340,8 +340,13 @@ export function deriveEquippedWeaponAttacks(
   const strMod = calculateModifier(strScore);
   const dexMod = calculateModifier(dexScore);
   const result: DerivedEquippedAttack[] = [];
+  const safeInventory = Array.isArray(inventory)
+    ? inventory
+    : Array.isArray((inventory as any)?.inventory)
+    ? (inventory as any).inventory
+    : [];
 
-  for (const item of inventory || []) {
+  for (const item of safeInventory) {
     if (!item.equipped) continue;
     const group = classifyInventoryItemGroup(item);
     if (group !== 'Armas') continue;
@@ -781,6 +786,203 @@ export function filterAlbumPhotosByPlace<T extends { folder?: string }>(
   });
 }
 
+export interface AlignmentDescriptor {
+  ethics: 'chaotic' | 'neutral' | 'lawful';
+  morality: 'good' | 'neutral' | 'evil';
+  shape: 'spiral' | 'equilibrium' | 'scales';
+  colorTone: 'green' | 'gray' | 'red';
+  labelEs: string;
+  descriptionEs: string;
+}
 
+export function parseAlignmentDescriptor(alignment?: string): AlignmentDescriptor {
+  const raw = String(alignment || 'Neutral Bueno').trim().toLowerCase();
 
+  let ethics: 'chaotic' | 'neutral' | 'lawful' = 'neutral';
+  if (raw.includes('caótic') || raw.includes('caotic') || raw.includes('chaotic')) {
+    ethics = 'chaotic';
+  } else if (raw.includes('legal') || raw.includes('lawful')) {
+    ethics = 'lawful';
+  }
+
+  let morality: 'good' | 'neutral' | 'evil' = 'neutral';
+  if (raw.includes('buen') || raw.includes('good')) {
+    morality = 'good';
+  } else if (raw.includes('malvad') || raw.includes('malo') || raw.includes('mala') || raw.includes('evil')) {
+    morality = 'evil';
+  }
+
+  const shape: 'spiral' | 'equilibrium' | 'scales' =
+    ethics === 'chaotic' ? 'spiral' : ethics === 'lawful' ? 'scales' : 'equilibrium';
+
+  const colorTone: 'green' | 'gray' | 'red' =
+    morality === 'good' ? 'green' : morality === 'evil' ? 'red' : 'gray';
+
+  const ethicsLabel =
+    ethics === 'chaotic' ? 'Caótico' : ethics === 'lawful' ? 'Legal' : 'Neutral';
+  const moralityLabel =
+    morality === 'good' ? 'Bueno' : morality === 'evil' ? 'Malvado' : 'Neutral';
+
+  const labelEs =
+    ethics === 'neutral' && morality === 'neutral'
+      ? 'Neutral Verdadero'
+      : `${ethicsLabel} ${moralityLabel}`;
+
+  const descriptionsMap: Record<string, string> = {
+    'Legal Bueno': 'Sigue el honor, la justicia y la ley para proteger y ayudar a los demás.',
+    'Neutral Bueno': 'Hace el bien y ayuda a los demás guiado por su corazón, sin atarse al orden ni al caos.',
+    'Caótico Bueno': 'Actúa según su conciencia y libertad personal, buscando el bien por encima de reglas.',
+    'Legal Neutral': 'Se rige por la ley, la tradición o un código personal estricto por encima del bien o el mal.',
+    'Neutral Verdadero': 'Busca el equilibrio natural o actúa con pragmatismo sin tomar partido extremo.',
+    'Caótico Neutral': 'Sigue sus propios impulsos y valora su libertad individual por encima de todo.',
+    'Legal Malvado': 'Utiliza las leyes, jerarquías y el orden metódicamente para obtener poder propio.',
+    'Neutral Malvado': 'Busca su propio beneficio sin escrúpulos, aliándose o traicionando según convenga.',
+    'Caótico Malvado': 'Guiado por la destrucción, la codicia o la furia sin respeto por leyes ni vidas.',
+  };
+
+  return {
+    ethics,
+    morality,
+    shape,
+    colorTone,
+    labelEs,
+    descriptionEs: descriptionsMap[labelEs] || 'Orientación moral y ética del personaje.',
+  };
+}
+
+export const MAX_ENCOUNTER_ENEMIES = 8;
+
+export function canAddEnemyToEncounter(
+  combatants?: { faction?: string; isPlayer?: boolean }[],
+  maxEnemies: number = MAX_ENCOUNTER_ENEMIES
+): { enemyCount: number; maxEnemies: number; canAdd: boolean } {
+  const list = Array.isArray(combatants) ? combatants : [];
+  const enemyCount = list.filter(
+    (c) => (c.faction || (c.isPlayer ? 'ally' : 'enemy')) === 'enemy'
+  ).length;
+  return {
+    enemyCount,
+    maxEnemies,
+    canAdd: enemyCount < maxEnemies,
+  };
+}
+
+export interface LiveProjectionWorkspaceInput {
+  activeAtlasFolder?: string;
+  atlasMaps?: Record<string, string>;
+  activeLiveVisual?: {
+    kind: 'map' | 'album' | 'photo' | 'tactical';
+    id: string;
+    title: string;
+    imageUrl: string;
+    folder?: string;
+  } | null;
+  activeSessionVisual?: {
+    kind?: 'map' | 'album' | 'photo' | 'tactical';
+    title?: string;
+    imageUrl?: string;
+  } | null;
+  locations?: {
+    id?: string;
+    name?: string;
+    folder?: string;
+    mapImageUrl?: string;
+  }[];
+  placeAlbumPhotos?: {
+    id: string;
+    title: string;
+    imageUrl: string;
+    folder?: string;
+    placePath?: string;
+  }[];
+}
+
+export function buildLiveProjectionFromWorkspace(
+  targetWs?: LiveProjectionWorkspaceInput | null,
+  worldName?: string
+): {
+  locationName: string;
+  locationFolder: string;
+  visualKind: 'map' | 'photo' | 'tactical';
+  visualTitle: string;
+  visualImageUrl: string;
+  galleryPhotos: { id: string; title: string; imageUrl: string; placePath?: string }[];
+} {
+  const rawFolder = String(
+    targetWs?.activeAtlasFolder || targetWs?.activeLiveVisual?.folder || 'all'
+  ).trim();
+  const activeFolder = !rawFolder || rawFolder === 'Todos' ? 'all' : rawFolder;
+
+  const matchingLoc = (targetWs?.locations || []).find(
+    (l) => (l.folder || 'General') === activeFolder || l.name === activeFolder
+  );
+
+  const shortFolderName =
+    activeFolder === 'all'
+      ? worldName || matchingLoc?.name || targetWs?.locations?.[0]?.name || 'Mundo Completo'
+      : activeFolder
+          .split('/')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .pop() || activeFolder;
+
+  const locationName =
+    activeFolder === 'all'
+      ? worldName || matchingLoc?.name || targetWs?.locations?.[0]?.name || 'Mundo Completo'
+      : shortFolderName;
+
+  const galleryPhotos = filterAlbumPhotosByPlace(targetWs?.placeAlbumPhotos || [], activeFolder);
+
+  const atlasMapUrl =
+    targetWs?.atlasMaps?.[activeFolder] ||
+    (activeFolder === 'all' ? '' : targetWs?.atlasMaps?.['all'] || '') ||
+    matchingLoc?.mapImageUrl ||
+    '';
+
+  const activeVisual = targetWs?.activeLiveVisual || targetWs?.activeSessionVisual;
+
+  const normalizedKind = (
+    rawKind?: string
+  ): 'map' | 'photo' | 'tactical' => {
+    if (rawKind === 'album' || rawKind === 'photo') return 'photo';
+    if (rawKind === 'tactical') return 'tactical';
+    return 'map';
+  };
+
+  let visualKind: 'map' | 'photo' | 'tactical' = 'map';
+  let visualTitle = locationName;
+  let visualImageUrl = '';
+
+  if (activeVisual && activeVisual.imageUrl) {
+    visualKind = normalizedKind(activeVisual.kind);
+    visualTitle = activeVisual.title || locationName;
+    visualImageUrl = activeVisual.imageUrl;
+  } else if (atlasMapUrl) {
+    visualKind = 'map';
+    visualTitle = `Mapa: ${locationName}`;
+    visualImageUrl = atlasMapUrl;
+  } else if (galleryPhotos[0]?.imageUrl) {
+    visualKind = 'photo';
+    visualTitle = galleryPhotos[0].title || locationName;
+    visualImageUrl = galleryPhotos[0].imageUrl;
+  } else if (activeVisual) {
+    visualKind = normalizedKind(activeVisual.kind);
+    visualTitle = activeVisual.title || locationName;
+    visualImageUrl = '';
+  }
+
+  return {
+    locationName,
+    locationFolder: activeFolder,
+    visualKind,
+    visualTitle,
+    visualImageUrl,
+    galleryPhotos: galleryPhotos.slice(0, 12).map((p) => ({
+      id: p.id,
+      title: p.title,
+      imageUrl: p.imageUrl,
+      placePath: p.folder || p.placePath || activeFolder,
+    })),
+  };
+}
 

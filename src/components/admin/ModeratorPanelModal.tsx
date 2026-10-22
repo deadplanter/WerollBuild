@@ -31,6 +31,7 @@ interface ModeratorPanelModalProps {
   asPage?: boolean;
   creatorMode?: boolean;
   onBroadcastLivePopup?: (popup: any) => void;
+  onRefreshAuthStatus?: () => Promise<void>;
 }
 
 export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
@@ -44,11 +45,12 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
   asPage = false,
   creatorMode = false,
   onBroadcastLivePopup,
+  onRefreshAuthStatus,
 }) => {
   const [users, setUsers] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'role-requests'>('all');
   const [actionMessage, setActionMessage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
 
@@ -174,10 +176,44 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
     }
   };
 
+  // Approve or Reject Table Role (playerType) Change Request
+  const handleResolvePlayerTypeRequest = async (
+    userId: string,
+    approved: boolean,
+    requestedType?: string
+  ) => {
+    setActionMessage('');
+    setErrorMessage('');
+    try {
+      const res = await fetch(`/api/moderator/users/${userId}/player-type-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approved,
+          playerType: requestedType,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al procesar solicitud de rol de mesa');
+      setActionMessage(data.message || 'Solicitud de rol de mesa procesada.');
+      await fetchModerationUsers();
+      if (onRefreshAuthStatus && userId === authUser.id) {
+        await onRefreshAuthStatus();
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error al procesar solicitud de rol de mesa.');
+    }
+  };
+
+  const formatPlayerTypeLabel = (t?: string) =>
+    t === 'dm' ? 'Solo DM' : t === 'player' ? 'Solo Jugador' : 'DM y Jugador';
+
   const pendingCount = users.filter((u) => u.status === 'pending').length;
+  const roleRequestsCount = users.filter((u) => Boolean(u.playerTypeChangeRequested)).length;
   const filteredUsers = users.filter((u) => {
     if (statusFilter === 'pending' && u.status !== 'pending') return false;
     if (statusFilter === 'approved' && u.status !== 'approved') return false;
+    if (statusFilter === 'role-requests' && !u.playerTypeChangeRequested) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       return (
@@ -413,10 +449,10 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
 
         {/* Filter & Search Bar */}
         <div className="bg-[#16171e] border border-stone-800/80 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
             <button
               onClick={() => setStatusFilter('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold transition ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold transition cursor-pointer ${
                 statusFilter === 'all'
                   ? 'bg-purple-900/60 text-purple-200 border border-purple-600'
                   : 'bg-stone-800 text-stone-400 hover:text-stone-200'
@@ -426,7 +462,7 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
             </button>
             <button
               onClick={() => setStatusFilter('pending')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold transition flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold transition flex items-center gap-1.5 cursor-pointer ${
                 statusFilter === 'pending'
                   ? 'bg-amber-900/60 text-amber-200 border border-amber-600'
                   : 'bg-stone-800 text-stone-400 hover:text-stone-200'
@@ -440,8 +476,24 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
               )}
             </button>
             <button
+              data-testid="filter-role-requests"
+              onClick={() => setStatusFilter('role-requests')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                statusFilter === 'role-requests'
+                  ? 'bg-purple-950 text-purple-200 border border-purple-500'
+                  : 'bg-stone-800 text-stone-400 hover:text-stone-200'
+              }`}
+            >
+              <span>Solicitudes de Rol</span>
+              {roleRequestsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-purple-500 text-white text-[10px] font-black animate-pulse">
+                  {roleRequestsCount}
+                </span>
+              )}
+            </button>
+            <button
               onClick={() => setStatusFilter('approved')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold transition ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold transition cursor-pointer ${
                 statusFilter === 'approved'
                   ? 'bg-emerald-950 text-emerald-200 border border-emerald-700'
                   : 'bg-stone-800 text-stone-400 hover:text-stone-200'
@@ -485,6 +537,7 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
                     u.appRole === 'moderator'
                 );
                 const requestedPerm = Boolean(u.forumPermissionsRequested);
+                const requestedRoleChange = Boolean(u.playerTypeChangeRequested && u.requestedPlayerType);
 
                 return (
                   <div
@@ -492,6 +545,8 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
                     className={`bg-[#181920] border rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 transition shadow-sm ${
                       isUserPending
                         ? 'border-amber-700/60 bg-amber-950/10'
+                        : requestedRoleChange
+                        ? 'border-purple-500/80 bg-purple-950/15'
                         : 'border-stone-800 hover:border-stone-700'
                     }`}
                   >
@@ -514,8 +569,13 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
                           </span>
                           {/* Player Type Badge */}
                           <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-stone-800 text-stone-300 border border-stone-700">
-                            Tipo: {u.playerType === 'dm' ? 'Dungeon Master' : u.playerType === 'player' ? 'Jugador' : 'DM y Jugador'}
+                            Rol Mesa: {u.playerType === 'dm' ? 'Solo DM' : u.playerType === 'player' ? 'Solo Jugador' : 'DM y Jugador'}
                           </span>
+                          {requestedRoleChange && (
+                            <span className="text-[10px] font-sans font-bold px-2.5 py-0.5 rounded-full bg-purple-950 text-purple-200 border border-purple-500 animate-pulse">
+                              Solicita cambiar a: {formatPlayerTypeLabel(u.requestedPlayerType)}
+                            </span>
+                          )}
                           {/* App Role Badge */}
                           <span
                             className={`text-[10px] font-sans font-bold px-2 py-0.5 rounded-full border ${
@@ -542,27 +602,59 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Moderation Controls: Approval & Forum Perms */}
+                    {/* Moderation Controls: Approval, Table Role Request & Forum Perms */}
                     <div className="flex flex-wrap items-center gap-2.5">
+                      {/* Table Role Change Request Approval / Rejection */}
+                      {requestedRoleChange && (
+                        <div className="flex items-center gap-1.5 bg-purple-950/60 border border-purple-500/80 rounded-xl px-2.5 py-1">
+                          <span className="text-[11px] font-cinzel font-bold text-purple-200">
+                            Rol: {formatPlayerTypeLabel(u.requestedPlayerType)}
+                          </span>
+                          <button
+                            type="button"
+                            data-testid={`btn-approve-role-${u.id}`}
+                            onClick={() =>
+                              handleResolvePlayerTypeRequest(u.id, true, u.requestedPlayerType)
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-cinzel font-bold text-[11px] flex items-center gap-1 transition cursor-pointer shadow"
+                            title="Aceptar solicitud de cambio de rol de mesa"
+                          >
+                            <Check className="w-3 h-3" />
+                            <span>Aceptar Rol</span>
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`btn-reject-role-${u.id}`}
+                            onClick={() => handleResolvePlayerTypeRequest(u.id, false)}
+                            className="px-2 py-1 rounded-lg bg-red-950 hover:bg-red-900 border border-red-700 text-red-300 font-cinzel font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
+                            title="Rechazar solicitud de cambio de rol de mesa"
+                          >
+                            <X className="w-3 h-3" />
+                            <span>Rechazar</span>
+                          </button>
+                        </div>
+                      )}
+
                       {isUserPending ? (
                         <>
                           <button
                             onClick={() => handleApprove(u.id)}
-                            className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-stone-100 font-cinzel font-bold text-xs transition flex items-center gap-1 shadow"
+                            className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-stone-100 font-cinzel font-bold text-xs transition flex items-center gap-1 shadow cursor-pointer"
                           >
                             <UserCheck className="w-3.5 h-3.5" />
                             <span>Aprobar Registro</span>
                           </button>
                           <button
                             onClick={() => handleReject(u.id)}
-                            className="px-3 py-1.5 rounded-xl bg-red-950 hover:bg-red-900 text-red-300 border border-red-800 font-cinzel font-bold text-xs transition flex items-center gap-1"
+                            className="px-3 py-1.5 rounded-xl bg-red-950 hover:bg-red-900 text-red-300 border border-red-800 font-cinzel font-bold text-xs transition flex items-center gap-1 cursor-pointer"
                           >
                             <UserX className="w-3.5 h-3.5" />
                             <span>Rechazar</span>
                           </button>
                         </>
                       ) : (
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+
                           {/* Forum Posting Permission Toggle (Denegar / Permitir) */}
                           <button
                             onClick={() => handleToggleForumPermission(u.id, hasForumPerm)}
@@ -571,7 +663,7 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
                               u.appRole === 'creator' ||
                               u.appRole === 'moderator'
                             }
-                            className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold transition flex items-center gap-1.5 border shadow-sm ${
+                            className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold transition flex items-center gap-1.5 border shadow-sm cursor-pointer ${
                               u.appRole === 'admin' ||
                               u.appRole === 'creator' ||
                               u.appRole === 'moderator'

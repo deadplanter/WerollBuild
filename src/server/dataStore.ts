@@ -53,9 +53,13 @@ export interface UserAccount {
   userTagId?: string;
   avatarUrl?: string;
   friends?: string[];
+  incomingFriendRequests?: string[];
+  outgoingFriendRequests?: string[];
   password: string;
   role: 'player' | 'dm' | 'both' | 'moderator' | 'creator' | 'admin';
   playerType?: PlayerType; // 'player' | 'dm' | 'both'
+  requestedPlayerType?: PlayerType; // 'player' | 'dm' | 'both'
+  playerTypeChangeRequested?: boolean;
   appRole?: AppRole; // 'client' | 'moderator' | 'creator' | 'admin'
   canPostInForum?: boolean; // false for regular clients unless granted by mod/admin
   forumPermissionsRequested?: boolean;
@@ -760,22 +764,84 @@ export const dataStore = {
     const users = this.getUsers();
     const currentUser = users.find((u) => u.id === userId);
     if (!currentUser) return [];
+    const allMessages = readJSON<FriendDirectMessage[]>('friend_messages.json', []);
     const friendIds = Array.isArray(currentUser.friends) ? currentUser.friends : [];
     return friendIds
       .map((fId) => users.find((u) => u.id === fId))
       .filter((u): u is UserAccount => Boolean(u))
-      .map((u) => ({
-        id: u.id,
-        email: u.email,
-        displayName: u.displayName,
-        userTagId: u.userTagId || '123',
-        fullTag: `${u.displayName}@${u.userTagId || '123'}`,
-        avatarUrl: u.avatarUrl,
-        role: u.role,
-        appRole: u.appRole || (u.role === 'admin' ? 'admin' : u.role === 'creator' ? 'creator' : u.role === 'moderator' ? 'moderator' : 'client'),
-        status: u.status,
-        lastActiveAt: u.lastActiveAt,
-      }));
+      .map((u) => {
+        const unreadCount = allMessages.filter(
+          (m) => m.fromUserId === u.id && m.toUserId === userId && !m.read
+        ).length;
+        return {
+          id: u.id,
+          email: u.email,
+          displayName: u.displayName,
+          userTagId: u.userTagId || '123',
+          fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+          avatarUrl: u.avatarUrl,
+          role: u.role,
+          appRole:
+            u.appRole ||
+            (u.role === 'admin'
+              ? 'admin'
+              : u.role === 'creator'
+              ? 'creator'
+              : u.role === 'moderator'
+              ? 'moderator'
+              : 'client'),
+          status: u.status,
+          lastActiveAt: u.lastActiveAt,
+          unreadCount,
+        };
+      });
+  },
+
+  getFriendRequestsForUser(userId: string) {
+    const users = this.getUsers();
+    const currentUser = users.find((u) => u.id === userId);
+    if (!currentUser) {
+      return { incomingRequests: [], outgoingRequests: [] };
+    }
+    const incomingIds = Array.isArray(currentUser.incomingFriendRequests)
+      ? currentUser.incomingFriendRequests
+      : [];
+    const outgoingIds = Array.isArray(currentUser.outgoingFriendRequests)
+      ? currentUser.outgoingFriendRequests
+      : [];
+
+    const mapReqUser = (u: UserAccount) => ({
+      id: u.id,
+      email: u.email,
+      displayName: u.displayName,
+      userTagId: u.userTagId || '123',
+      fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+      avatarUrl: u.avatarUrl,
+      role: u.role,
+      appRole:
+        u.appRole ||
+        (u.role === 'admin'
+          ? 'admin'
+          : u.role === 'creator'
+          ? 'creator'
+          : u.role === 'moderator'
+          ? 'moderator'
+          : 'client'),
+      status: u.status,
+      lastActiveAt: u.lastActiveAt,
+    });
+
+    const incomingRequests = incomingIds
+      .map((rId) => users.find((u) => u.id === rId))
+      .filter((u): u is UserAccount => Boolean(u))
+      .map(mapReqUser);
+
+    const outgoingRequests = outgoingIds
+      .map((tId) => users.find((u) => u.id === tId))
+      .filter((u): u is UserAccount => Boolean(u))
+      .map(mapReqUser);
+
+    return { incomingRequests, outgoingRequests };
   },
 
   addFriendByTag(userId: string, friendFullTagInput: string) {
@@ -816,37 +882,157 @@ export const dataStore = {
     if (!Array.isArray(users[userIdx].friends)) {
       users[userIdx].friends = [];
     }
+    if (!Array.isArray(users[targetIdx].friends)) {
+      users[targetIdx].friends = [];
+    }
     if (users[userIdx].friends!.includes(targetUser.id)) {
       throw new Error(`${targetUser.displayName}@${targetUser.userTagId} ya está en tu lista de amigos.`);
     }
 
-    users[userIdx].friends!.push(targetUser.id);
-
-    // Also add reciprocally so both users appear in each other's friends list
-    if (!Array.isArray(users[targetIdx].friends)) {
-      users[targetIdx].friends = [];
+    if (!Array.isArray(users[userIdx].incomingFriendRequests)) {
+      users[userIdx].incomingFriendRequests = [];
     }
-    if (!users[targetIdx].friends!.includes(userId)) {
-      users[targetIdx].friends!.push(userId);
+    if (!Array.isArray(users[userIdx].outgoingFriendRequests)) {
+      users[userIdx].outgoingFriendRequests = [];
+    }
+    if (!Array.isArray(users[targetIdx].incomingFriendRequests)) {
+      users[targetIdx].incomingFriendRequests = [];
+    }
+    if (!Array.isArray(users[targetIdx].outgoingFriendRequests)) {
+      users[targetIdx].outgoingFriendRequests = [];
+    }
+
+    // If the target user ALREADY sent us a friend request, automatically accept it!
+    if (users[userIdx].incomingFriendRequests!.includes(targetUser.id)) {
+      users[userIdx].incomingFriendRequests = users[userIdx].incomingFriendRequests!.filter(
+        (id) => id !== targetUser.id
+      );
+      users[targetIdx].outgoingFriendRequests = users[targetIdx].outgoingFriendRequests!.filter(
+        (id) => id !== userId
+      );
+      if (!users[userIdx].friends!.includes(targetUser.id)) {
+        users[userIdx].friends!.push(targetUser.id);
+      }
+      if (!users[targetIdx].friends!.includes(userId)) {
+        users[targetIdx].friends!.push(userId);
+      }
+      this.saveUsers(
+        users,
+        `Solicitud de amistad aceptada mutuamente entre ${users[userIdx].displayName}@${users[userIdx].userTagId} y ${targetUser.displayName}@${targetUser.userTagId}`
+      );
+      const reqs = this.getFriendRequestsForUser(userId);
+      return {
+        requestStatus: 'accepted' as const,
+        addedFriend: {
+          id: targetUser.id,
+          email: targetUser.email,
+          displayName: targetUser.displayName,
+          userTagId: targetUser.userTagId || '123',
+          fullTag: `${targetUser.displayName}@${targetUser.userTagId || '123'}`,
+          avatarUrl: targetUser.avatarUrl,
+          role: targetUser.role,
+          status: targetUser.status,
+          lastActiveAt: targetUser.lastActiveAt,
+        },
+        friends: this.getFriendsForUser(userId),
+        ...reqs,
+      };
+    }
+
+    // Check if we already sent a pending request to this user
+    if (users[userIdx].outgoingFriendRequests!.includes(targetUser.id)) {
+      throw new Error(
+        `Ya enviaste una solicitud de amistad a ${targetUser.displayName}@${targetUser.userTagId}. Espera a que la acepte.`
+      );
+    }
+
+    // Send a pending friend request to targetUser
+    users[userIdx].outgoingFriendRequests!.push(targetUser.id);
+    if (!users[targetIdx].incomingFriendRequests!.includes(userId)) {
+      users[targetIdx].incomingFriendRequests!.push(userId);
     }
 
     this.saveUsers(
       users,
-      `Amigo agregado: ${users[userIdx].displayName}@${users[userIdx].userTagId} agregó a ${targetUser.displayName}@${targetUser.userTagId}`
+      `Solicitud de amistad enviada: ${users[userIdx].displayName}@${users[userIdx].userTagId} solicitó agregar a ${targetUser.displayName}@${targetUser.userTagId}`
     );
 
+    const reqs = this.getFriendRequestsForUser(userId);
     return {
+      requestStatus: 'pending' as const,
       addedFriend: {
         id: targetUser.id,
         email: targetUser.email,
         displayName: targetUser.displayName,
         userTagId: targetUser.userTagId || '123',
         fullTag: `${targetUser.displayName}@${targetUser.userTagId || '123'}`,
+        avatarUrl: targetUser.avatarUrl,
         role: targetUser.role,
         status: targetUser.status,
         lastActiveAt: targetUser.lastActiveAt,
       },
       friends: this.getFriendsForUser(userId),
+      ...reqs,
+    };
+  },
+
+  respondToFriendRequest(userId: string, requesterId: string, accept: boolean) {
+    const users = this.getUsers();
+    const userIdx = users.findIndex((u) => u.id === userId);
+    const reqIdx = users.findIndex((u) => u.id === requesterId);
+
+    if (userIdx === -1) {
+      throw new Error('Tu usuario no fue encontrado.');
+    }
+    if (reqIdx === -1) {
+      throw new Error('El usuario que envió la solicitud no fue encontrado.');
+    }
+
+    const currentUser = users[userIdx];
+    const requesterUser = users[reqIdx];
+
+    currentUser.incomingFriendRequests = (currentUser.incomingFriendRequests || []).filter(
+      (id) => id !== requesterId
+    );
+    currentUser.outgoingFriendRequests = (currentUser.outgoingFriendRequests || []).filter(
+      (id) => id !== requesterId
+    );
+    requesterUser.outgoingFriendRequests = (requesterUser.outgoingFriendRequests || []).filter(
+      (id) => id !== userId
+    );
+    requesterUser.incomingFriendRequests = (requesterUser.incomingFriendRequests || []).filter(
+      (id) => id !== userId
+    );
+
+    if (accept) {
+      if (!Array.isArray(currentUser.friends)) currentUser.friends = [];
+      if (!Array.isArray(requesterUser.friends)) requesterUser.friends = [];
+      if (!currentUser.friends.includes(requesterId)) {
+        currentUser.friends.push(requesterId);
+      }
+      if (!requesterUser.friends.includes(userId)) {
+        requesterUser.friends.push(userId);
+      }
+    }
+
+    this.saveUsers(
+      users,
+      accept
+        ? `Solicitud de amistad aceptada: ${currentUser.displayName}@${currentUser.userTagId} aceptó a ${requesterUser.displayName}@${requesterUser.userTagId}`
+        : `Solicitud de amistad rechazada: ${currentUser.displayName}@${currentUser.userTagId} rechazó a ${requesterUser.displayName}@${requesterUser.userTagId}`
+    );
+
+    const reqs = this.getFriendRequestsForUser(userId);
+    return {
+      accepted: accept,
+      requester: {
+        id: requesterUser.id,
+        displayName: requesterUser.displayName,
+        userTagId: requesterUser.userTagId || '123',
+        fullTag: `${requesterUser.displayName}@${requesterUser.userTagId || '123'}`,
+      },
+      friends: this.getFriendsForUser(userId),
+      ...reqs,
     };
   },
 
@@ -859,10 +1045,24 @@ export const dataStore = {
 
     const friendUser = users.find((u) => u.id === friendId);
     users[userIdx].friends = (users[userIdx].friends || []).filter((id) => id !== friendId);
+    users[userIdx].incomingFriendRequests = (users[userIdx].incomingFriendRequests || []).filter(
+      (id) => id !== friendId
+    );
+    users[userIdx].outgoingFriendRequests = (users[userIdx].outgoingFriendRequests || []).filter(
+      (id) => id !== friendId
+    );
 
     const friendIdx = users.findIndex((u) => u.id === friendId);
-    if (friendIdx !== -1 && Array.isArray(users[friendIdx].friends)) {
-      users[friendIdx].friends = users[friendIdx].friends!.filter((id) => id !== userId);
+    if (friendIdx !== -1) {
+      if (Array.isArray(users[friendIdx].friends)) {
+        users[friendIdx].friends = users[friendIdx].friends!.filter((id) => id !== userId);
+      }
+      users[friendIdx].incomingFriendRequests = (users[friendIdx].incomingFriendRequests || []).filter(
+        (id) => id !== userId
+      );
+      users[friendIdx].outgoingFriendRequests = (users[friendIdx].outgoingFriendRequests || []).filter(
+        (id) => id !== userId
+      );
     }
 
     this.saveUsers(
@@ -870,8 +1070,10 @@ export const dataStore = {
       `Amigo eliminado: ${users[userIdx].displayName}@${users[userIdx].userTagId} eliminó a ${friendUser ? `${friendUser.displayName}@${friendUser.userTagId}` : friendId}`
     );
 
+    const reqs = this.getFriendRequestsForUser(userId);
     return {
       friends: this.getFriendsForUser(userId),
+      ...reqs,
     };
   },
 
@@ -1265,6 +1467,24 @@ export const dataStore = {
   getForumPosts(category?: string, roleFilter?: string, query?: string): ForumPost[] {
     const defaultPosts: ForumPost[] = [
       {
+        id: 'post-update-110',
+        category: 'app-updates',
+        title: 'WeRoll 1.1 Beta • Modo Mapa en Vivo, Proyección en Tiempo Real y Cartas Tarot 2×2',
+        content: '¡Llega WeRoll 1.1 Beta! Esta versión introduce el nuevo Modo Mapa en Vivo con proyección compartida en tiempo real desde la pantalla del DM hacia todos los jugadores (álbum de lugares y mapas del atlas), cuadrícula compacta 2×2 de Cartas de Jugadores en mesa sin desplazamiento vertical, altura refinada estilo Tarot para los Mazos de Juego y El Rincón del Aventurero, límite táctico de 8 monstruos en combate, selector estilo baraja en el creador de personajes y caja de dados multi-tirada (1 a 6 dados).',
+        authorEmail: 'admin@weroll.app',
+        authorName: 'Administrador Supremo',
+        authorTagId: 'adm',
+        authorFullTag: 'Administrador Supremo@adm',
+        authorPlayerType: 'both',
+        authorAppRole: 'admin',
+        flair: 'Actualización',
+        createdAt: 1792686400000,
+        upvotes: 54,
+        upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
+        commentsCount: 4,
+        pinned: true,
+      },
+      {
         id: 'post-update-100',
         category: 'app-updates',
         title: 'WeRoll 1.0 Beta • Rework Visual del Lobby, Pantalla del DM y Modo Online/Offline',
@@ -1280,7 +1500,7 @@ export const dataStore = {
         upvotes: 45,
         upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
         commentsCount: 5,
-        pinned: true,
+        pinned: false,
       },
       {
         id: 'post-update-095',
@@ -1450,7 +1670,7 @@ export const dataStore = {
     if (!posts || posts.length === 0) {
       posts = defaultPosts;
       writeJSON('forum_posts.json', posts);
-    } else if (!posts.some((p) => p.id === 'post-update-100')) {
+    } else if (!posts.some((p) => p.id === 'post-update-110')) {
       posts = [defaultPosts[0], ...posts.map((p) => (p.pinned ? { ...p, pinned: false } : p))];
       writeJSON('forum_posts.json', posts);
     }
@@ -1763,8 +1983,77 @@ export const dataStore = {
     return true;
   },
 
+  // --- TABLE ROLE (PLAYER TYPE) CHANGE REQUEST & MODERATOR APPROVAL ---
+  requestPlayerTypeChange(userId: string, requestedPlayerType: PlayerType): UserAccount | null {
+    const users = this.getUsers();
+    const user = users.find((u) => u.id === userId);
+    if (!user) return null;
+    user.requestedPlayerType = requestedPlayerType;
+    user.playerTypeChangeRequested = true;
+    this.saveUsers(
+      users,
+      `Solicitud de cambio de Rol de Mesa (${requestedPlayerType}) por ${user.displayName}@${user.userTagId}`
+    );
+    return user;
+  },
+
+  resolvePlayerTypeChangeRequest(
+    userId: string,
+    approved: boolean,
+    overridePlayerType?: PlayerType
+  ): UserAccount | null {
+    const users = this.getUsers();
+    const user = users.find((u) => u.id === userId);
+    if (!user) return null;
+
+    if (approved) {
+      const nextType: PlayerType =
+        overridePlayerType ||
+        user.requestedPlayerType ||
+        user.playerType ||
+        'both';
+      user.playerType = nextType;
+      const appRole =
+        user.appRole ||
+        (user.role === 'admin'
+          ? 'admin'
+          : user.role === 'creator'
+          ? 'creator'
+          : user.role === 'moderator'
+          ? 'moderator'
+          : 'client');
+      if (appRole === 'client') {
+        user.role = nextType;
+      }
+    }
+
+    user.playerTypeChangeRequested = false;
+    user.requestedPlayerType = undefined;
+
+    this.saveUsers(
+      users,
+      `Solicitud de Rol de Mesa ${approved ? 'aprobada' : 'rechazada'} para ${user.displayName}@${user.userTagId}`
+    );
+    return user;
+  },
+
   // --- PERSISTENT HOST SETTINGS & CHANGELOG ---
   getHostSettings(): HostSettings {
+    const v11BetaEntry: ChangelogEntry = {
+      version: '1.1 Beta',
+      date: '2026-10-22',
+      title: 'WeRoll 1.1 Beta • Modo Mapa en Vivo & Proyección Compartida, Cartas Tarot 2×2 en Mesa, Rediseño de Mazos y Límite de Combate',
+      changes: [
+        'Modo Mapa en Vivo & Proyección Compartida: Botón de acceso al mapa en sala en vivo para DM y jugadores, permitiendo al DM proyectar instantáneamente fotos del álbum y mapas del atlas con actualización inmediata en el mapa de todos los jugadores.',
+        'Cuadrícula Compacta 2×2 en Cartas de Jugadores (Modo Mapa): Visualización simultánea de al menos 4 cartas Tarot de compañeros en mesa sin necesidad de desplazarse verticalmente, aprovechando el ancho extendido de pantalla (1920px).',
+        'Rediseño Equilibrado de Mazos de Juego: Proporción estilo Tarot clásica (altura intermedia 240px) para las cartas de acciones, habilidades y conjuros, equilibrando la geometría con El Rincón del Aventurero.',
+        'Iconografía Simbólica y Tooltips de Alineamiento: Insignia visual con código cromático (bueno/neutral/malvado) y figuras simbólicas (espiral, balanza, orbe) con mensaje emergente explicativo al pasar el cursor.',
+        'Selector Estilo Baraja en el Creador de Personajes: Alternancia fluida entre fichas creadas con flechas de navegación izquierda/derecha sin saturar la vista.',
+        'Control Táctico de Encuentros (Máximo 8 Enemigos): Tope estricto de hasta 8 monstruos simultáneos en el gestor de combate del DM, con panel dedicado de aliados conectados.',
+        'Caja de Dados Multi-Tirada (1 a 6 dados): Selector de cantidad de dados poliédricos estándar (d4, d6, d8, d10, d12, d20, d100) en el visor de mesa y pantalla del DM.',
+      ],
+    };
+
     const v10BetaEntry: ChangelogEntry = {
       version: '1.0 Beta',
       date: '2026-10-21',
@@ -1870,7 +2159,7 @@ export const dataStore = {
 
     const defaultSettings: HostSettings = {
       headerTitle: 'WeRoll',
-      headerSubtitle: 'Companion & DM Suite v1.0 Beta',
+      headerSubtitle: 'Companion & DM Suite v1.1 Beta',
       headerLogoIcon: 'shield',
       aiModel: 'gemini-flash-lite-latest',
       moderatorPassword: 'admin',
@@ -1883,18 +2172,26 @@ export const dataStore = {
         enabled: true,
         title: 'Comunicado del Administrador',
         message:
-          '¡Bienvenido a WeRoll 5E v1.0 Beta! Rework visual del Lobby y Pantalla del DM, Modo Online/Offline para World Sheets y avisos en vivo.',
+          '¡Bienvenido a WeRoll 5E v1.1 Beta! Modo Mapa en Vivo con proyección en tiempo real, cartas Tarot compactas 2x2 y mazos de juego rediseñados.',
         type: 'info',
         updatedAt: Date.now(),
       },
       developerNotice: {
         enabled: true,
-        title: 'WeRoll • Novedades v1.0 Beta',
+        title: 'WeRoll • Novedades v1.1 Beta',
         content:
-          '¡Versión 1.0 Beta disponible! Rework visual completo del Lobby y Pantalla del DM, Modo Online/Offline para World Sheets, avisos pop-up en vivo e imagen de perfil de jugador.',
-        version: '1.0 Beta',
+          '¡Versión 1.1 Beta disponible! Modo Mapa en Vivo sincronizado en tiempo real (proyección de mapas y fotos del álbum del DM hacia los jugadores), cartas Tarot compactas 2x2 en mesa, proporción áurea en Mazos de Juego y límite táctico de 8 monstruos.',
+        version: '1.1 Beta',
+      },
+      developerAnnouncement: {
+        enabled: true,
+        title: 'WeRoll • Novedades v1.1 Beta',
+        content:
+          '¡Versión 1.1 Beta disponible! Modo Mapa en Vivo sincronizado en tiempo real (proyección de mapas y fotos del álbum del DM hacia los jugadores), cartas Tarot compactas 2x2 en mesa, proporción áurea en Mazos de Juego y límite táctico de 8 monstruos.',
+        version: '1.1 Beta',
       },
       changelog: [
+        v11BetaEntry,
         v10BetaEntry,
         v095Entry,
         v09Entry,
@@ -1998,10 +2295,20 @@ export const dataStore = {
       finalChangelog[v10Idx] = v10BetaEntry;
     }
 
+    const v11Idx = finalChangelog.findIndex(
+      (entry) => entry.version && entry.version.toLowerCase().includes('1.1')
+    );
+    if (v11Idx === -1) {
+      finalChangelog = [v11BetaEntry, ...finalChangelog];
+    } else {
+      finalChangelog[v11Idx] = v11BetaEntry;
+    }
+
     const finalHeaderSubtitle =
       !current.headerSubtitle ||
       /v0\.(1|2|3|4|5|6|65|8|9|95)\b/i.test(current.headerSubtitle) ||
-      current.headerSubtitle.includes('0.9')
+      current.headerSubtitle.includes('0.9') ||
+      current.headerSubtitle.includes('1.0')
         ? defaultSettings.headerSubtitle
         : current.headerSubtitle;
 
@@ -2013,15 +2320,22 @@ export const dataStore = {
       developerNotice: {
         ...defaultSettings.developerNotice!,
         ...(current.developerNotice || {}),
-        version: '1.0 Beta',
-        title: 'WeRoll • Novedades v1.0 Beta',
+        version: '1.1 Beta',
+        title: 'WeRoll • Novedades v1.1 Beta',
+        content: defaultSettings.developerNotice!.content,
+      },
+      developerAnnouncement: {
+        enabled: true,
+        version: '1.1 Beta',
+        title: 'WeRoll • Novedades v1.1 Beta',
+        content: defaultSettings.developerNotice!.content,
       },
       adminGreeting: current.adminGreeting
         ? {
             ...defaultSettings.adminGreeting!,
             ...current.adminGreeting,
             message:
-              current.adminGreeting.message && current.adminGreeting.message.includes('0.9')
+              current.adminGreeting.message && (current.adminGreeting.message.includes('0.9') || current.adminGreeting.message.includes('1.0'))
                 ? defaultSettings.adminGreeting!.message
                 : current.adminGreeting.message,
           }

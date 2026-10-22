@@ -27,6 +27,7 @@ import {
   X,
   ExternalLink,
   ChevronRight,
+  ChevronLeft,
   Database,
   FileDown,
   FileText,
@@ -72,8 +73,9 @@ import { AuthSessionUser } from '../auth/RoleSelectionModal';
 import { SAMPLE_CHARACTER, SAMPLE_DM_WORKSPACE } from '../../data/srd';
 import { BrandLogo, PREFAB_LOGOS } from '../common/BrandLogo';
 import { EntityAvatar } from '../common/EntityAvatar';
+import { CharacterTarotCard } from '../character/CharacterTarotCard';
 import { ForumView } from '../forum/ForumView';
-import { FriendDirectChatModal } from '../friends/FriendDirectChatModal';
+import { FriendDirectChatModal, FRIEND_CHAT_BROADCAST_CHANNEL } from '../friends/FriendDirectChatModal';
 import { ModeratorPanelModal } from '../admin/ModeratorPanelModal';
 import { UserSecurityModal } from '../auth/UserSecurityModal';
 
@@ -462,6 +464,29 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       role: string;
       status: string;
       avatarUrl?: string;
+      unreadCount?: number;
+    }>
+  >([]);
+  const [incomingFriendRequests, setIncomingFriendRequests] = useState<
+    Array<{
+      id: string;
+      displayName: string;
+      userTagId: string;
+      fullTag: string;
+      role: string;
+      status: string;
+      avatarUrl?: string;
+    }>
+  >([]);
+  const [outgoingFriendRequests, setOutgoingFriendRequests] = useState<
+    Array<{
+      id: string;
+      displayName: string;
+      userTagId: string;
+      fullTag: string;
+      role: string;
+      status: string;
+      avatarUrl?: string;
     }>
   >([]);
   const [isLoadingFriends, setIsLoadingFriends] = useState<boolean>(false);
@@ -552,8 +577,9 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
     }
   }, [hostSettings]);
 
-  // Player Characters filtered by account
+  // Player Characters filtered by account + Tarot Deck Carousel Index
   const [playerSheets, setPlayerSheets] = useState<Character5e[]>([]);
+  const [activeCharCarouselIndex, setActiveCharCarouselIndex] = useState<number>(0);
   const [isLoadingSheets, setIsLoadingSheets] = useState<boolean>(false);
 
   // Fetch player sheets for this user from server vault
@@ -1073,23 +1099,59 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   };
 
   // FRIENDS HANDLERS
-  const fetchUserFriends = async () => {
+  const fetchUserFriends = async (silent = false) => {
     if (!authUser?.email) return;
-    setIsLoadingFriends(true);
+    if (!silent) setIsLoadingFriends(true);
     try {
-      const res = await fetch(`/api/friends?email=${encodeURIComponent(authUser.email)}`);
+      const res = await fetch(
+        `/api/friends?email=${encodeURIComponent(authUser.email)}&_t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.friends)) {
           setFriendsList(data.friends);
         }
+        if (Array.isArray(data.incomingRequests)) {
+          setIncomingFriendRequests(data.incomingRequests);
+        }
+        if (Array.isArray(data.outgoingRequests)) {
+          setOutgoingFriendRequests(data.outgoingRequests);
+        }
       }
     } catch (err) {
-      console.error('Error fetching friends:', err);
+      if (!silent) console.error('Error fetching friends:', err);
     } finally {
-      setIsLoadingFriends(false);
+      if (!silent) setIsLoadingFriends(false);
     }
   };
+
+  // Poll friends & unread message counts + friend requests in real time
+  useEffect(() => {
+    if (!authUser?.email || authUser.status === 'pending') return;
+    const interval = setInterval(() => {
+      fetchUserFriends(true);
+    }, 2500);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        channel = new BroadcastChannel(FRIEND_CHAT_BROADCAST_CHANNEL);
+        channel.onmessage = () => {
+          fetchUserFriends(true);
+        };
+      }
+    } catch {}
+
+    return () => {
+      clearInterval(interval);
+      if (channel) {
+        try {
+          channel.close();
+        } catch {}
+      }
+    };
+  }, [authUser?.email, authUser?.status]);
 
   const handleAddFriendSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1115,21 +1177,69 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       });
       const data = await res.json();
       if (!res.ok) {
-        setFriendErrorMsg(data.error || 'No se pudo agregar al amigo.');
+        setFriendErrorMsg(data.error || 'No se pudo enviar la solicitud de amistad.');
       } else {
-        setFriendStatusMsg(data.message || '¡Amigo agregado y respaldado en la nube!');
+        setFriendStatusMsg(data.message || '¡Solicitud de amistad enviada!');
         setFriendTagInput('');
         if (Array.isArray(data.friends)) {
           setFriendsList(data.friends);
-        } else {
-          fetchUserFriends();
         }
+        if (Array.isArray(data.incomingRequests)) {
+          setIncomingFriendRequests(data.incomingRequests);
+        }
+        if (Array.isArray(data.outgoingRequests)) {
+          setOutgoingFriendRequests(data.outgoingRequests);
+        }
+        try {
+          if (typeof BroadcastChannel !== 'undefined') {
+            const ch = new BroadcastChannel(FRIEND_CHAT_BROADCAST_CHANNEL);
+            ch.postMessage({ type: 'FRIEND_REQUEST_UPDATED' });
+            ch.close();
+          }
+        } catch {}
         await onRefreshAuthStatus();
       }
     } catch (err) {
-      setFriendErrorMsg('Error de conexión al intentar agregar amigo.');
+      setFriendErrorMsg('Error de conexión al intentar enviar solicitud de amistad.');
     } finally {
       setIsAddingFriend(false);
+    }
+  };
+
+  const handleRespondFriendRequest = async (requesterId: string, accept: boolean) => {
+    if (!authUser?.email) return;
+    setFriendStatusMsg('');
+    setFriendErrorMsg('');
+    try {
+      const res = await fetch('/api/friends/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: authUser.email,
+          userId: authUser.id,
+          requesterId,
+          accept,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setFriendErrorMsg(data.error || 'No se pudo responder a la solicitud.');
+      } else {
+        setFriendStatusMsg(data.message || (accept ? '¡Solicitud de amistad aceptada!' : 'Solicitud rechazada.'));
+        if (Array.isArray(data.friends)) setFriendsList(data.friends);
+        if (Array.isArray(data.incomingRequests)) setIncomingFriendRequests(data.incomingRequests);
+        if (Array.isArray(data.outgoingRequests)) setOutgoingFriendRequests(data.outgoingRequests);
+        try {
+          if (typeof BroadcastChannel !== 'undefined') {
+            const ch = new BroadcastChannel(FRIEND_CHAT_BROADCAST_CHANNEL);
+            ch.postMessage({ type: 'FRIEND_REQUEST_UPDATED' });
+            ch.close();
+          }
+        } catch {}
+        await onRefreshAuthStatus();
+      }
+    } catch {
+      setFriendErrorMsg('Error de conexión al responder la solicitud.');
     }
   };
 
@@ -1156,6 +1266,8 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
         } else {
           fetchUserFriends();
         }
+        if (Array.isArray(data.incomingRequests)) setIncomingFriendRequests(data.incomingRequests);
+        if (Array.isArray(data.outgoingRequests)) setOutgoingFriendRequests(data.outgoingRequests);
         await onRefreshAuthStatus();
       }
     } catch (err) {
@@ -2170,6 +2282,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           authUser={authUser}
           onSwitchToAdminPanel={isAdmin ? () => setLobbyPage('admin') : undefined}
           onBroadcastLivePopup={onBroadcastLivePopup}
+          onRefreshAuthStatus={onRefreshAuthStatus}
         />
       )}
 
@@ -2317,102 +2430,138 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
               </div>
             </div>
           ) : (
-            <div className="space-y-3.5">
-              {playerSheets.map((char) => (
-                <div
-                  key={char.id}
-                  className="bg-[#181922] border border-amber-900/50 hover:border-amber-600/70 rounded-2xl p-4 shadow-md transition-all duration-200 space-y-3 group"
-                >
-                  {/* Header: Avatar, Name & Class */}
-                  <div className="flex items-start justify-between gap-2.5">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <EntityAvatar
-                        avatarType={char.avatarType || (char.avatarCustomUrl || char.avatarUrl ? 'custom' : 'icon')}
-                        customUrl={char.avatarCustomUrl || char.avatarUrl}
-                        iconId={char.avatarIcon || 'anonymous'}
-                        size="md"
-                        className="shrink-0 shadow border border-amber-700/60"
+            (() => {
+              const safeIdx = Math.min(
+                activeCharCarouselIndex,
+                Math.max(0, playerSheets.length - 1)
+              );
+              const char = playerSheets[safeIdx] || playerSheets[0];
+              return (
+                <div className="space-y-2.5" data-testid="lobby-character-tarot-carousel">
+                  {/* Top Deck Switcher Header when multiple characters exist */}
+                  {playerSheets.length > 1 && (
+                    <div className="flex items-center justify-between px-2 py-1.5 rounded-xl bg-[#101219] border border-[#c8a45c]/50">
+                      <button
+                        type="button"
+                        data-testid="btn-lobby-prev-character"
+                        onClick={() =>
+                          setActiveCharCarouselIndex(
+                            (safeIdx - 1 + playerSheets.length) % playerSheets.length
+                          )
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-[#1a1d28] hover:bg-amber-950 border border-[#c8a45c]/60 text-[#f5e4be] text-xs font-cinzel font-bold flex items-center gap-1 transition cursor-pointer"
+                        title="Personaje anterior en tu baraja"
+                      >
+                        <ChevronLeft className="w-4 h-4 text-[#e2c275]" />
+                        <span>Anterior</span>
+                      </button>
+
+                      <span className="text-[11px] font-cinzel font-bold text-[#e2c275]">
+                        Carta {safeIdx + 1} de {playerSheets.length}
+                      </span>
+
+                      <button
+                        type="button"
+                        data-testid="btn-lobby-next-character"
+                        onClick={() =>
+                          setActiveCharCarouselIndex((safeIdx + 1) % playerSheets.length)
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-[#1a1d28] hover:bg-amber-950 border border-[#c8a45c]/60 text-[#f5e4be] text-xs font-cinzel font-bold flex items-center gap-1 transition cursor-pointer"
+                        title="Siguiente personaje en tu baraja"
+                      >
+                        <span>Siguiente</span>
+                        <ChevronRight className="w-4 h-4 text-[#e2c275]" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Single Tarot Player Card with Side Arrows (if > 1) and Lobby Action Footer */}
+                  <div className="relative flex items-center gap-1.5">
+                    {playerSheets.length > 1 && (
+                      <button
+                        type="button"
+                        aria-label="Carta de personaje anterior"
+                        onClick={() =>
+                          setActiveCharCarouselIndex(
+                            (safeIdx - 1 + playerSheets.length) % playerSheets.length
+                          )
+                        }
+                        className="w-8 h-24 rounded-xl bg-[#191c28] hover:bg-amber-950 border border-[#c8a45c]/70 text-[#f5e4be] flex items-center justify-center shrink-0 shadow-lg transition cursor-pointer"
+                        title="Cambiar a carta anterior"
+                      >
+                        <ChevronLeft className="w-4 h-4 text-[#e2c275]" />
+                      </button>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                      <CharacterTarotCard
+                        character={char}
+                        isOnline={true}
+                        dataTestId={`lobby-tarot-card-${char.id}`}
+                        footerActions={
+                          <div className="pt-1 flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              data-testid={`btn-join-table-${char.id}`}
+                              onClick={() => {
+                                setJoinModalChar(char);
+                                setJoinError('');
+                              }}
+                              className="flex-1 py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 font-cinzel font-black text-xs shadow transition flex items-center justify-center gap-1 min-w-0 cursor-pointer"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current shrink-0" />
+                              <span className="truncate">Entrar a Mesa</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              data-testid={`btn-edit-solo-${char.id}`}
+                              onClick={() => onEditCharacterSolo(char)}
+                              title="Editar ficha en solitario (sin mesa)"
+                              className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-[#c8a45c]/50 transition shrink-0 cursor-pointer"
+                            >
+                              <Edit className="w-3.5 h-3.5 text-[#e2c275]" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleExportCharacterLocal(char)}
+                              title="Descargar / Exportar personaje localmente (.json)"
+                              className="p-2 rounded-xl bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-700/60 transition shrink-0 cursor-pointer"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setCharToDelete(char)}
+                              title="Eliminar personaje"
+                              className="p-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/60 transition shrink-0 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        }
                       />
-                      <div className="min-w-0">
-                        <h3 className="font-cinzel font-bold text-sm text-amber-300 group-hover:text-amber-200 transition truncate leading-snug">
-                          {char.name}
-                        </h3>
-                        <p className="text-[11px] text-stone-400 truncate">
-                          {char.race} {char.subrace ? `(${char.subrace}) ` : ''}• {char.characterClass}
-                        </p>
-                        <p className="text-[10px] text-stone-500 truncate">
-                          Jugador: {char.playerName || authUser.displayName}
-                        </p>
-                      </div>
                     </div>
-                    <span className="px-2 py-0.5 rounded-lg bg-amber-950/80 border border-amber-700/60 font-mono font-bold text-[11px] text-amber-300 shrink-0">
-                      Nv. {char.level}
-                    </span>
-                  </div>
 
-                  {/* Stats Grid */}
-                  <div className="grid grid-cols-3 gap-1.5 py-2 border-y border-stone-800/80 text-center">
-                    <div className="bg-[#121316] rounded-lg p-1.5">
-                      <span className="text-[9px] text-stone-500 uppercase tracking-wider block font-cinzel">HP</span>
-                      <span className="font-mono font-bold text-xs text-emerald-400">
-                        {char.currentHp}/{char.maxHp}
-                      </span>
-                    </div>
-                    <div className="bg-[#121316] rounded-lg p-1.5">
-                      <span className="text-[9px] text-stone-500 uppercase tracking-wider block font-cinzel">Armadura</span>
-                      <span className="font-mono font-bold text-xs text-blue-400">
-                        CA {char.armorClass}
-                      </span>
-                    </div>
-                    <div className="bg-[#121316] rounded-lg p-1.5">
-                      <span className="text-[9px] text-stone-500 uppercase tracking-wider block font-cinzel">Iniciativa</span>
-                      <span className="font-mono font-bold text-xs text-amber-400">
-                        {char.initiativeBonus >= 0 ? `+${char.initiativeBonus}` : char.initiativeBonus}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Actions Bar */}
-                  <div className="pt-1 flex items-center gap-1.5">
-                    <button
-                      onClick={() => {
-                        setJoinModalChar(char);
-                        setJoinError('');
-                      }}
-                      className="flex-1 py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 font-cinzel font-bold text-xs shadow transition flex items-center justify-center gap-1 min-w-0"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-current shrink-0" />
-                      <span className="truncate">Entrar a Mesa</span>
-                    </button>
-
-                    <button
-                      onClick={() => onEditCharacterSolo(char)}
-                      title="Editar ficha en solitario (sin mesa)"
-                      className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700 transition shrink-0"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleExportCharacterLocal(char)}
-                      title="Descargar / Exportar personaje localmente (.json)"
-                      className="p-2 rounded-xl bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-700/60 transition shrink-0"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      onClick={() => setCharToDelete(char)}
-                      title="Eliminar personaje"
-                      className="p-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/60 transition shrink-0"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {playerSheets.length > 1 && (
+                      <button
+                        type="button"
+                        aria-label="Siguiente carta de personaje"
+                        onClick={() =>
+                          setActiveCharCarouselIndex((safeIdx + 1) % playerSheets.length)
+                        }
+                        className="w-8 h-24 rounded-xl bg-[#191c28] hover:bg-amber-950 border border-[#c8a45c]/70 text-[#f5e4be] flex items-center justify-center shrink-0 shadow-lg transition cursor-pointer"
+                        title="Cambiar a siguiente carta"
+                      >
+                        <ChevronRight className="w-4 h-4 text-[#e2c275]" />
+                      </button>
+                    )}
                   </div>
                 </div>
-              ))}
-            </div>
+              );
+            })()
           )}
               </div>
             )}
@@ -2686,9 +2835,9 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
 
                 <button
                   type="button"
-                  onClick={fetchUserFriends}
+                  onClick={() => fetchUserFriends(false)}
                   disabled={isLoadingFriends}
-                  className="w-[28px] h-[28px] p-0 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 transition flex items-center justify-center border border-stone-700"
+                  className="w-[28px] h-[28px] p-0 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 transition flex items-center justify-center border border-stone-700 cursor-pointer"
                   title="Actualizar lista de amigos"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${isLoadingFriends ? 'animate-spin' : ''}`} />
@@ -2701,21 +2850,22 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
             {friendStatusMsg && (
               <div className="p-2.5 rounded-xl bg-emerald-950/80 border border-emerald-600 text-emerald-300 text-xs flex items-center gap-2">
                 <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span className="min-w-0 truncate">{friendStatusMsg}</span>
+                <span className="min-w-0 break-words">{friendStatusMsg}</span>
               </div>
             )}
 
             {friendErrorMsg && (
               <div className="p-2.5 rounded-xl bg-red-950/80 border border-red-700 text-red-300 text-xs flex items-center gap-2">
                 <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                <span className="min-w-0 truncate">{friendErrorMsg}</span>
+                <span className="min-w-0 break-words">{friendErrorMsg}</span>
               </div>
             )}
 
-            {/* Input Form to Add Friend by Username@ID */}
+            {/* Input Form to Send Friend Request by Username@ID */}
             <form onSubmit={handleAddFriendSubmit} className="flex gap-2">
               <input
                 type="text"
+                data-testid="input-add-friend-tag"
                 value={friendTagInput}
                 onChange={(e) => setFriendTagInput(e.target.value)}
                 placeholder="Ingresa usuario@ID (ej. pedro@123)"
@@ -2724,13 +2874,118 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
               />
               <button
                 type="submit"
+                data-testid="btn-add-friend-submit"
                 disabled={isAddingFriend}
-                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-cinzel font-bold text-xs shadow transition flex items-center justify-center gap-1 disabled:opacity-50 shrink-0"
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-cinzel font-bold text-xs shadow transition flex items-center justify-center gap-1 disabled:opacity-50 shrink-0 cursor-pointer"
               >
                 <UserPlus className="w-3.5 h-3.5" />
                 <span>{isAddingFriend ? '...' : 'Agregar'}</span>
               </button>
             </form>
+
+            {/* Incoming Pending Friend Requests */}
+            {incomingFriendRequests.length > 0 && (
+              <div
+                data-testid="incoming-friend-requests-section"
+                className="bg-purple-950/25 border border-purple-600/60 rounded-2xl p-3 space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-cinzel font-bold text-purple-200 uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+                    Solicitudes de Amistad ({incomingFriendRequests.length})
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {incomingFriendRequests.map((reqUser) => (
+                    <div
+                      key={reqUser.id}
+                      data-testid={`friend-request-row-${reqUser.id}`}
+                      className="bg-[#161722] border border-purple-800/70 rounded-xl p-2.5 flex items-center justify-between gap-2"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-purple-950/80 border border-purple-600/60 flex items-center justify-center text-purple-200 font-cinzel font-bold text-xs shrink-0 overflow-hidden">
+                          {reqUser.avatarUrl ? (
+                            <img
+                              src={reqUser.avatarUrl}
+                              alt={reqUser.displayName}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            reqUser.displayName.slice(0, 2).toUpperCase()
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <span className="font-bold text-stone-100 text-xs truncate">
+                              {reqUser.displayName}
+                            </span>
+                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-950 text-purple-200 border border-purple-700/60 shrink-0">
+                              @{reqUser.userTagId}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-purple-300/90 block truncate">
+                            Quiere agregarte como amigo
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          data-testid={`btn-accept-friend-${reqUser.id}`}
+                          onClick={() => handleRespondFriendRequest(reqUser.id, true)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-cinzel font-bold flex items-center gap-1 transition shadow cursor-pointer"
+                          title="Aceptar solicitud de amistad"
+                        >
+                          <Check className="w-3 h-3" />
+                          <span>Aceptar</span>
+                        </button>
+                        <button
+                          type="button"
+                          data-testid={`btn-reject-friend-${reqUser.id}`}
+                          onClick={() => handleRespondFriendRequest(reqUser.id, false)}
+                          className="p-1.5 rounded-lg bg-red-950/70 hover:bg-red-900 border border-red-800 text-red-300 hover:text-white transition cursor-pointer"
+                          title="Rechazar solicitud"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Outgoing Pending Friend Requests */}
+            {outgoingFriendRequests.length > 0 && (
+              <div
+                data-testid="outgoing-friend-requests-section"
+                className="bg-[#11131a] border border-stone-800 rounded-xl p-2.5 space-y-1.5"
+              >
+                <span className="text-[10px] font-cinzel font-bold text-stone-400 uppercase tracking-wider block">
+                  Solicitudes Enviadas Pendientes ({outgoingFriendRequests.length})
+                </span>
+                {outgoingFriendRequests.map((target) => (
+                  <div
+                    key={target.id}
+                    className="flex items-center justify-between gap-2 text-xs bg-[#161822] border border-stone-800/80 rounded-lg px-2.5 py-1.5"
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <Clock className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span className="text-stone-200 font-medium truncate">
+                        {target.displayName}
+                      </span>
+                      <span className="font-mono text-[10px] text-amber-300 font-bold">
+                        @{target.userTagId}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-stone-400 italic shrink-0">
+                      Esperando aceptación
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Friends List */}
             <div className="space-y-2 pt-1">
@@ -2741,76 +2996,95 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                     Aún no tienes amigos agregados
                   </p>
                   <p className="text-[11px] text-stone-500 max-w-xs mx-auto leading-relaxed">
-                    Escribe su <span className="font-mono text-emerald-400">usuario@ID</span> arriba o comparte tu ID (<span className="font-mono text-amber-300">{myFullTag}</span>).
+                    Escribe su <span className="font-mono text-emerald-400">usuario@ID</span> arriba para enviar solicitud o comparte tu ID (<span className="font-mono text-amber-300">{myFullTag}</span>).
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2 max-h-[320px] overflow-y-auto custom-scrollbar pr-0.5">
-                  {friendsList.map((friend) => (
-                    <div
-                      key={friend.id}
-                      className="bg-[#181922] border border-stone-800 hover:border-emerald-800/60 rounded-xl p-3 flex items-center justify-between gap-2 transition shadow-sm"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-9 h-9 rounded-lg bg-emerald-950/70 border border-emerald-700/60 flex items-center justify-center text-emerald-300 font-cinzel font-bold text-xs shrink-0 overflow-hidden shadow">
-                          {friend.avatarUrl ? (
-                            <img
-                              src={friend.avatarUrl}
-                              alt={friend.displayName}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            friend.displayName.slice(0, 2).toUpperCase()
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1 min-w-0">
-                            <span className="font-bold text-stone-100 text-xs truncate">
-                              {friend.displayName}
-                            </span>
-                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 shrink-0">
-                              @{friend.userTagId}
+                  {friendsList.map((friend) => {
+                    const hasUnread = (friend.unreadCount || 0) > 0;
+                    return (
+                      <div
+                        key={friend.id}
+                        data-testid={`friend-row-${friend.id}`}
+                        className="bg-[#181922] border border-stone-800 hover:border-emerald-800/60 rounded-xl p-3 flex items-center justify-between gap-2 transition shadow-sm"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-9 h-9 rounded-lg bg-emerald-950/70 border border-emerald-700/60 flex items-center justify-center text-emerald-300 font-cinzel font-bold text-xs shrink-0 overflow-hidden shadow">
+                            {friend.avatarUrl ? (
+                              <img
+                                src={friend.avatarUrl}
+                                alt={friend.displayName}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              friend.displayName.slice(0, 2).toUpperCase()
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1 min-w-0">
+                              <span className="font-bold text-stone-100 text-xs truncate">
+                                {friend.displayName}
+                              </span>
+                              <span className="font-mono text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 shrink-0">
+                                @{friend.userTagId}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-stone-400 font-cinzel block truncate mt-0.5">
+                              {friend.role === 'moderator' || friend.role === 'admin'
+                                ? 'Administrador'
+                                : friend.role === 'creator'
+                                ? 'Creador de Contenido'
+                                : friend.role === 'both'
+                                ? 'Jugador & DM'
+                                : friend.role === 'dm'
+                                ? 'Dungeon Master'
+                                : 'Jugador'}
                             </span>
                           </div>
-                          <span className="text-[10px] text-stone-400 font-cinzel block truncate mt-0.5">
-                            {friend.role === 'moderator' || friend.role === 'admin'
-                              ? 'Administrador'
-                              : friend.role === 'creator'
-                              ? 'Creador de Contenido'
-                              : friend.role === 'both'
-                              ? 'Jugador & DM'
-                              : friend.role === 'dm'
-                              ? 'Dungeon Master'
-                              : 'Jugador'}
-                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* Purple Unread Message Notification Dot (Bolita Morada) next to the Message button */}
+                          {hasUnread && (
+                            <span
+                              data-testid={`unread-purple-dot-${friend.id}`}
+                              title={`Tienes ${friend.unreadCount} mensaje(s) sin leer de ${friend.displayName}`}
+                              className="w-3 h-3 rounded-full bg-purple-500 border border-purple-200 shadow-[0_0_10px_rgba(168,85,247,0.95)] animate-pulse shrink-0"
+                            />
+                          )}
+
+                          <button
+                            type="button"
+                            data-testid={`btn-friend-message-${friend.id}`}
+                            onClick={() => {
+                              setChatFriend(friend);
+                              setIsChatOpen(true);
+                              setFriendsList((prev) =>
+                                prev.map((f) =>
+                                  f.id === friend.id ? { ...f, unreadCount: 0 } : f
+                                )
+                              );
+                            }}
+                            className="relative px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 text-xs font-cinzel font-bold transition flex items-center gap-1 shadow cursor-pointer"
+                            title="Enviar mensaje privado a este amigo"
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                            <span className="hidden sm:inline">Mensaje</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFriend(friend.id, friend.fullTag)}
+                            className="p-1.5 rounded-lg bg-red-950/60 hover:bg-red-900 border border-red-800/70 text-red-300 hover:text-white transition flex items-center justify-center cursor-pointer"
+                            title="Quitar de mis amigos"
+                          >
+                            <UserMinus className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setChatFriend(friend);
-                            setIsChatOpen(true);
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 text-xs font-cinzel font-bold transition flex items-center gap-1 shadow"
-                          title="Enviar mensaje privado a este amigo"
-                        >
-                          <MessageSquare className="w-3 h-3" />
-                          <span className="hidden sm:inline">Mensaje</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveFriend(friend.id, friend.fullTag)}
-                          className="p-1.5 rounded-lg bg-red-950/60 hover:bg-red-900 border border-red-800/70 text-red-300 hover:text-white transition flex items-center justify-center"
-                          title="Quitar de mis amigos"
-                        >
-                          <UserMinus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -3111,7 +3385,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                       Página de Administración WeRoll
                     </h3>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 border border-blue-700/60 text-blue-300 font-bold">
-                      v1.0 Beta
+                      v1.1 Beta
                     </span>
                   </div>
                   <p className="text-xs text-stone-400">
@@ -6528,6 +6802,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           isOpen={isModeratorPanelOpen}
           onClose={() => setIsModeratorPanelOpen(false)}
           authUser={authUser}
+          onRefreshAuthStatus={onRefreshAuthStatus}
         />
       )}
 
@@ -6538,9 +6813,11 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           onClose={() => {
             setIsChatOpen(false);
             setChatFriend(null);
+            fetchUserFriends(true);
           }}
           currentUser={authUser}
           friend={chatFriend}
+          onMessagesUpdated={() => fetchUserFriends(true)}
         />
       )}
     </div>

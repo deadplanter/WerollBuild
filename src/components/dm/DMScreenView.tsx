@@ -65,10 +65,13 @@ import {
   ensureCompleteFolderHierarchy,
   getPinPositionForChildPlace,
   filterAlbumPhotosByPlace,
+  MAX_ENCOUNTER_ENEMIES,
+  canAddEnemyToEncounter,
 } from '../../utils/dnd-math';
 import { soundFx } from '../../utils/audio';
 import { FolderManagerModal } from './FolderManagerModal';
 import { DMItemsAndSpellsView } from './DMItemsAndSpellsView';
+import { CharacterTarotCard } from '../character/CharacterTarotCard';
 import { folderMatchesFilter, getFolderDepth } from '../../utils/storage';
 import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 
@@ -92,6 +95,11 @@ interface DMScreenViewProps {
   recentRollsCount?: number;
   isOfflineMode?: boolean;
   onToggleOfflineMode?: (offline: boolean) => void;
+  onOpenTableMapView?: () => void;
+  onDmAdjustPlayer?: (
+    characterId: string,
+    updates: { hpDelta?: number; setHp?: number; gpDelta?: number }
+  ) => void;
 }
 
 export const DMScreenView: React.FC<DMScreenViewProps> = ({
@@ -114,13 +122,57 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   recentRollsCount = 0,
   isOfflineMode = false,
   onToggleOfflineMode,
+  onOpenTableMapView,
+  onDmAdjustPlayer,
 }) => {
   // Active Deck in "BARAJAS EN: <Lugar>" & Horizontal Card Carousel Index
   const [activeDeck, setActiveDeck] = useState<'npcs' | 'monsters' | 'items'>('npcs');
   const [dmDeckScrollIndex, setDmDeckScrollIndex] = useState<number>(0);
-  const [selectedFolder, setSelectedFolder] = useState<string>('all');
+  const [selectedFolder, setSelectedFolderState] = useState<string>(
+    () => workspace.activeAtlasFolder || 'all'
+  );
+  const setSelectedFolder = (folder: string) => {
+    setSelectedFolderState(folder);
+    const shortName =
+      folder === 'all'
+        ? worldName || 'Mundo Completo'
+        : folder.split('/').map((s) => s.trim()).filter(Boolean).pop() || folder;
+    const mapForPlace = workspace.atlasMaps?.[folder] || '';
+    const photosForPlace = filterAlbumPhotosByPlace(workspace.placeAlbumPhotos || [], folder);
+    const nextVisual = mapForPlace
+      ? {
+          kind: 'map' as const,
+          id: `map-${folder}`,
+          title: `Mapa: ${shortName}`,
+          imageUrl: mapForPlace,
+          folder,
+        }
+      : photosForPlace[0]
+      ? {
+          kind: 'album' as const,
+          id: photosForPlace[0].id,
+          title: photosForPlace[0].title,
+          imageUrl: photosForPlace[0].imageUrl,
+          folder,
+        }
+      : {
+          kind: 'map' as const,
+          id: `map-${folder}`,
+          title: shortName,
+          imageUrl: '',
+          folder,
+        };
+    onUpdateWorkspace({
+      ...workspace,
+      activeAtlasFolder: folder,
+      activeLiveVisual: nextVisual,
+    });
+  };
   const [isFolderManagerOpen, setIsFolderManagerOpen] = useState<boolean>(false);
   const [isSkinsModalOpen, setIsSkinsModalOpen] = useState<boolean>(false);
+  const [inspectedPartyMemberId, setInspectedPartyMemberId] = useState<string | null>(null);
+  const inspectedPartyMember =
+    partyMembers.find((pm) => pm.characterId === inspectedPartyMemberId) || null;
 
   // Active projected location ID in Atlas
   const [projectedLocationId, setProjectedLocationId] = useState<string>(() => {
@@ -421,8 +473,15 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
           ...(workspace.atlasMaps || {}),
           [selectedFolder]: dataUrl,
         },
+        activeLiveVisual: {
+          kind: 'map',
+          id: `map-${selectedFolder}`,
+          title: `Mapa: ${currentPlaceShortName}`,
+          imageUrl: dataUrl,
+          folder: selectedFolder,
+        },
       });
-      setLiveMapToast(`Mapa de "${currentPlaceShortName}" actualizado con éxito`);
+      setLiveMapToast(`Mapa de "${currentPlaceShortName}" actualizado y proyectado en vivo`);
       setTimeout(() => setLiveMapToast(''), 2500);
     } catch {
       // Ignore invalid image
@@ -441,6 +500,13 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
     onUpdateWorkspace({
       ...workspace,
       atlasMaps: nextMaps,
+      activeLiveVisual: {
+        kind: 'map',
+        id: `map-${selectedFolder}`,
+        title: `Mapa: ${currentPlaceShortName}`,
+        imageUrl: clean,
+        folder: selectedFolder,
+      },
     });
   };
 
@@ -711,6 +777,15 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   };
 
   const handleAddMonsterToCombat = (mon: MonsterRecord, faction: 'enemy' | 'ally' = 'enemy') => {
+    if (
+      faction === 'enemy' &&
+      !canAddEnemyToEncounter(activeEncounter.combatants, MAX_ENCOUNTER_ENEMIES).canAdd
+    ) {
+      setLiveMapToast(`⚠️ Tope alcanzado: Máximo ${MAX_ENCOUNTER_ENEMIES} enemigos en combate.`);
+      setTimeout(() => setLiveMapToast(''), 3000);
+      return;
+    }
+
     const wisMod = Math.floor(((mon.wis || 10) - 10) / 2);
     const pp = 10 + wisMod;
     const existingCount = activeEncounter.combatants.filter((c) => c.name.startsWith(mon.name)).length;
@@ -738,6 +813,15 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   };
 
   const handleAddNpcToCombat = (npc: NPCRecord, faction: 'ally' | 'enemy' = 'ally') => {
+    if (
+      faction === 'enemy' &&
+      !canAddEnemyToEncounter(activeEncounter.combatants, MAX_ENCOUNTER_ENEMIES).canAdd
+    ) {
+      setLiveMapToast(`⚠️ Tope alcanzado: Máximo ${MAX_ENCOUNTER_ENEMIES} enemigos en combate.`);
+      setTimeout(() => setLiveMapToast(''), 3000);
+      return;
+    }
+
     const hp = npc.stats?.hp || 25;
     const ac = npc.stats?.ac || 13;
     const newCombatant: Combatant = {
@@ -791,6 +875,17 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   };
 
   const handleToggleCombatantFaction = (combatantId: string) => {
+    const target = activeEncounter.combatants.find((c) => c.id === combatantId);
+    if (
+      target &&
+      target.faction === 'ally' &&
+      !canAddEnemyToEncounter(activeEncounter.combatants, MAX_ENCOUNTER_ENEMIES).canAdd
+    ) {
+      setLiveMapToast(`⚠️ Tope alcanzado: Máximo ${MAX_ENCOUNTER_ENEMIES} enemigos en combate.`);
+      setTimeout(() => setLiveMapToast(''), 3000);
+      return;
+    }
+
     const updated = activeEncounter.combatants.map((c) => {
       if (c.id === combatantId) {
         const nextFaction: 'enemy' | 'ally' = c.faction === 'ally' ? 'enemy' : 'ally';
@@ -1318,10 +1413,10 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
               </div>
             </div>
 
-            {/* Interactive Parchment / Custom PNG-JPG Cartography Map Canvas */}
+            {/* Interactive Parchment / Custom PNG-JPG Cartography Map Canvas (Expanded height) */}
             <div
               data-testid="atlas-map-strip"
-              className="relative h-[150px] w-full rounded-xl overflow-hidden border border-[#c8a45c]/60 bg-gradient-to-br from-[#2d2418] via-[#211b13] to-[#171410] shadow-inner group"
+              className="relative h-[245px] sm:h-[280px] w-full rounded-xl overflow-hidden border border-[#c8a45c]/60 bg-gradient-to-br from-[#2d2418] via-[#211b13] to-[#171410] shadow-inner group"
             >
               {/* Custom Uploaded Map Image for THIS specific place (if set) */}
               {currentPlaceMapUrl ? (
@@ -1534,6 +1629,43 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
               </div>
 
               <div className="flex items-center gap-1.5 flex-wrap">
+                {currentPlaceMapUrl && (
+                  <button
+                    type="button"
+                    data-testid="btn-project-place-map"
+                    onClick={() => {
+                      onUpdateWorkspace({
+                        ...workspace,
+                        activeLiveVisual: {
+                          kind: 'map',
+                          id: `map-${selectedFolder}`,
+                          title: `Mapa: ${currentPlaceShortName}`,
+                          imageUrl: currentPlaceMapUrl,
+                          folder: selectedFolder,
+                        },
+                      });
+                      setLiveMapToast(`🟢 Mostrando en vivo: Mapa de ${currentPlaceShortName}`);
+                      setTimeout(() => setLiveMapToast(''), 2500);
+                    }}
+                    className={`px-2 py-1 rounded-lg text-[11px] font-cinzel font-bold flex items-center gap-1 transition cursor-pointer border ${
+                      workspace.activeLiveVisual?.kind === 'map' || !workspace.activeLiveVisual
+                        ? 'bg-[#1c2421] border-[#c8a45c] text-[#f5e4be] shadow'
+                        : 'bg-[#181a24] hover:bg-[#222533] border-stone-700/80 text-stone-300'
+                    }`}
+                    title="Proyectar el mapa de este lugar a los jugadores"
+                  >
+                    <Compass className="w-3 h-3 text-[#e2c275]" />
+                    <span className="truncate max-w-[95px]">Mapa: {currentPlaceShortName}</span>
+                    {workspace.activeLiveVisual?.kind === 'map' || !workspace.activeLiveVisual ? (
+                      <span className="text-[9px] text-emerald-400 font-bold flex items-center gap-1">
+                        (<span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> EN VIVO)
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-stone-400">(Mostrar)</span>
+                    )}
+                  </button>
+                )}
+
                 {filteredAlbumPhotos.slice(0, 2).map((photo) => {
                   const isLive =
                     workspace.activeLiveVisual?.kind === 'album' &&
@@ -2096,11 +2228,93 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
         </div>
 
         {/* =============================================================== */}
-        {/* RIGHT 4 COLUMNS: SALA EN VIVO + BITÁCORA + RESÚMENES DE GUERRA  */}
+        {/* RIGHT 4 COLUMNS: JUGADORES CONECTADOS + COMBATE + BITÁCORA       */}
         {/* =============================================================== */}
         <div className="lg:col-span-4 flex flex-col gap-2 justify-between">
-          {/* 3A. SALA EN VIVO (DM Portrait Avatar + Aliados & Enemigos with Live HP Controls) */}
-          <div className="rounded-2xl bg-[#14161f] border-2 border-[#c8a45c]/70 p-3 shadow-[0_0_25px_rgba(0,0,0,0.85)]">
+          {/* 3A-0. JUGADORES CONECTADOS EN LA MESA (Always visible to DM, clickable to open Tarot Card) */}
+          <div
+            data-testid="dm-connected-players-panel"
+            className="rounded-2xl bg-[#14161f] border-2 border-[#c8a45c]/70 p-3 shadow-[0_0_25px_rgba(0,0,0,0.85)]"
+          >
+            <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#c8a45c]/30">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-emerald-400" />
+                <h3 className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] tracking-wider uppercase leading-none">
+                  JUGADORES CONECTADOS ({partyMembers.length})
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                En Línea
+              </span>
+            </div>
+
+            {partyMembers.length === 0 ? (
+              <div className="p-2.5 rounded-xl bg-[#191c28]/70 border border-dashed border-stone-800 text-center text-[11px] text-stone-400">
+                Esperando a que los jugadores entren a la sala con el código{' '}
+                <strong className="text-amber-300 font-mono">{roomCode || 'MESA'}</strong>...
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {partyMembers.map((pm) => {
+                  const hpPct = Math.max(
+                    0,
+                    Math.min(100, (pm.currentHp / Math.max(1, pm.maxHp)) * 100)
+                  );
+                  return (
+                    <button
+                      key={pm.characterId}
+                      type="button"
+                      data-testid={`dm-connected-player-card-${pm.characterId}`}
+                      onClick={() => setInspectedPartyMemberId(pm.characterId)}
+                      className="group text-left p-2 rounded-xl bg-gradient-to-br from-[#1c1f2e] to-[#131520] hover:from-[#262a3f] hover:to-[#191c2a] border border-[#c8a45c]/55 hover:border-[#f0d082] transition shadow flex items-center gap-2.5 cursor-pointer"
+                      title={`Clic para abrir la Carta de Personaje de ${pm.characterName}`}
+                    >
+                      <div className="relative shrink-0">
+                        <EntityAvatar
+                          avatarType={pm.avatarType}
+                          customUrl={pm.avatarCustomUrl}
+                          iconId={pm.avatarIcon}
+                          legacyUrl={pm.avatarUrl}
+                          name={pm.characterName}
+                          category="character"
+                          size="sm"
+                          className="w-10 h-10 rounded-full border-2 border-[#d4af37] bg-[#10121a]"
+                        />
+                        <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-stone-950" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-cinzel font-black text-xs text-[#f8e7c1] truncate group-hover:text-amber-300">
+                            {pm.characterName}
+                          </span>
+                        </div>
+                        <div className="text-[10px] font-mono text-amber-300/95 truncate">
+                          Niv. {pm.level || 1} • {pm.experience ?? 0} XP
+                        </div>
+                        {/* Mini HP Bar */}
+                        <div className="w-full h-3 rounded-full bg-stone-950 border border-[#c8a45c]/40 overflow-hidden relative mt-1">
+                          <div
+                            className="h-full bg-gradient-to-r from-emerald-700 to-emerald-500 transition-all"
+                            style={{ width: `${hpPct}%` }}
+                          />
+                          <span className="absolute inset-0 text-[8px] font-mono font-bold text-white flex items-center justify-center leading-none">
+                            PG {pm.currentHp}/{pm.maxHp}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 3A. COMBATE (DM Portrait Avatar + Aliados & Enemigos with Live HP Controls & 8-Enemy Cap) */}
+          <div
+            data-testid="dm-combat-panel"
+            className="rounded-2xl bg-[#14161f] border-2 border-[#c8a45c]/70 p-3 shadow-[0_0_25px_rgba(0,0,0,0.85)]"
+          >
             <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#c8a45c]/30">
               <div className="flex items-center gap-2">
                 <button
@@ -2124,7 +2338,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                 </button>
                 <div>
                   <h3 className="font-cinzel font-black text-sm text-[#f5e4be] tracking-wider uppercase leading-none">
-                    SALA EN VIVO
+                    COMBATE
                   </h3>
                   <button
                     type="button"
@@ -2150,7 +2364,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
             {/* ALIADOS */}
             <div className="mb-2">
               <div className="flex items-center justify-between text-xs mb-1">
-                <span className="font-cinzel font-bold text-[#e8d8b9]">Aliados</span>
+                <span className="font-cinzel font-bold text-[#e8d8b9]">Aliados en Combate</span>
                 <span className="text-[10px] font-mono text-emerald-400">
                   {allyCombatants.length} en escena
                 </span>
@@ -2221,10 +2435,12 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
               </div>
             </div>
 
-            {/* ENEMIGOS */}
+            {/* ENEMIGOS (Tope estricto: 8 enemigos máximo) */}
             <div>
               <div className="flex items-center justify-between text-xs mb-1">
-                <span className="font-cinzel font-bold text-[#e8d8b9]">Enemigos</span>
+                <span className="font-cinzel font-bold text-[#e8d8b9]">
+                  Enemigos ({enemyCombatants.length}/{MAX_ENCOUNTER_ENEMIES})
+                </span>
                 <button
                   type="button"
                   data-testid="btn-toggle-enemies-on-table"
@@ -2247,8 +2463,8 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                 </button>
               </div>
 
-              <div className="grid grid-cols-6 gap-1.5">
-                {enemyCombatants.slice(0, 11).map((enemy) => {
+              <div className="grid grid-cols-5 gap-1.5">
+                {enemyCombatants.slice(0, MAX_ENCOUNTER_ENEMIES).map((enemy) => {
                   const isTurn = currentTurnCombatant?.id === enemy.id;
                   const hpPct = Math.max(
                     0,
@@ -2309,16 +2525,29 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                   );
                 })}
 
-                {/* + Add Enemy Tile */}
-                <button
-                  type="button"
-                  data-testid="btn-add-enemy-combatant"
-                  onClick={() => setIsAddCombatantPickerOpen('enemy')}
-                  className="h-[60px] rounded-lg bg-[#181a24] hover:bg-red-950/50 border border-dashed border-[#c8a45c]/50 flex items-center justify-center text-[#e2c275] transition cursor-pointer"
-                  title="Añadir Enemigo a la Mesa"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
+                {/* + Add Enemy Tile (only enabled if < 8 enemies) */}
+                {enemyCombatants.length < MAX_ENCOUNTER_ENEMIES ? (
+                  <button
+                    type="button"
+                    data-testid="btn-add-enemy-combatant"
+                    onClick={() => setIsAddCombatantPickerOpen('enemy')}
+                    className="h-[60px] rounded-lg bg-[#181a24] hover:bg-red-950/50 border border-dashed border-[#c8a45c]/50 flex items-center justify-center text-[#e2c275] transition cursor-pointer"
+                    title={`Añadir Enemigo a la Mesa (${enemyCombatants.length}/${MAX_ENCOUNTER_ENEMIES})`}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <div
+                    data-testid="enemy-cap-reached-badge"
+                    className="h-[60px] rounded-lg bg-red-950/30 border border-red-800/60 flex flex-col items-center justify-center text-center px-1"
+                    title="El tope máximo es de 8 enemigos en escena"
+                  >
+                    <span className="text-[9px] font-cinzel font-bold text-red-300 leading-tight">
+                      Máx {MAX_ENCOUNTER_ENEMIES}
+                    </span>
+                    <span className="text-[8px] text-red-400/80">Enemigos</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2610,18 +2839,24 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
           </div>
         </div>
 
-        {/* Right: MAPA EN VIVO Button */}
+        {/* Right: MAPA / UBICACIÓN EN VIVO Button (Launches TableMapView) */}
         <div className="lg:col-span-2 flex">
           <button
             type="button"
             data-testid="btn-dm-live-map"
-            onClick={() => setIsLivePreviewModalOpen(true)}
+            onClick={() => {
+              if (onOpenTableMapView) {
+                onOpenTableMapView();
+              } else {
+                setIsLivePreviewModalOpen(true);
+              }
+            }}
             className="w-full min-h-[64px] rounded-2xl bg-gradient-to-b from-[#231e17] to-[#14161f] hover:from-[#2d261d] border-2 border-[#c8a45c]/80 p-2 flex flex-col items-center justify-center text-center shadow-lg transition cursor-pointer relative overflow-hidden"
-            title="Ver imagen o mapa proyectado en vivo y elegir qué mostrar del Álbum"
+            title="Ir a la Vista de Mapa de la Mesa"
           >
-            <div className="flex items-center gap-1.5 font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase z-10">
-              <Compass className="w-4 h-4 text-[#e2c275]" />
-              <span>MAPA EN VIVO</span>
+            <div className="flex items-center gap-1.5 font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase z-10 max-w-full">
+              <Compass className="w-4 h-4 text-[#e2c275] shrink-0" />
+              <span className="truncate">MAPA • {currentPlaceShortName}</span>
             </div>
             <span className="text-[10px] text-emerald-300 font-medium truncate max-w-full mt-0.5 flex items-center gap-1 z-10">
               <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block shrink-0" />
@@ -5050,6 +5285,50 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                 className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 font-cinzel font-bold text-xs shadow-lg transition cursor-pointer"
               >
                 Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* INSPECTED CONNECTED PLAYER TAROT CARD MODAL */}
+      {inspectedPartyMember && (
+        <div
+          data-testid="dm-inspected-player-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in"
+          onClick={() => setInspectedPartyMemberId(null)}
+        >
+          <div
+            className="relative w-full max-w-[350px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              data-testid="btn-close-inspected-player-modal"
+              onClick={() => setInspectedPartyMemberId(null)}
+              className="absolute -top-3 -right-3 z-20 w-8 h-8 rounded-full bg-stone-900 hover:bg-red-900 border-2 border-[#e2c275] text-[#f5e4be] flex items-center justify-center shadow-xl cursor-pointer"
+              title="Cerrar carta del personaje"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <CharacterTarotCard
+              member={inspectedPartyMember}
+              isOnline={true}
+              showDmControls={true}
+              onDmAdjustPlayer={onDmAdjustPlayer}
+              testId="dm-modal-player-tarot-card"
+            />
+            <div className="mt-2 flex justify-center">
+              <button
+                type="button"
+                data-testid="btn-sync-inspected-player-to-combat"
+                onClick={() => {
+                  handleSyncPartyMemberToCombat(inspectedPartyMember);
+                  setInspectedPartyMemberId(null);
+                }}
+                className="px-4 py-1.5 rounded-xl bg-emerald-900/90 hover:bg-emerald-800 border border-emerald-400/70 text-emerald-100 font-cinzel font-bold text-xs shadow-lg cursor-pointer"
+              >
+                + Añadir a Aliados en Combate
               </button>
             </div>
           </div>
