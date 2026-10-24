@@ -244,14 +244,15 @@ apiRouter.post('/auth/login', (req, res) => {
     });
   }
 
-  // Update last active
-  user.lastActiveAt = Date.now();
-  const allUsers = dataStore.getUsers();
-  const idx = allUsers.findIndex((u) => u.id === user.id);
-  if (idx >= 0) {
-    allUsers[idx].lastActiveAt = Date.now();
-    dataStore.saveUsers(allUsers);
-  }
+  // Update last active and record login session in server stats
+  const updatedUser =
+    dataStore.recordUserPresenceHeartbeat({
+      userId: user.id,
+      email: user.email,
+      activity: 'Inicio de Sesión en el Portal',
+      isLogin: true,
+    }) || user;
+  user.lastActiveAt = updatedUser.lastActiveAt;
 
   res.json({
     success: true,
@@ -285,9 +286,16 @@ apiRouter.get('/auth/me', (req, res) => {
   if (!user) {
     return res.status(404).json({ error: 'Usuario no encontrado.' });
   }
-  // Corroborate user uniqueness on every /auth/me check
+  // Corroborate user uniqueness on every /auth/me check and record presence
   dataStore.corroborateUniqueUsers();
-  const freshUser = dataStore.findUserByEmail(email) || user;
+  const freshUser =
+    dataStore.recordUserPresenceHeartbeat({
+      userId: user.id,
+      email: user.email,
+      activity: (req.query.activity as string) || undefined,
+    }) ||
+    dataStore.findUserByEmail(email) ||
+    user;
 
   res.json({
     id: freshUser.id,
@@ -305,7 +313,37 @@ apiRouter.get('/auth/me', (req, res) => {
     canPostInForum: freshUser.appRole === 'admin' || freshUser.appRole === 'creator' || freshUser.appRole === 'moderator' ? true : Boolean(freshUser.canPostInForum),
     forumPermissionsRequested: Boolean(freshUser.forumPermissionsRequested),
     status: freshUser.status,
+    lastActiveAt: freshUser.lastActiveAt,
     passwordResetRequested: freshUser.passwordResetRequested,
+  });
+});
+
+// Real-time User Presence Heartbeat & Event Signal Check (for any logged-in user)
+apiRouter.post('/users/heartbeat', (req, res) => {
+  const { userId, email, activity } = req.body || {};
+  if (!userId && !email) {
+    return res.status(400).json({ error: 'userId o email requerido.' });
+  }
+  const updated = dataStore.recordUserPresenceHeartbeat({
+    userId,
+    email,
+    activity,
+  });
+  if (!updated) {
+    return res.status(404).json({ error: 'Usuario no encontrado.' });
+  }
+  const msgSignal = dataStore.getFriendMessageSignal(updated.id);
+  const reqs = dataStore.getFriendRequestsForUser(updated.id);
+  const syncMeta = dataStore.getSyncMetadata();
+  res.json({
+    success: true,
+    userId: updated.id,
+    lastActiveAt: updated.lastActiveAt,
+    totalConnectedMs: updated.totalConnectedMs || 0,
+    unreadFriendMessages: msgSignal.unreadCount,
+    lastFriendMessageId: msgSignal.lastMessageId,
+    incomingRequestsCount: reqs.incomingRequests.length,
+    vaultRevision: syncMeta.revision,
   });
 });
 
@@ -618,11 +656,136 @@ apiRouter.post('/feedback', (req, res) => {
 });
 
 // ==========================================
+// REAL-TIME SSE STREAM & DELTA SYNC ENDPOINTS
+// ==========================================
+
+const sseClients = new Set<any>();
+
+function broadcastRealtimeEvent(eventType: string, payload: Record<string, any>) {
+  const frame = `data: ${JSON.stringify({ type: eventType, timestamp: Date.now(), ...payload })}\n\n`;
+  for (const clientRes of sseClients) {
+    try {
+      clientRes.write(frame);
+    } catch {
+      sseClients.delete(clientRes);
+    }
+  }
+}
+
+apiRouter.get('/events/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const syncMeta = dataStore.getSyncMetadata();
+  res.write(
+    `data: ${JSON.stringify({
+      type: 'connected',
+      vaultRevision: syncMeta.revision || 1,
+      timestamp: Date.now(),
+    })}\n\n`
+  );
+
+  sseClients.add(res);
+  req.on('close', () => {
+    sseClients.delete(res);
+  });
+});
+
+// Incremental Delta Sync (Save only what changed on a player sheet, world sheet, or Creator Studio item)
+apiRouter.post('/vault/delta', (req, res) => {
+  try {
+    const { entityKind, entityId, ownerEmail, patch, changedFields } = req.body || {};
+    if (!entityKind || !entityId || !patch || typeof patch !== 'object') {
+      res.status(400).json({ error: 'Se requiere entityKind, entityId y patch para aplicar un Delta Sync.' });
+      return;
+    }
+    const result = dataStore.applyIncrementalDelta({
+      entityKind,
+      entityId,
+      ownerEmail,
+      patch,
+      changedFields,
+    });
+    broadcastRealtimeEvent('delta:applied', {
+      vaultRevision: result.revision,
+      delta: result.deltaRecord,
+    });
+    res.json({
+      success: true,
+      vaultRevision: result.revision,
+      delta: result.deltaRecord,
+      updatedEntity: result.updatedEntity,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al aplicar Delta Sync incremental.' });
+  }
+});
+
+// Fetch recent Delta Sync records (optionally since a given vaultRevision)
+apiRouter.get('/vault/deltas', (req, res) => {
+  const sinceRevRaw = req.query.sinceRevision ? Number(req.query.sinceRevision) : undefined;
+  const deltas = dataStore.getDeltaSyncLog(
+    sinceRevRaw !== undefined && !Number.isNaN(sinceRevRaw) ? sinceRevRaw : undefined
+  );
+  const syncMeta = dataStore.getSyncMetadata();
+  res.json({
+    vaultRevision: syncMeta.revision || 1,
+    lastModifiedAt: syncMeta.lastModifiedAt || Date.now(),
+    deltas,
+  });
+});
+
+// ==========================================
 // ADMINISTRATOR ENDPOINTS
 // ==========================================
 
+// Server Statistics & Live User Activity Map (for Admin Panel)
+apiRouter.get('/admin/server-stats', (_req, res) => {
+  const stats = dataStore.getServerStatistics();
+  res.json(stats);
+});
+
+// Read-Only Technical Inspector: Delta Sync Log, Separated Images/Assets, Write-Behind Queue & 4-Module Creator Studio
+apiRouter.get('/admin/architecture-status', (_req, res) => {
+  const syncMeta = dataStore.getSyncMetadata();
+  const hostSettings = dataStore.getHostSettings();
+  const deltas = dataStore.getDeltaSyncLog().slice(0, 40);
+  const assetsCatalog = dataStore.getSeparatedAssetsCatalog();
+  const creatorStudio = dataStore.getCreatorStudioArchitecturePreview();
+  const autoBackup = hostSettings.autoBackup;
+
+  res.json({
+    vaultRevision: syncMeta.revision || 1,
+    lastModifiedAt: syncMeta.lastModifiedAt || Date.now(),
+    lastMutationReason: syncMeta.lastMutationReason || 'Estado inicial sincronizado',
+    contentHash: syncMeta.contentHash || '',
+    activeSseClientsCount: sseClients.size,
+    writeBehindQueue: {
+      mode: 'Write-Behind Asíncrono (Desacoplado en 2º Plano)',
+      localWriteLatencyMs: 2,
+      debounceWindowMs: 2500,
+      destination: autoBackup?.destination || 'github',
+      cloudLinked: Boolean(autoBackup?.githubRepo || autoBackup?.driveFolderId || autoBackup?.webhookUrl),
+      githubRepo: autoBackup?.githubRepo || 'Compatible con cualquier repo GitHub / AI Studio',
+      githubPath: autoBackup?.githubPath || 'backups/weroll-backup-latest.json',
+      lastCloudFlushAt: autoBackup?.lastBackupAt || syncMeta.lastCloudSyncAt || Date.now(),
+      lastCloudStatus: autoBackup?.lastBackupStatus || 'success',
+      lastCloudMessage:
+        autoBackup?.lastBackupMessage ||
+        'Cola en segundo plano lista y compatible con múltiples cuentas de AI Studio y GitHub.',
+      recentHistory: (autoBackup?.history || []).slice(0, 12),
+    },
+    deltas,
+    assetsCatalog,
+    creatorStudio,
+  });
+});
+
 // List all registered users (including current password, 3-char userTagId, friends & reset requests)
 apiRouter.get('/admin/users', (req, res) => {
+  const now = Date.now();
   const users = dataStore.getUsers().map((u) => ({
     id: u.id,
     email: u.email,
@@ -644,6 +807,10 @@ apiRouter.get('/admin/users', (req, res) => {
     approvedAt: u.approvedAt,
     approvedBy: u.approvedBy,
     lastActiveAt: u.lastActiveAt,
+    isOnline: now - (u.lastActiveAt || 0) <= 65000,
+    totalConnectedMs: u.totalConnectedMs || 0,
+    sessionCount: u.sessionCount || 1,
+    currentActivity: now - (u.lastActiveAt || 0) <= 65000 ? u.currentActivity || 'En el Portal' : 'Desconectado',
     passwordResetRequested: u.passwordResetRequested,
     passwordResetRequestedAt: u.passwordResetRequestedAt,
     passwordResetNote: u.passwordResetNote,
@@ -1158,12 +1325,23 @@ apiRouter.get('/friends/messages', (req, res) => {
 
   if (friendId) {
     const messages = dataStore.getFriendDirectMessages(userId, friendId);
-    dataStore.markFriendDirectMessagesAsRead(userId, friendId);
-    return res.json({ messages });
+    const markedRead = dataStore.markFriendDirectMessagesAsRead(userId, friendId);
+    return res.json({ messages, markedRead });
   }
 
   const allMessages = dataStore.getAllUserDirectMessages(userId);
   res.json({ messages: allMessages });
+});
+
+// Lightweight signal check so FriendDirectChatModal or Lobby only refreshes when a message is actually sent
+apiRouter.get('/friends/messages/signal', (req, res) => {
+  const userId = (req.query.userId as string || '').trim();
+  const friendId = (req.query.friendId as string || '').trim();
+  if (!userId) {
+    return res.status(400).json({ error: 'userId requerido.' });
+  }
+  const signal = dataStore.getFriendMessageSignal(userId, friendId || undefined);
+  res.json(signal);
 });
 
 // Send direct message to a friend
@@ -2034,15 +2212,21 @@ apiRouter.delete('/vault/sheets/:id', (req, res) => {
   res.json({ success: true, message: 'Ficha eliminada correctamente.' });
 });
 
-// Get Player Sheets from Server Vault
-apiRouter.get('/vault/sheets', (req, res) => {
-  const ownerEmail = (req.query.ownerEmail as string || '').toLowerCase();
+// Get Player Sheets from Server Vault (auto-hydrates from cloud if server is in base state when any player enters)
+apiRouter.get('/vault/sheets', async (req, res) => {
+  try {
+    const meta = dataStore.getSyncMetadata();
+    if (meta.isBaseState) {
+      await compareAndSyncWithCloud('Hidratación automática al cargar fichas de jugador').catch(() => {});
+    }
+  } catch {}
+  const ownerEmail = ((req.query.ownerEmail as string) || '').trim().toLowerCase();
   const allSheets = dataStore.getPlayerSheets();
   if (ownerEmail) {
-    const filtered = allSheets.filter((s) => s.ownerEmail === ownerEmail);
-    return res.json({ sheets: filtered });
+    const filtered = allSheets.filter((s) => (s.ownerEmail || '').trim().toLowerCase() === ownerEmail);
+    return res.json({ sheets: filtered, vaultRevision: dataStore.getSyncMetadata().revision || 0 });
   }
-  res.json({ sheets: allSheets });
+  res.json({ sheets: allSheets, vaultRevision: dataStore.getSyncMetadata().revision || 0 });
 });
 
 // Save World Sheet to Server Vault (validates unique room/world name across DMs)
@@ -2155,15 +2339,21 @@ apiRouter.delete('/vault/worlds/:id', (req, res) => {
   res.json({ success: true, message: 'World Sheet eliminado correctamente.' });
 });
 
-// Get World Sheets from Server Vault
-apiRouter.get('/vault/worlds', (req, res) => {
-  const ownerEmail = (req.query.ownerEmail as string || '').toLowerCase();
+// Get World Sheets from Server Vault (auto-hydrates from cloud if server is in base state)
+apiRouter.get('/vault/worlds', async (req, res) => {
+  try {
+    const meta = dataStore.getSyncMetadata();
+    if (meta.isBaseState) {
+      await compareAndSyncWithCloud('Hidratación automática al cargar mundos').catch(() => {});
+    }
+  } catch {}
+  const ownerEmail = ((req.query.ownerEmail as string) || '').trim().toLowerCase();
   const allWorlds = dataStore.getWorldSheets();
   if (ownerEmail) {
-    const filtered = allWorlds.filter((w) => w.ownerEmail === ownerEmail);
-    return res.json({ worlds: filtered });
+    const filtered = allWorlds.filter((w) => (w.ownerEmail || '').trim().toLowerCase() === ownerEmail);
+    return res.json({ worlds: filtered, vaultRevision: dataStore.getSyncMetadata().revision || 0 });
   }
-  res.json({ worlds: allWorlds });
+  res.json({ worlds: allWorlds, vaultRevision: dataStore.getSyncMetadata().revision || 0 });
 });
 
 // Get Rotating Backups (for Admin viewer)
@@ -3257,7 +3447,10 @@ apiRouter.post('/vault/sync-check', async (req, res) => {
     }
 
     // 2. Run server-to-cloud comparison first (GitHub / Drive / Persistent /tmp Vault)
-    await compareAndSyncWithCloud('Comparación continua activa');
+    const cloudSyncResult = await compareAndSyncWithCloud('Comparación continua activa');
+    const serverJustHydratedFromCloud =
+      cloudSyncResult.action === 'restored_from_base' ||
+      cloudSyncResult.action === 'archived_and_restored_newer';
 
     const localMeta = dataStore.getSyncMetadata();
     const localTs = localMeta.lastModifiedAt || 0;
@@ -3313,14 +3506,16 @@ apiRouter.post('/vault/sync-check', async (req, res) => {
       return res.json({
         action: 'RESTORED_FROM_MIRROR',
         serverMeta: updatedMeta,
+        latestBackup: dataStore.getFullBackup(),
         replacedArchive: dataStore.getReplacedBackupsSummaries(),
       });
     }
 
-    // 4. If Server is newer than Client Mirror (and not on empty base state), send latest backup so client updates its mirror
+    // 4. If Server is newer than Client Mirror OR Server just hydrated from Cloud, send latest backup so client updates its mirror and UI
     const isServerNewer =
       !localMeta.isBaseState &&
-      (localTs > clientTimestamp ||
+      (serverJustHydratedFromCloud ||
+        localTs > clientTimestamp ||
         localRev > clientRevision ||
         (clientHash && clientHash !== localMeta.contentHash));
 

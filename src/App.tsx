@@ -137,6 +137,8 @@ export default function App() {
   const [roomCode, setRoomCode] = useState<string>(() => loadRoomCode() || 'MESA-DRAGON');
   const [worldSheets, setWorldSheets] = useState<WorldSheetSummary[]>([]);
   const [activeWorld, setActiveWorld] = useState<WorldSheetSummary | null>(null);
+  const [vaultSyncRevision, setVaultSyncRevision] = useState<number>(0);
+  const lastSeenServerVaultRevRef = useRef<number>(-1);
 
   // Password Prompt Modal State
   const [passwordModalConfig, setPasswordModalConfig] = useState<{
@@ -210,6 +212,7 @@ export default function App() {
           .catch(() => {});
       }
       fetchWorldSheets();
+      setVaultSyncRevision((r) => r + 1);
     } catch (err: any) {
       alert('Error al restaurar respaldo: ' + err.message);
     } finally {
@@ -466,6 +469,7 @@ export default function App() {
           });
           if (uploadRes.ok && isMounted) {
             fetchWorldSheets();
+            setVaultSyncRevision((r) => r + 1);
           }
         }
         // Case B: Server has a newer backup (from a mutation or cloud recovery) -> Save to our local mirror!
@@ -473,6 +477,10 @@ export default function App() {
           try {
             localStorage.setItem(MIRROR_STORAGE_KEY, JSON.stringify(checkData.latestBackup));
           } catch {}
+          if (isMounted) {
+            fetchWorldSheets();
+            setVaultSyncRevision((r) => r + 1);
+          }
         }
       } catch (err) {
         // Silent network retry on next interval
@@ -486,6 +494,55 @@ export default function App() {
       clearInterval(compareInterval);
     };
   }, [authUser?.email]);
+
+  // Real-time User Presence Heartbeat & Automatic Vault Revision Sync for ANY logged-in user
+  useEffect(() => {
+    if (!authUser?.id && !authUser?.email) return;
+    let isMounted = true;
+
+    const sendUserPresence = async () => {
+      if (!isMounted) return;
+      try {
+        const currentView = appViewRef.current;
+        const currentRoom = roomCodeRef.current;
+        const activity =
+          currentView === 'dm-session'
+            ? `Dirigiendo Sala (${currentRoom})`
+            : currentView === 'player-session'
+            ? `Jugando en Sala (${currentRoom})`
+            : currentView === 'player-solo'
+            ? 'Modo Solitario'
+            : 'En el Portal';
+
+        const res = await fetch('/api/users/heartbeat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: authUser.id,
+            email: authUser.email,
+            activity,
+          }),
+        });
+        if (!res.ok || !isMounted) return;
+        const data = await res.json();
+        if (
+          typeof data.vaultRevision === 'number' &&
+          data.vaultRevision !== lastSeenServerVaultRevRef.current
+        ) {
+          lastSeenServerVaultRevRef.current = data.vaultRevision;
+          fetchWorldSheets();
+          setVaultSyncRevision((r) => r + 1);
+        }
+      } catch {}
+    };
+
+    sendUserPresence();
+    const hbInterval = setInterval(sendUserPresence, 12000);
+    return () => {
+      isMounted = false;
+      clearInterval(hbInterval);
+    };
+  }, [authUser?.id, authUser?.email, appView, roomCode]);
 
   // Send player heartbeat to room server
   const sendPlayerHeartbeat = async (char?: Character5e) => {
@@ -1479,7 +1536,7 @@ export default function App() {
               className="px-2.5 py-1 rounded-full bg-[#1b1d28] hover:bg-[#252836] border border-[#c8a45c]/50 text-[#e2c275] text-[11px] font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
               title="Ver historial de versiones y novedades"
             >
-              <span>v1.1 Beta</span>
+              <span>v1.2 Beta</span>
               <span className="w-4 h-4 rounded-full bg-[#c8a45c]/25 border border-[#e2c275] text-[#f5e4be] flex items-center justify-center text-[10px] font-black">
                 ?
               </span>
@@ -1709,6 +1766,8 @@ export default function App() {
             onSaveHostSettings={handleSaveHostSettings}
             onRefreshAuthStatus={handleRefreshAuthStatus}
             charactersCount={characters.length}
+            localCharacters={characters}
+            vaultSyncRevision={vaultSyncRevision}
             onOpenCompendium={() => setIsCompendiumOpen(true)}
             onOpenOracle={(prompt) => {
               setOracleInitialPrompt(prompt || '');
@@ -2118,6 +2177,7 @@ export default function App() {
             }}
             worldName={activeWorld?.name}
             roomCode={roomCode}
+            roomPassword={activeWorld?.roomPassword}
             partyMembers={partyMembers}
             playerMessages={roomPlayerMessages}
             onMarkPlayerMessageRead={(messageId) => {
@@ -2154,6 +2214,24 @@ export default function App() {
             }}
             isOfflineMode={activeWorld?.roomMode === 'offline'}
             onToggleOfflineMode={handleToggleDmOfflineMode}
+            isOnlineSession={activeWorld?.roomMode !== 'offline'}
+            onToggleOnlineSession={() =>
+              handleToggleDmOfflineMode(activeWorld?.roomMode !== 'offline')
+            }
+            onUpdateTableSettings={(updates) => {
+              if (activeWorld) {
+                setRoomCode(updates.roomCode);
+                saveRoomCode(updates.roomCode);
+                setActiveWorld((prev) => (prev ? { ...prev, ...updates } : prev));
+                setWorldSheets((prev) =>
+                  prev.map((w) => (w.id === activeWorld.id ? { ...w, ...updates } : w))
+                );
+                handleUpdateWorldSheetConfig(activeWorld.id, {
+                  ...updates,
+                  roomMode: activeWorld.roomMode,
+                }).catch(() => {});
+              }
+            }}
             onOpenTableMapView={() => setIsSessionMapViewOpen(true)}
             onDmAdjustPlayer={handleDmAdjustPlayer}
           />

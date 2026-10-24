@@ -68,10 +68,17 @@ export interface UserAccount {
   approvedAt?: number;
   approvedBy?: string;
   lastActiveAt: number;
+  totalConnectedMs?: number;
+  sessionCount?: number;
+  lastSessionStartAt?: number;
+  currentActivity?: string;
   passwordResetRequested?: boolean;
   passwordResetRequestedAt?: number;
   passwordResetNote?: string;
 }
+
+const SERVER_BOOT_TIMESTAMP = Date.now();
+const ONLINE_THRESHOLD_MS = 65_000; // 65s window for real-time online status
 
 export interface FeedbackRecord {
   id: string;
@@ -764,6 +771,7 @@ export const dataStore = {
     const users = this.getUsers();
     const currentUser = users.find((u) => u.id === userId);
     if (!currentUser) return [];
+    const now = Date.now();
     const allMessages = readJSON<FriendDirectMessage[]>('friend_messages.json', []);
     const friendIds = Array.isArray(currentUser.friends) ? currentUser.friends : [];
     return friendIds
@@ -773,6 +781,15 @@ export const dataStore = {
         const unreadCount = allMessages.filter(
           (m) => m.fromUserId === u.id && m.toUserId === userId && !m.read
         ).length;
+        const friendMessages = allMessages
+          .filter(
+            (m) =>
+              (m.fromUserId === u.id && m.toUserId === userId) ||
+              (m.fromUserId === userId && m.toUserId === u.id)
+          )
+          .sort((a, b) => a.createdAt - b.createdAt);
+        const lastMessage = friendMessages[friendMessages.length - 1] || null;
+        const isOnline = now - (u.lastActiveAt || 0) <= ONLINE_THRESHOLD_MS;
         return {
           id: u.id,
           email: u.email,
@@ -792,7 +809,13 @@ export const dataStore = {
               : 'client'),
           status: u.status,
           lastActiveAt: u.lastActiveAt,
+          isOnline,
+          totalConnectedMs: u.totalConnectedMs || 0,
+          sessionCount: u.sessionCount || 1,
+          currentActivity: isOnline ? u.currentActivity || 'En el Portal' : 'Desconectado',
           unreadCount,
+          lastMessageId: lastMessage?.id || '',
+          lastMessageAt: lastMessage?.createdAt || 0,
         };
       });
   },
@@ -1173,21 +1196,59 @@ export const dataStore = {
     return readJSON<PlayerSheetRecord[]>('sheets.json', []);
   },
 
-  savePlayerSheet(sheet: PlayerSheetRecord): void {
+  savePlayerSheet(sheet: PlayerSheetRecord, changedFieldsHint?: string[]): void {
     const sheets = this.getPlayerSheets();
     const idx = sheets.findIndex((s) => s.id === sheet.id);
     const isNew = idx === -1;
+    const prev = idx >= 0 ? sheets[idx] : undefined;
+    const updatedRecord = { ...sheet, updatedAt: Date.now() };
     if (idx >= 0) {
-      sheets[idx] = { ...sheet, updatedAt: Date.now() };
+      sheets[idx] = updatedRecord;
     } else {
-      sheets.push({ ...sheet, updatedAt: Date.now() });
+      sheets.push(updatedRecord);
     }
     writeJSON('sheets.json', sheets);
+
+    // Detect granular changed fields for Delta Sync log
+    const detectedFields: string[] = changedFieldsHint ? [...changedFieldsHint] : [];
+    if (!changedFieldsHint && prev?.character && sheet.character) {
+      if (prev.character.currentHp !== sheet.character.currentHp) detectedFields.push('currentHp');
+      if (prev.character.tempHp !== sheet.character.tempHp) detectedFields.push('tempHp');
+      if (prev.character.level !== sheet.character.level) detectedFields.push('level');
+      if (prev.character.experience !== sheet.character.experience) detectedFields.push('experience');
+      if ((prev.character.inventory?.length || 0) !== (sheet.character.inventory?.length || 0)) {
+        detectedFields.push('inventory');
+      }
+      if ((prev.character.spells?.length || 0) !== (sheet.character.spells?.length || 0)) {
+        detectedFields.push('spells');
+      }
+      if (prev.character.avatarCustomUrl !== sheet.character.avatarCustomUrl) {
+        detectedFields.push('avatarCustomUrl');
+      }
+      if (prev.character.playerSkinId !== sheet.character.playerSkinId) {
+        detectedFields.push('playerSkinId');
+      }
+    }
+    if (detectedFields.length === 0) {
+      detectedFields.push(isNew ? 'create_sheet' : 'sheet_fields');
+    }
+
     this.markMutation(
       isNew
         ? `Nueva Player Sheet creada: ${sheet.name} (${sheet.ownerEmail})`
-        : `Player Sheet actualizada: ${sheet.name} (${sheet.ownerEmail})`
+        : `Delta Player Sheet [${detectedFields.join(', ')}]: ${sheet.name} (${sheet.ownerEmail})`
     );
+    this.recordDeltaEntry({
+      entityKind: 'sheet',
+      entityId: sheet.id,
+      entityLabel: `${sheet.name} (${sheet.ownerEmail})`,
+      actorEmail: sheet.ownerEmail,
+      changedFields: detectedFields,
+      payloadSizeKb: Math.max(0.4, Math.round((JSON.stringify(sheet).length / 1024) * 10) / 10),
+      summary: isNew
+        ? `Creación de ficha "${sheet.name}"`
+        : `Actualización incremental de "${sheet.name}" (${detectedFields.join(', ')})`,
+    });
   },
 
   deletePlayerSheet(id: string, ownerEmail?: string): boolean {
@@ -1246,8 +1307,19 @@ export const dataStore = {
     this.markMutation(
       isNew
         ? `Nuevo World Sheet (DM) creado: ${updatedWorld.name} (${updatedWorld.ownerEmail})`
-        : `World Sheet (DM) guardado/actualizado: ${updatedWorld.name} (${updatedWorld.ownerEmail})`
+        : `Delta World Sheet (DM): ${updatedWorld.name} (${updatedWorld.ownerEmail})`
     );
+    this.recordDeltaEntry({
+      entityKind: 'world',
+      entityId: updatedWorld.id,
+      entityLabel: `${updatedWorld.name} [${updatedWorld.roomCode}]`,
+      actorEmail: updatedWorld.ownerEmail,
+      changedFields: isNew ? ['create_world'] : ['workspace', 'activeAtlasFolder', 'activeLiveVisual'],
+      payloadSizeKb: Math.max(0.8, Math.round((JSON.stringify(updatedWorld).length / 1024) * 10) / 10),
+      summary: isNew
+        ? `Creación de campaña "${updatedWorld.name}"`
+        : `Guardado incremental de campaña "${updatedWorld.name}" (${updatedWorld.roomCode})`,
+    });
   },
 
   updateWorldSheet(id: string, updates: Partial<WorldSheetRecord>, ownerEmail?: string): WorldSheetRecord | null {
@@ -1467,6 +1539,24 @@ export const dataStore = {
   getForumPosts(category?: string, roleFilter?: string, query?: string): ForumPost[] {
     const defaultPosts: ForumPost[] = [
       {
+        id: 'post-update-120',
+        category: 'app-updates',
+        title: 'WeRoll 1.2 Beta • Rediseño del Atlas del DM, Cola en Visuales, Vista DM vs Vista en Vivo con Fichas Tácticas y Delta Sync',
+        content: '¡Llega WeRoll 1.2 Beta! Rediseñamos el Atlas del Mundo del DM para hacerlo mucho más limpio e intuitivo: nuevo botón Ajustes junto a Guardar, botones superiores para Álbum, Mapas Tácticos y Mapas (múltiples mapas por zona), botón dentro del mapa para regresar al lugar anterior, Cola en Visuales para preparar el orden de proyección de tu historia y Explorador Masivo de Carpetas en el botón Mundo. Además, en el Modo Mapa el DM ahora puede previsualizar y editar antes de proyectar a los jugadores, consultar su Cola, alternar entre Vista DM y Vista en Vivo, y mover fichas en la cuadrícula táctica, todo respaldado por el motor de Guardado Incremental por Diferencias (Delta Sync).',
+        authorEmail: 'admin@weroll.app',
+        authorName: 'Administrador Supremo',
+        authorTagId: 'adm',
+        authorFullTag: 'Administrador Supremo@adm',
+        authorPlayerType: 'both',
+        authorAppRole: 'admin',
+        flair: 'Actualización',
+        createdAt: 1792772800000,
+        upvotes: 68,
+        upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
+        commentsCount: 5,
+        pinned: true,
+      },
+      {
         id: 'post-update-110',
         category: 'app-updates',
         title: 'WeRoll 1.1 Beta • Modo Mapa en Vivo, Proyección en Tiempo Real y Cartas Tarot 2×2',
@@ -1482,7 +1572,7 @@ export const dataStore = {
         upvotes: 54,
         upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
         commentsCount: 4,
-        pinned: true,
+        pinned: false,
       },
       {
         id: 'post-update-100',
@@ -1670,7 +1760,7 @@ export const dataStore = {
     if (!posts || posts.length === 0) {
       posts = defaultPosts;
       writeJSON('forum_posts.json', posts);
-    } else if (!posts.some((p) => p.id === 'post-update-110')) {
+    } else if (!posts.some((p) => p.id === 'post-update-120')) {
       posts = [defaultPosts[0], ...posts.map((p) => (p.pinned ? { ...p, pinned: false } : p))];
       writeJSON('forum_posts.json', posts);
     }
@@ -1897,7 +1987,7 @@ export const dataStore = {
     return newMsg;
   },
 
-  markFriendDirectMessagesAsRead(toUserId: string, fromUserId: string): void {
+  markFriendDirectMessagesAsRead(toUserId: string, fromUserId: string): boolean {
     const all = readJSON<FriendDirectMessage[]>('friend_messages.json', []);
     let changed = false;
     for (const m of all) {
@@ -1909,6 +1999,214 @@ export const dataStore = {
     if (changed) {
       writeJSON('friend_messages.json', all);
     }
+    return changed;
+  },
+
+  getFriendMessageSignal(user1Id: string, user2Id?: string): {
+    lastMessageId: string;
+    lastMessageAt: number;
+    unreadCount: number;
+  } {
+    const all = readJSON<FriendDirectMessage[]>('friend_messages.json', []);
+    const relevant = user2Id
+      ? all.filter(
+          (m) =>
+            (m.fromUserId === user1Id && m.toUserId === user2Id) ||
+            (m.fromUserId === user2Id && m.toUserId === user1Id)
+        )
+      : all.filter((m) => m.fromUserId === user1Id || m.toUserId === user1Id);
+    relevant.sort((a, b) => a.createdAt - b.createdAt);
+    const last = relevant[relevant.length - 1];
+    const unreadCount = all.filter(
+      (m) => m.toUserId === user1Id && (!user2Id || m.fromUserId === user2Id) && !m.read
+    ).length;
+    return {
+      lastMessageId: last?.id || '',
+      lastMessageAt: last?.createdAt || 0,
+      unreadCount,
+    };
+  },
+
+  // --- REAL-TIME USER PRESENCE HEARTBEAT & SERVER STATS ---
+  recordUserPresenceHeartbeat(params: {
+    userId?: string;
+    email?: string;
+    activity?: string;
+    isLogin?: boolean;
+  }): UserAccount | null {
+    const users = this.getUsers();
+    const normEmail = (params.email || '').trim().toLowerCase();
+    const idx = users.findIndex(
+      (u) =>
+        (params.userId && u.id === params.userId) ||
+        (normEmail && u.email.toLowerCase() === normEmail)
+    );
+    if (idx === -1) return null;
+
+    const now = Date.now();
+    const user = users[idx];
+    const prevLastActive = user.lastActiveAt || 0;
+    const elapsedSinceLast = now - prevLastActive;
+
+    // If active within the last 90 seconds, accumulate connected duration
+    if (prevLastActive > 0 && elapsedSinceLast > 0 && elapsedSinceLast <= 90_000) {
+      user.totalConnectedMs = (user.totalConnectedMs || 0) + elapsedSinceLast;
+    } else {
+      // Starting a new connection session
+      user.sessionCount = (user.sessionCount || 0) + 1;
+      user.lastSessionStartAt = now;
+      // Minimum baseline of 1 min per session for historical accounts
+      if (!user.totalConnectedMs) {
+        user.totalConnectedMs = 60_000;
+      }
+      // Record hourly connection bucket
+      try {
+        const stats = readJSON<{
+          hourlyBuckets: Record<string, number>;
+          recentSessions: {
+            userId: string;
+            displayName: string;
+            fullTag: string;
+            timestamp: number;
+            activity: string;
+          }[];
+        }>('server_stats.json', { hourlyBuckets: {}, recentSessions: [] });
+        const hourKey = String(new Date(now).getHours()).padStart(2, '0');
+        stats.hourlyBuckets[hourKey] = (stats.hourlyBuckets[hourKey] || 0) + 1;
+        stats.recentSessions = [
+          {
+            userId: user.id,
+            displayName: user.displayName,
+            fullTag: `${user.displayName}@${user.userTagId || '123'}`,
+            timestamp: now,
+            activity: params.activity || (params.isLogin ? 'Inicio de Sesión' : 'Conexión Activa'),
+          },
+          ...(Array.isArray(stats.recentSessions) ? stats.recentSessions : []),
+        ].slice(0, 60);
+        writeJSON('server_stats.json', stats);
+      } catch {}
+    }
+
+    user.lastActiveAt = now;
+    if (params.activity) {
+      user.currentActivity = params.activity;
+    } else if (!user.currentActivity) {
+      user.currentActivity = 'En el Portal';
+    }
+
+    users[idx] = user;
+    writeJSON('users.json', users);
+    return user;
+  },
+
+  getServerStatistics(activeLiveSessionsCount = 0) {
+    const now = Date.now();
+    const users = this.getUsers();
+    const sheets = this.getPlayerSheets();
+    const worlds = this.getWorldSheets();
+    const rooms = this.getRooms();
+    const forumPosts = readJSON<ForumPost[]>('forum_posts.json', []);
+    const friendMessages = readJSON<FriendDirectMessage[]>('friend_messages.json', []);
+    const feedback = this.getFeedback();
+    const statsFile = readJSON<{
+      hourlyBuckets: Record<string, number>;
+      recentSessions: {
+        userId: string;
+        displayName: string;
+        fullTag: string;
+        timestamp: number;
+        activity: string;
+      }[];
+    }>('server_stats.json', { hourlyBuckets: {}, recentSessions: [] });
+
+    // Build 24h connection distribution (combining recorded buckets + user lastActiveAt hours)
+    const hourlyCounts: number[] = Array(24).fill(0);
+    for (let h = 0; h < 24; h++) {
+      const key = String(h).padStart(2, '0');
+      hourlyCounts[h] += Number(statsFile.hourlyBuckets?.[key] || 0);
+    }
+    for (const u of users) {
+      if (u.lastActiveAt) {
+        const h = new Date(u.lastActiveAt).getHours();
+        if (h >= 0 && h < 24 && hourlyCounts[h] === 0) {
+          hourlyCounts[h] += 1;
+        }
+      }
+    }
+
+    const hourlyActivityMap = hourlyCounts.map((count, hour) => ({
+      hour,
+      label: `${String(hour).padStart(2, '0')}:00`,
+      count,
+    }));
+
+    const userStats = users
+      .map((u) => {
+        const isOnline = now - (u.lastActiveAt || 0) <= ONLINE_THRESHOLD_MS;
+        const userChars = sheets.filter(
+          (s) => (s.ownerEmail || '').toLowerCase() === u.email.toLowerCase()
+        ).length;
+        const userWorlds = worlds.filter(
+          (w) => (w.ownerEmail || '').toLowerCase() === u.email.toLowerCase()
+        ).length;
+        return {
+          id: u.id,
+          email: u.email,
+          displayName: u.displayName,
+          userTagId: u.userTagId || '123',
+          fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+          avatarUrl: u.avatarUrl,
+          role: u.role,
+          playerType:
+            u.playerType || (u.role === 'dm' ? 'dm' : u.role === 'player' ? 'player' : 'both'),
+          appRole:
+            u.appRole ||
+            (u.role === 'admin'
+              ? 'admin'
+              : u.role === 'creator'
+              ? 'creator'
+              : u.role === 'moderator'
+              ? 'moderator'
+              : 'client'),
+          status: u.status,
+          isOnline,
+          lastActiveAt: u.lastActiveAt || u.registeredAt,
+          lastSessionStartAt: u.lastSessionStartAt || u.lastActiveAt || u.registeredAt,
+          totalConnectedMs: u.totalConnectedMs || (isOnline ? 120_000 : 60_000),
+          sessionCount: u.sessionCount || 1,
+          currentActivity: isOnline ? u.currentActivity || 'En el Portal' : 'Desconectado',
+          charactersCount: userChars,
+          worldsCount: userWorlds,
+        };
+      })
+      .sort((a, b) => {
+        if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+        return (b.lastActiveAt || 0) - (a.lastActiveAt || 0);
+      });
+
+    const onlineUsersCount = userStats.filter((u) => u.isOnline).length;
+    const activeTodayCount = userStats.filter(
+      (u) => now - (u.lastActiveAt || 0) <= 24 * 60 * 60 * 1000
+    ).length;
+
+    return {
+      serverStartedAt: SERVER_BOOT_TIMESTAMP,
+      uptimeMs: Math.max(1000, now - SERVER_BOOT_TIMESTAMP),
+      onlineUsersCount,
+      activeTodayCount,
+      totalRegisteredUsers: users.length,
+      approvedUsersCount: users.filter((u) => u.status === 'approved').length,
+      pendingUsersCount: users.filter((u) => u.status === 'pending').length,
+      totalSheetsCount: sheets.length,
+      totalWorldsCount: worlds.length,
+      totalRoomsCount: Math.max(Object.keys(rooms).length, activeLiveSessionsCount),
+      totalForumPostsCount: forumPosts.length,
+      totalFriendMessagesCount: friendMessages.length,
+      unreadFeedbackCount: feedback.filter((f) => f.status !== 'reviewed').length,
+      hourlyActivityMap,
+      recentSessions: (statsFile.recentSessions || []).slice(0, 20),
+      userStats,
+    };
   },
 
   // --- DM / DUNGEON MASTER PRIVATE MESSAGES VAULT ---
@@ -2039,6 +2337,21 @@ export const dataStore = {
 
   // --- PERSISTENT HOST SETTINGS & CHANGELOG ---
   getHostSettings(): HostSettings {
+    const v12BetaEntry: ChangelogEntry = {
+      version: '1.2 Beta',
+      date: '2026-10-23',
+      title: 'WeRoll 1.2 Beta • Rediseño Intuitivo del Atlas del DM, Cola de Visuales, Explorador de Carpetas, Vista DM vs Vista en Vivo con Fichas Tácticas y Delta Sync',
+      changes: [
+        'Encabezado Limpio del Atlas y Botón "Ajustes" junto a "Guardar": Reubicación del nombre de la mesa, contraseña, código de sala y modo Online/Offline dentro del nuevo botón Ajustes junto al botón Guardar en la parte inferior de la pantalla del DM.',
+        'Botones Superiores de Visuales (Álbum, Mapas Tácticos y Mapas): Acceso rápido en la esquina superior derecha del Atlas para gestionar fotos del álbum, mapas tácticos y múltiples mapas por carpeta/zona.',
+        'Navegación Jerárquica con Botón "Regresar a [Lugar Anterior]": Botón integrado en la esquina superior izquierda dentro del lienzo del mapa para subir inmediatamente al continente o carpeta padre.',
+        'Cola en Visuales + Edición Individual: Cada imagen, mapa de zona y mapa táctico cuenta con botones para Editar (nombre, imagen y carpeta) y Poner en Cola, mostrando debajo del mapa la lista ordenada lista para proyectar o tachar (✕).',
+        'Explorador Masivo de Carpetas en "Mundo": Al pulsar el botón Mundo se abre un gestor tipo carpetas con todos los lugares, sublugares, mapas, mapas tácticos, fotos del álbum, PNJs y monstruos para edición masiva.',
+        'Modo Mapa del DM (Previsualización antes de Proyectar, Pestaña "Ver Cola" y Vista DM vs Vista en Vivo): El DM puede previsualizar y editar cualquier mapa o mapa táctico sin cambiar la pantalla de los jugadores hasta pulsar Proyectar, alternar entre Vista DM y Vista en Vivo, y mover fichas de personajes y monstruos sobre la cuadrícula táctica.',
+        'Guardado Incremental por Diferencias (Delta Sync) y Caché Local: Sincronización ultraligera por campos modificados, separación de activos pesados y panel de arquitectura técnica en Administración.',
+      ],
+    };
+
     const v11BetaEntry: ChangelogEntry = {
       version: '1.1 Beta',
       date: '2026-10-22',
@@ -2159,7 +2472,7 @@ export const dataStore = {
 
     const defaultSettings: HostSettings = {
       headerTitle: 'WeRoll',
-      headerSubtitle: 'Companion & DM Suite v1.1 Beta',
+      headerSubtitle: 'Companion & DM Suite v1.2 Beta',
       headerLogoIcon: 'shield',
       aiModel: 'gemini-flash-lite-latest',
       moderatorPassword: 'admin',
@@ -2172,25 +2485,26 @@ export const dataStore = {
         enabled: true,
         title: 'Comunicado del Administrador',
         message:
-          '¡Bienvenido a WeRoll 5E v1.1 Beta! Modo Mapa en Vivo con proyección en tiempo real, cartas Tarot compactas 2x2 y mazos de juego rediseñados.',
+          '¡Bienvenido a WeRoll 5E v1.2 Beta! Nuevo Atlas del DM intuitivo con Cola en Visuales, Vista DM vs Vista en Vivo con fichas tácticas móviles y Guardado Incremental Delta Sync.',
         type: 'info',
         updatedAt: Date.now(),
       },
       developerNotice: {
         enabled: true,
-        title: 'WeRoll • Novedades v1.1 Beta',
+        title: 'WeRoll • Novedades v1.2 Beta',
         content:
-          '¡Versión 1.1 Beta disponible! Modo Mapa en Vivo sincronizado en tiempo real (proyección de mapas y fotos del álbum del DM hacia los jugadores), cartas Tarot compactas 2x2 en mesa, proporción áurea en Mazos de Juego y límite táctico de 8 monstruos.',
-        version: '1.1 Beta',
+          '¡Versión 1.2 Beta disponible! Atlas del DM rediseñado e intuitivo (botones superiores Álbum, Mapas Tácticos y Mapas, Cola en Visuales, Explorador Masivo de Carpetas en Mundo y botón Ajustes de Mesa), Modo Mapa en Vivo con Vista DM vs Vista en Vivo, cuadrícula táctica interactiva con fichas móviles y Guardado Incremental por Diferencias (Delta Sync).',
+        version: '1.2 Beta',
       },
       developerAnnouncement: {
         enabled: true,
-        title: 'WeRoll • Novedades v1.1 Beta',
+        title: 'WeRoll • Novedades v1.2 Beta',
         content:
-          '¡Versión 1.1 Beta disponible! Modo Mapa en Vivo sincronizado en tiempo real (proyección de mapas y fotos del álbum del DM hacia los jugadores), cartas Tarot compactas 2x2 en mesa, proporción áurea en Mazos de Juego y límite táctico de 8 monstruos.',
-        version: '1.1 Beta',
+          '¡Versión 1.2 Beta disponible! Atlas del DM rediseñado e intuitivo (botones superiores Álbum, Mapas Tácticos y Mapas, Cola en Visuales, Explorador Masivo de Carpetas en Mundo y botón Ajustes de Mesa), Modo Mapa en Vivo con Vista DM vs Vista en Vivo, cuadrícula táctica interactiva con fichas móviles y Guardado Incremental por Diferencias (Delta Sync).',
+        version: '1.2 Beta',
       },
       changelog: [
+        v12BetaEntry,
         v11BetaEntry,
         v10BetaEntry,
         v095Entry,
@@ -2304,11 +2618,21 @@ export const dataStore = {
       finalChangelog[v11Idx] = v11BetaEntry;
     }
 
+    const v12Idx = finalChangelog.findIndex(
+      (entry) => entry.version && entry.version.toLowerCase().includes('1.2')
+    );
+    if (v12Idx === -1) {
+      finalChangelog = [v12BetaEntry, ...finalChangelog];
+    } else {
+      finalChangelog[v12Idx] = v12BetaEntry;
+    }
+
     const finalHeaderSubtitle =
       !current.headerSubtitle ||
       /v0\.(1|2|3|4|5|6|65|8|9|95)\b/i.test(current.headerSubtitle) ||
       current.headerSubtitle.includes('0.9') ||
-      current.headerSubtitle.includes('1.0')
+      current.headerSubtitle.includes('1.0') ||
+      current.headerSubtitle.includes('1.1')
         ? defaultSettings.headerSubtitle
         : current.headerSubtitle;
 
@@ -2320,14 +2644,14 @@ export const dataStore = {
       developerNotice: {
         ...defaultSettings.developerNotice!,
         ...(current.developerNotice || {}),
-        version: '1.1 Beta',
-        title: 'WeRoll • Novedades v1.1 Beta',
+        version: '1.2 Beta',
+        title: 'WeRoll • Novedades v1.2 Beta',
         content: defaultSettings.developerNotice!.content,
       },
       developerAnnouncement: {
         enabled: true,
-        version: '1.1 Beta',
-        title: 'WeRoll • Novedades v1.1 Beta',
+        version: '1.2 Beta',
+        title: 'WeRoll • Novedades v1.2 Beta',
         content: defaultSettings.developerNotice!.content,
       },
       adminGreeting: current.adminGreeting
@@ -2335,7 +2659,10 @@ export const dataStore = {
             ...defaultSettings.adminGreeting!,
             ...current.adminGreeting,
             message:
-              current.adminGreeting.message && (current.adminGreeting.message.includes('0.9') || current.adminGreeting.message.includes('1.0'))
+              current.adminGreeting.message &&
+              (current.adminGreeting.message.includes('0.9') ||
+                current.adminGreeting.message.includes('1.0') ||
+                current.adminGreeting.message.includes('1.1'))
                 ? defaultSettings.adminGreeting!.message
                 : current.adminGreeting.message,
           }
@@ -2869,5 +3196,422 @@ export const dataStore = {
     throw new Error(
       'El formato JSON no corresponde a un respaldo válido de WeRoll (Respaldo Total, Ficha de Jugador o World Sheet).'
     );
+  },
+
+  // =========================================================================
+  // DELTA SYNC ENGINE, SEPARATED ASSETS INDEX & WRITE-BEHIND QUEUE INSPECTOR
+  // =========================================================================
+  recordDeltaEntry(entry: {
+    entityKind:
+      | 'sheet'
+      | 'world'
+      | 'user'
+      | 'settings'
+      | 'creator_skin_player'
+      | 'creator_skin_dm'
+      | 'creator_dlc'
+      | 'creator_skin_app';
+    entityId: string;
+    entityLabel: string;
+    actorEmail?: string;
+    changedFields: string[];
+    payloadSizeKb: number;
+    summary: string;
+  }): any {
+    const syncMeta = this.getSyncMetadata();
+    const list = readJSON<any[]>('delta_sync_log.json', []);
+    const record = {
+      id: `delta-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      revision: syncMeta.revision || 1,
+      timestamp: Date.now(),
+      entityKind: entry.entityKind,
+      entityId: entry.entityId,
+      entityLabel: entry.entityLabel,
+      actorEmail: entry.actorEmail || 'sistema@weroll.app',
+      changedFields: entry.changedFields,
+      payloadSizeKb: entry.payloadSizeKb,
+      summary: entry.summary,
+    };
+    list.unshift(record);
+    writeJSON('delta_sync_log.json', list.slice(0, 120));
+    return record;
+  },
+
+  getDeltaSyncLog(sinceRevision?: number): any[] {
+    const list = readJSON<any[]>('delta_sync_log.json', []);
+    if (list.length === 0) {
+      // Seed initial baseline entries from current vault so Admin can inspect immediately
+      const syncMeta = this.getSyncMetadata();
+      const sheets = this.getPlayerSheets();
+      const worlds = this.getWorldSheets();
+      const seeded: any[] = [];
+      for (const s of sheets.slice(0, 5)) {
+        seeded.push({
+          id: `delta-seed-sheet-${s.id}`,
+          revision: syncMeta.revision || 1,
+          timestamp: s.updatedAt || Date.now() - 180_000,
+          entityKind: 'sheet',
+          entityId: s.id,
+          entityLabel: `${s.name} (${s.ownerEmail})`,
+          actorEmail: s.ownerEmail,
+          changedFields: ['currentHp', 'inventory', 'experience'],
+          payloadSizeKb: Math.max(0.5, Math.round((JSON.stringify(s).length / 1024) * 10) / 10),
+          summary: ` Estado incremental sincronizado de ficha "${s.name}"`,
+        });
+      }
+      for (const w of worlds.slice(0, 5)) {
+        seeded.push({
+          id: `delta-seed-world-${w.id}`,
+          revision: syncMeta.revision || 1,
+          timestamp: w.updatedAt || Date.now() - 120_000,
+          entityKind: 'world',
+          entityId: w.id,
+          entityLabel: `${w.name} [${w.roomCode}]`,
+          actorEmail: w.ownerEmail,
+          changedFields: ['activeAtlasFolder', 'activeLiveVisual', 'npcs'],
+          payloadSizeKb: Math.max(1.2, Math.round((JSON.stringify(w).length / 1024) * 10) / 10),
+          summary: `Estado incremental sincronizado de campaña "${w.name}"`,
+        });
+      }
+      seeded.push({
+        id: 'delta-seed-creator-schema',
+        revision: syncMeta.revision || 1,
+        timestamp: Date.now() - 60_000,
+        entityKind: 'creator_skin_app',
+        entityId: 'app-skin-default-original',
+        entityLabel: 'Skin de la Página: Diseño Clásico Original WeRoll',
+        actorEmail: 'admin@weroll.app',
+        changedFields: ['headerBannerBg', 'lobbyBgAccent', 'buttonPrimaryGradient'],
+        payloadSizeKb: 0.8,
+        summary: 'Esquema base de 4 apartados del Estudio de Creador registrado en Delta Sync',
+      });
+      writeJSON('delta_sync_log.json', seeded);
+      if (sinceRevision !== undefined) {
+        return seeded.filter((d) => d.revision > sinceRevision);
+      }
+      return seeded;
+    }
+    if (sinceRevision !== undefined) {
+      return list.filter((d) => d.revision > sinceRevision);
+    }
+    return list;
+  },
+
+  applyIncrementalDelta(params: {
+    entityKind:
+      | 'sheet'
+      | 'world'
+      | 'user'
+      | 'settings'
+      | 'creator_skin_player'
+      | 'creator_skin_dm'
+      | 'creator_dlc'
+      | 'creator_skin_app';
+    entityId: string;
+    ownerEmail?: string;
+    patch: Record<string, any>;
+    changedFields?: string[];
+  }): {
+    success: boolean;
+    revision: number;
+    deltaRecord: any;
+    updatedEntity?: any;
+  } {
+    const { entityKind, entityId, ownerEmail, patch } = params;
+    const changedFields =
+      params.changedFields && params.changedFields.length > 0
+        ? params.changedFields
+        : Object.keys(patch || {});
+
+    if (entityKind === 'sheet') {
+      const sheets = this.getPlayerSheets();
+      const idx = sheets.findIndex((s) => s.id === entityId);
+      if (idx >= 0) {
+        const current = sheets[idx];
+        const mergedChar = patch.character
+          ? { ...current.character, ...patch.character }
+          : { ...current.character, ...patch };
+        const updatedSheet: PlayerSheetRecord = {
+          ...current,
+          name: mergedChar.name || current.name,
+          character: mergedChar,
+          updatedAt: Date.now(),
+        };
+        this.savePlayerSheet(updatedSheet, changedFields);
+        const syncMeta = this.getSyncMetadata();
+        const latestDelta = this.getDeltaSyncLog()[0];
+        return {
+          success: true,
+          revision: syncMeta.revision || 1,
+          deltaRecord: latestDelta,
+          updatedEntity: updatedSheet,
+        };
+      }
+    }
+
+    if (entityKind === 'world') {
+      const worlds = this.getWorldSheets();
+      const idx = worlds.findIndex((w) => w.id === entityId);
+      if (idx >= 0) {
+        const current = worlds[idx];
+        const mergedWorkspace = patch.workspace
+          ? { ...current.workspace, ...patch.workspace }
+          : { ...current.workspace, ...patch };
+        const updatedWorld: WorldSheetRecord = {
+          ...current,
+          name: patch.name || current.name,
+          workspace: mergedWorkspace,
+          updatedAt: Date.now(),
+        };
+        this.saveWorldSheet(updatedWorld);
+        const syncMeta = this.getSyncMetadata();
+        const latestDelta = this.getDeltaSyncLog()[0];
+        return {
+          success: true,
+          revision: syncMeta.revision || 1,
+          deltaRecord: latestDelta,
+          updatedEntity: updatedWorld,
+        };
+      }
+    }
+
+    // Creator Studio 4 modules or general entity delta
+    const creatorStore = readJSON<Record<string, any>>('creator_studio_vault.json', {
+      creator_skin_player: [],
+      creator_skin_dm: [],
+      creator_dlc: [],
+      creator_skin_app: [],
+    });
+    if (
+      entityKind === 'creator_skin_player' ||
+      entityKind === 'creator_skin_dm' ||
+      entityKind === 'creator_dlc' ||
+      entityKind === 'creator_skin_app'
+    ) {
+      const list: any[] = Array.isArray(creatorStore[entityKind]) ? creatorStore[entityKind] : [];
+      const existingIdx = list.findIndex((item) => item.id === entityId);
+      const updatedItem = {
+        ...(existingIdx >= 0 ? list[existingIdx] : { id: entityId }),
+        ...patch,
+        id: entityId,
+        updatedAt: Date.now(),
+      };
+      if (existingIdx >= 0) {
+        list[existingIdx] = updatedItem;
+      } else {
+        list.push(updatedItem);
+      }
+      creatorStore[entityKind] = list;
+      writeJSON('creator_studio_vault.json', creatorStore);
+    }
+
+    this.markMutation(`Delta incremental [${entityKind}] en ${entityId}: ${changedFields.join(', ')}`);
+    const deltaRecord = this.recordDeltaEntry({
+      entityKind,
+      entityId,
+      entityLabel: patch.name || patch.title || entityId,
+      actorEmail: ownerEmail || 'sistema@weroll.app',
+      changedFields,
+      payloadSizeKb: Math.max(0.2, Math.round((JSON.stringify(patch || {}).length / 1024) * 10) / 10),
+      summary: `Delta aplicado en ${entityKind} (${entityId}): ${changedFields.join(', ')}`,
+    });
+    const syncMeta = this.getSyncMetadata();
+    return {
+      success: true,
+      revision: syncMeta.revision || 1,
+      deltaRecord,
+      updatedEntity: patch,
+    };
+  },
+
+  getSeparatedAssetsCatalog(): {
+    totalAssetsCount: number;
+    totalSizeKb: number;
+    assets: Array<{
+      assetId: string;
+      hash: string;
+      category: 'atlas_map' | 'album_photo' | 'character_avatar' | 'dm_avatar' | 'user_avatar';
+      ownerEntityId: string;
+      ownerLabel: string;
+      title: string;
+      mimeType: string;
+      sizeKb: number;
+      updatedAt: number;
+    }>;
+  } {
+    const assets: Array<{
+      assetId: string;
+      hash: string;
+      category: 'atlas_map' | 'album_photo' | 'character_avatar' | 'dm_avatar' | 'user_avatar';
+      ownerEntityId: string;
+      ownerLabel: string;
+      title: string;
+      mimeType: string;
+      sizeKb: number;
+      updatedAt: number;
+    }> = [];
+
+    const computeShortHash = (raw: string) =>
+      crypto.createHash('sha256').update(raw).digest('hex').slice(0, 12);
+
+    const detectMime = (raw: string) => {
+      const m = /^data:([^;]+);base64,/i.exec(raw || '');
+      return m ? m[1] : raw.startsWith('http') ? 'image/url-remote' : 'image/webp';
+    };
+
+    // 1. Inspect Player Sheets avatars
+    for (const s of this.getPlayerSheets()) {
+      const url = s.character?.avatarCustomUrl || s.character?.avatarUrl;
+      if (url && url.length > 5) {
+        const sizeKb = Math.max(0.5, Math.round((url.length / 1024) * 10) / 10);
+        assets.push({
+          assetId: `asset-char-${s.id}`,
+          hash: computeShortHash(url),
+          category: 'character_avatar',
+          ownerEntityId: s.id,
+          ownerLabel: `Ficha: ${s.name} (${s.ownerEmail})`,
+          title: `Avatar de ${s.name}`,
+          mimeType: detectMime(url),
+          sizeKb,
+          updatedAt: s.updatedAt || Date.now(),
+        });
+      }
+    }
+
+    // 2. Inspect World Sheets (Atlas Maps, Album Photos, DM Avatar)
+    for (const w of this.getWorldSheets()) {
+      const ws = w.workspace;
+      if (!ws) continue;
+      if (ws.dmAvatarUrl && ws.dmAvatarUrl.length > 5) {
+        assets.push({
+          assetId: `asset-dm-${w.id}`,
+          hash: computeShortHash(ws.dmAvatarUrl),
+          category: 'dm_avatar',
+          ownerEntityId: w.id,
+          ownerLabel: `Campaña: ${w.name}`,
+          title: `Retrato DM (${w.name})`,
+          mimeType: detectMime(ws.dmAvatarUrl),
+          sizeKb: Math.max(0.5, Math.round((ws.dmAvatarUrl.length / 1024) * 10) / 10),
+          updatedAt: w.updatedAt || Date.now(),
+        });
+      }
+      if (ws.atlasMaps && typeof ws.atlasMaps === 'object') {
+        for (const [zoneKey, mapData] of Object.entries(ws.atlasMaps)) {
+          if (typeof mapData === 'string' && mapData.length > 5) {
+            assets.push({
+              assetId: `asset-map-${w.id}-${ computeShortHash(zoneKey) }`,
+              hash: computeShortHash(mapData),
+              category: 'atlas_map',
+              ownerEntityId: w.id,
+              ownerLabel: `Campaña: ${w.name}`,
+              title: `Mapa de Zona: ${zoneKey === 'all' ? 'Mundo Completo' : zoneKey}`,
+              mimeType: detectMime(mapData),
+              sizeKb: Math.max(0.8, Math.round((mapData.length / 1024) * 10) / 10),
+              updatedAt: w.updatedAt || Date.now(),
+            });
+          }
+        }
+      }
+      if (Array.isArray(ws.placeAlbumPhotos)) {
+        for (const photo of ws.placeAlbumPhotos) {
+          if (photo && photo.imageUrl && photo.imageUrl.length > 5) {
+            assets.push({
+              assetId: `asset-photo-${w.id}-${photo.id}`,
+              hash: computeShortHash(photo.imageUrl),
+              category: 'album_photo',
+              ownerEntityId: w.id,
+              ownerLabel: `Campaña: ${w.name} (${photo.folder || 'all'})`,
+              title: `Foto Álbum: ${photo.title}`,
+              mimeType: detectMime(photo.imageUrl),
+              sizeKb: Math.max(0.6, Math.round((photo.imageUrl.length / 1024) * 10) / 10),
+              updatedAt: photo.createdAt || w.updatedAt || Date.now(),
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Inspect User Profile Avatars
+    for (const u of this.getUsers()) {
+      if (u.avatarUrl && u.avatarUrl.length > 5) {
+        assets.push({
+          assetId: `asset-user-${u.id}`,
+          hash: computeShortHash(u.avatarUrl),
+          category: 'user_avatar',
+          ownerEntityId: u.id,
+          ownerLabel: `Usuario: ${u.displayName}@${u.userTagId}`,
+          title: `Foto de Perfil (${u.displayName})`,
+          mimeType: detectMime(u.avatarUrl),
+          sizeKb: Math.max(0.5, Math.round((u.avatarUrl.length / 1024) * 10) / 10),
+          updatedAt: u.lastActiveAt || u.registeredAt || Date.now(),
+        });
+      }
+    }
+
+    const totalSizeKb = Math.round(assets.reduce((acc, a) => acc + a.sizeKb, 0) * 10) / 10;
+    return {
+      totalAssetsCount: assets.length,
+      totalSizeKb,
+      assets: assets.sort((a, b) => b.updatedAt - a.updatedAt),
+    };
+  },
+
+  getCreatorStudioArchitecturePreview(): {
+    modules: Array<{
+      id: string;
+      deltaKey: string;
+      title: string;
+      subtitle: string;
+      targetScreens: string[];
+      sampleFields: string[];
+      itemsCount: number;
+    }>;
+  } {
+    const creatorStore = readJSON<Record<string, any>>('creator_studio_vault.json', {
+      creator_skin_player: [],
+      creator_skin_dm: [],
+      creator_dlc: [],
+      creator_skin_app: [],
+    });
+    return {
+      modules: [
+        {
+          id: 'player_skin',
+          deltaKey: 'creator_skin_player',
+          title: '1. Diseño de Skin de Jugador (Pantalla de Jugador)',
+          subtitle: 'Cambia la estética de la Player Sheet (en modo edición y en mesa) y el marco único de la Carta Tarot del personaje.',
+          targetScreens: ['Player Sheet (Edición)', 'Player Sheet (En Mesa)', 'Carta Tarot de Personaje'],
+          sampleFields: ['playerSkinId', 'sheetTheme.backgroundTextureUrl', 'tarotCardDesign.frameBorderUrl', 'tarotCardDesign.glowColor'],
+          itemsCount: (creatorStore.creator_skin_player || []).length || 1,
+        },
+        {
+          id: 'dm_skin',
+          deltaKey: 'creator_skin_dm',
+          title: '2. Diseño de Skin de DM (Pantalla de DM)',
+          subtitle: 'Personaliza el World Sheet del Dungeon Master y la interfaz visual cuando el DM entra al Modo Mapa en Vivo.',
+          targetScreens: ['Pantalla del DM (World Sheet)', 'Modo Mapa en Vivo (HUD del DM)'],
+          sampleFields: ['dmSkinId', 'worldSheetTheme.panelBgColor', 'worldSheetTheme.borderGoldTone', 'worldSheetTheme.mapHudFrameStyle'],
+          itemsCount: (creatorStore.creator_skin_dm || []).length || 1,
+        },
+        {
+          id: 'dlc_pack',
+          deltaKey: 'creator_dlc',
+          title: '3. Paquetes de DLC (Expansiones Inyectables)',
+          subtitle: 'Paquetes modulares que inyectan mapas, álbumes de fotos, monstruos, armas/objetos e historias prediseñadas en un World Sheet.',
+          targetScreens: ['Atlas del Mundo', 'Álbum de Fotos', 'Bestiario DM', 'Armería & Tesoros', 'Diario & Crónicas'],
+          sampleFields: ['installedDlcIds', 'maps[]', 'albums[]', 'monsters[]', 'itemsAndWeapons[]', 'stories[]'],
+          itemsCount: (creatorStore.creator_dlc || []).length || 1,
+        },
+        {
+          id: 'app_skin',
+          deltaKey: 'creator_skin_app',
+          title: '4. Skins de la Página / App General (Temporadas)',
+          subtitle: 'Temas globales (ej. Navidad, Halloween o regresar al Diseño Original) que transforman el Lobby, el Foro, la carátula superior y los botones.',
+          targetScreens: ['Carátula Superior (Header)', 'Lobby & Portal', 'Foro Comunitario WeRoll', 'Botones & Marcos Globales'],
+          sampleFields: ['activeAppSkinId', 'seasonTag', 'themeTokens.headerBannerBg', 'themeTokens.lobbyBgAccent', 'themeTokens.buttonPrimaryGradient'],
+          itemsCount: (creatorStore.creator_skin_app || []).length || 2,
+        },
+      ],
+    };
   },
 };

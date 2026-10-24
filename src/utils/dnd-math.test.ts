@@ -550,4 +550,136 @@ test('buildLiveProjectionFromWorkspace resolves activeLiveVisual album photos, a
   assert.equal(projMap.visualTitle, 'Mapa: Taberna del Jabalí');
 });
 
+import {
+  getParentAtlasFolder,
+  getParentPlaceDisplayName,
+  getReturnToParentButtonLabel,
+  enqueueVisualItem,
+  removeVisualFromQueue,
+  moveTacticalTokenOnGrid,
+} from './dnd-math.ts';
+
+test('getParentAtlasFolder and buildAtlasBreadcrumbs allow returning to any previous zone in Ruta de la Zona and Proyección de Zona', () => {
+  assert.equal(getParentAtlasFolder('Costa de la Espada / Taberna del Jabalí / Sótano'), 'Costa de la Espada / Taberna del Jabalí');
+  assert.equal(getParentAtlasFolder('Costa de la Espada / Taberna del Jabalí'), 'Costa de la Espada');
+  assert.equal(getParentAtlasFolder('Costa de la Espada'), 'all');
+  assert.equal(getParentAtlasFolder('all'), 'all');
+
+  const crumbs = buildAtlasBreadcrumbs('Costa de la Espada / Taberna del Jabalí / Sótano');
+  assert.equal(crumbs.length, 4);
+  assert.equal(crumbs[0].folderPath, 'all');
+  assert.equal(crumbs[1].folderPath, 'Costa de la Espada');
+  assert.equal(crumbs[2].folderPath, 'Costa de la Espada / Taberna del Jabalí');
+  assert.equal(crumbs[3].folderPath, 'Costa de la Espada / Taberna del Jabalí / Sótano');
+});
+
+test('getParentPlaceDisplayName and getReturnToParentButtonLabel format top-left return button inside map canvas', () => {
+  assert.equal(
+    getParentPlaceDisplayName('Faerûn / Aguas Profundas', 'Reinos Olvidados'),
+    'Faerûn'
+  );
+  assert.equal(
+    getReturnToParentButtonLabel('Faerûn / Aguas Profundas', 'Reinos Olvidados'),
+    'Regresar a Faerûn'
+  );
+  assert.equal(
+    getReturnToParentButtonLabel('Faerûn', 'Reinos Olvidados'),
+    'Regresar a Reinos Olvidados'
+  );
+  assert.equal(
+    getReturnToParentButtonLabel('Faerûn'),
+    'Regresar a Mundo'
+  );
+});
+
+test('enqueueVisualItem and removeVisualFromQueue manage the DM visual storytelling queue in order', () => {
+  let queue = enqueueVisualItem([], {
+    queueId: 'q-1',
+    id: 'alb-1',
+    kind: 'album',
+    title: 'Entrada a la Ciudad',
+    imageUrl: 'https://example.com/city.jpg',
+    folder: 'Faerûn / Ciudad',
+  });
+  queue = enqueueVisualItem(queue, {
+    queueId: 'q-2',
+    id: 'tac-1',
+    kind: 'tactical',
+    title: 'Emboscada en el Callejón',
+    imageUrl: 'https://example.com/alley.jpg',
+    folder: 'Faerûn / Ciudad',
+  });
+
+  assert.equal(queue.length, 2);
+  assert.equal(queue[0].title, 'Entrada a la Ciudad');
+  assert.equal(queue[1].title, 'Emboscada en el Callejón');
+
+  // Re-adding same id+kind updates existing item without duplicating
+  queue = enqueueVisualItem(queue, {
+    id: 'alb-1',
+    kind: 'album',
+    title: 'Entrada a la Ciudad (Noche)',
+    imageUrl: 'https://example.com/city-night.jpg',
+    folder: 'Faerûn / Ciudad',
+  });
+  assert.equal(queue.length, 2);
+  assert.equal(queue[0].title, 'Entrada a la Ciudad (Noche)');
+
+  // Crossing off item removes it cleanly
+  queue = removeVisualFromQueue(queue, 'q-1');
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].id, 'tac-1');
+});
+
+test('moveTacticalTokenOnGrid moves tokens on the tactical grid and clamps coordinates to bounds', () => {
+  const initialTokens = [
+    { id: 'tok-p1', label: 'Tharivol', kind: 'player' as const, x: 2, y: 3 },
+    { id: 'tok-m1', label: 'Goblin', kind: 'monster' as const, x: 6, y: 4 },
+  ];
+
+  const moved = moveTacticalTokenOnGrid(initialTokens, 'tok-p1', 5, 7, 10, 8);
+  assert.equal(moved[0].x, 5);
+  assert.equal(moved[0].y, 7);
+  assert.equal(moved[1].x, 6);
+
+  // Out of bounds clamps to [0..cols-1] and [0..rows-1]
+  const clamped = moveTacticalTokenOnGrid(moved, 'tok-m1', 99, -4, 10, 8);
+  assert.equal(clamped[1].x, 9);
+  assert.equal(clamped[1].y, 0);
+});
+
+test('buildLiveProjectionFromWorkspace keeps projected tavern image locked for players when DM browses another zone unless autoSyncLiveOnZoneChange is enabled', () => {
+  // DM projected the Tavern photo, then moved activeAtlasFolder to "Mazmorra Oscura" to inspect maps while autoSyncLiveOnZoneChange is false
+  const projLocked = buildLiveProjectionFromWorkspace(
+    {
+      activeAtlasFolder: 'Costa de la Espada / Mazmorra Oscura',
+      autoSyncLiveOnZoneChange: false,
+      atlasMaps: {
+        'Costa de la Espada / Taberna del Jabalí': 'https://example.com/map-taberna.jpg',
+        'Costa de la Espada / Mazmorra Oscura': 'https://example.com/map-mazmorra.jpg',
+      },
+      activeLiveVisual: {
+        kind: 'album',
+        id: 'alb-taberna',
+        title: 'Interior de la Taberna',
+        imageUrl: 'data:image/png;base64,TABERNA_PHOTO',
+        folder: 'Costa de la Espada / Taberna del Jabalí',
+      },
+      placeAlbumPhotos: [
+        {
+          id: 'alb-taberna',
+          title: 'Interior de la Taberna',
+          imageUrl: 'data:image/png;base64,TABERNA_PHOTO',
+          folder: 'Costa de la Espada / Taberna del Jabalí',
+        },
+      ],
+    },
+    'Reinos Olvidados'
+  );
+
+  assert.equal(projLocked.locationFolder, 'Costa de la Espada / Taberna del Jabalí');
+  assert.equal(projLocked.locationName, 'Taberna del Jabalí');
+  assert.equal(projLocked.visualImageUrl, 'data:image/png;base64,TABERNA_PHOTO');
+  assert.equal(projLocked.visualTitle, 'Interior de la Taberna');
+});
 

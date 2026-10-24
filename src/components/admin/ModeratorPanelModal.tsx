@@ -248,41 +248,23 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
             </button>
           )}
           <div
-            className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-              isCreatorOrAdmin
-                ? 'bg-amber-950/70 border border-amber-500 text-amber-300'
-                : 'bg-purple-950/70 border border-purple-600 text-purple-300'
-            }`}
+            className="w-10 h-10 rounded-xl flex items-center justify-center bg-purple-950/70 border border-purple-600 text-purple-300"
           >
             <Shield className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h3
-                className={`font-cinzel font-black text-base sm:text-lg ${
-                  isCreatorOrAdmin ? 'text-amber-200' : 'text-purple-200'
-                }`}
-              >
+              <h3 className="font-cinzel font-black text-base sm:text-lg text-purple-200">
                 Página de Moderación WeRoll
               </h3>
-              <span
-                className={`text-[10px] font-sans font-bold px-2.5 py-0.5 rounded-full border ${
-                  isCreatorOrAdmin
-                    ? 'bg-amber-950/80 border-amber-600 text-amber-300'
-                    : 'bg-purple-950/80 border-purple-700/60 text-purple-300'
-                }`}
-              >
+              <span className="text-[10px] font-sans font-bold px-2.5 py-0.5 rounded-full border bg-purple-950/80 border-purple-700/60 text-purple-300">
                 {authUser.appRole === 'admin' || authUser.role === 'admin'
-                  ? 'Nivel: Administrador / Creador'
-                  : isCreatorOrAdmin
-                  ? 'Nivel: Creador de Contenido'
+                  ? 'Nivel: Administrador'
                   : 'Nivel: Moderador'}
               </span>
             </div>
             <p className="text-xs text-stone-400">
-              {isCreatorOrAdmin
-                ? 'Estudio de Creador de Contenido, aprobación de usuarios, avisos pop-up en vivo y permisos del foro.'
-                : 'Aprobación de nuevos usuarios, envío de avisos pop-up en vivo y permisos del foro.'}
+              Aprobación de nuevos usuarios, envío de avisos pop-up en vivo y permisos del foro.
             </p>
           </div>
         </div>
@@ -333,62 +315,118 @@ export const ModeratorPanelModal: React.FC<ModeratorPanelModalProps> = ({
 
       {/* Main Body */}
       <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar bg-[#101115]">
-        {/* CREATOR EXCLUSIVE SECTION (Shown when in Creator Mode or if user is Creator/Admin) */}
-        {isCreatorOrAdmin && (
-          <div className="bg-gradient-to-r from-[#1a1610] via-[#181822] to-[#1a1610] border-2 border-amber-600/60 rounded-2xl p-5 shadow-xl space-y-3">
+        {/* CREATOR EXCLUSIVE SECTION HIDDEN FOR v1.2 BETA */}
+        {false && isCreatorOrAdmin && (
+          <div
+            data-testid="creator-studio-4-modules"
+            className="bg-gradient-to-r from-[#1a1610] via-[#181822] to-[#1a1610] border-2 border-amber-600/60 rounded-2xl p-5 shadow-xl space-y-4"
+          >
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-amber-950 border border-amber-500 flex items-center justify-center text-amber-300">
                   <Palette className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <h4 className="font-cinzel font-black text-sm text-amber-300 uppercase">
-                      Estudio de Creador de Contenido (Nivel Superior a Moderación)
+                      Estudio de Creador de Contenido • 4 Apartados Oficiales
                     </h4>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-600 text-[10px] font-mono font-bold text-emerald-300">
+                      ⚡ Delta Sync Listo
+                    </span>
                     <span className="px-2 py-0.5 rounded-full bg-amber-950 border border-amber-600 text-[10px] font-cinzel font-bold text-amber-300">
-                      Próximamente
+                      Arquitectura Preparada
                     </span>
                   </div>
-                  <p className="text-xs text-stone-400">
-                    Aquí podrás diseñar Skins para hojas de personaje y pantallas del DM, marcos de cartas y temas visuales para la comunidad.
+                  <p className="text-xs text-stone-400 mt-0.5">
+                    Estructura dividida en los 4 apartados oficiales e integrada con el motor de Guardado Incremental por Diferencias (Delta Sync) y separación de imágenes para portabilidad en GitHub y AI Studio.
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-              <div className="p-3.5 rounded-xl bg-[#121318] border border-amber-800/40 flex items-start gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              {/* Apartado 1: Diseño de Skin de Jugador */}
+              <div
+                data-testid="creator-module-player-skin"
+                className="p-3.5 rounded-xl bg-[#121318] border border-amber-800/50 flex items-start gap-3"
+              >
                 <Palette className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-cinzel font-bold text-xs text-amber-200 block">
-                    Skins de Pantalla DM & Jugador
-                  </span>
-                  <span className="text-[11px] text-stone-400">
-                    Personalización de texturas, bordes dorados y colores de interfaz (En desarrollo).
-                  </span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-cinzel font-bold text-xs text-amber-200">
+                      1. Diseño de Skin de Jugador (Pantalla de Jugador)
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60">
+                      delta: creator_skin_player
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-stone-400 leading-relaxed">
+                    Al elegir esta skin, la <strong>Player Sheet</strong> (tanto en modo edición individual como conectado en una mesa en vivo) cambia su estética visual y la <strong>Carta Tarot de Personaje</strong> adopta un marco y diseño único.
+                  </p>
                 </div>
               </div>
-              <div className="p-3.5 rounded-xl bg-[#121318] border border-amber-800/40 flex items-start gap-3">
+
+              {/* Apartado 2: Diseño de Skin de DM */}
+              <div
+                data-testid="creator-module-dm-skin"
+                className="p-3.5 rounded-xl bg-[#121318] border border-purple-800/50 flex items-start gap-3"
+              >
                 <Layers className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-cinzel font-bold text-xs text-purple-200 block">
-                    Diseño de Mazos y Cartas
-                  </span>
-                  <span className="text-[11px] text-stone-400">
-                    Plantillas visuales para barajas de conjuros, monstruos, NPCs y reliquias (En desarrollo).
-                  </span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-cinzel font-bold text-xs text-purple-200">
+                      2. Diseño de Skin de DM (Pantalla de DM)
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-950/90 text-purple-300 border border-purple-700/60">
+                      delta: creator_skin_dm
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-stone-400 leading-relaxed">
+                    Personaliza la hoja del Dungeon Master (<strong>World Sheet</strong>) y transforma los marcos, paneles tácticos y estética visual cuando el DM entra al <strong>Modo Mapa en Vivo</strong>.
+                  </p>
                 </div>
               </div>
-              <div className="p-3.5 rounded-xl bg-[#121318] border border-amber-800/40 flex items-start gap-3">
+
+              {/* Apartado 3: Paquetes de DLC */}
+              <div
+                data-testid="creator-module-dlc"
+                className="p-3.5 rounded-xl bg-[#121318] border border-emerald-800/50 flex items-start gap-3"
+              >
                 <Sparkles className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-cinzel font-bold text-xs text-emerald-200 block">
-                    Paquetes de Mapas y Álbumes
-                  </span>
-                  <span className="text-[11px] text-stone-400">
-                    Publicación de mapas regionales y recursos para el Atlas del Mundo (En desarrollo).
-                  </span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-cinzel font-bold text-xs text-emerald-200">
+                      3. Paquetes de DLC (Expansiones Inyectables)
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/90 text-emerald-300 border border-emerald-700/60">
+                      delta: creator_dlc
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-stone-400 leading-relaxed">
+                    Al inyectar un <strong>DLC de Creador</strong> en una campaña se agregan de forma modular: mapas del Atlas, álbumes de fotos, monstruos del bestiario, armas/objetos e historias prediseñadas.
+                  </p>
+                </div>
+              </div>
+
+              {/* Apartado 4: Skins de la Página / App General */}
+              <div
+                data-testid="creator-module-app-skin"
+                className="p-3.5 rounded-xl bg-[#121318] border border-cyan-800/50 flex items-start gap-3"
+              >
+                <Shield className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-cinzel font-bold text-xs text-cyan-200">
+                      4. Skins de la Página (App General / Temporadas)
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-950/90 text-cyan-300 border border-cyan-700/60">
+                      delta: creator_skin_app
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-stone-400 leading-relaxed">
+                    Permite activar temas globales de temporada (ej. <strong>Navidad</strong>, Halloween o aniversario) y regresar en un clic al <strong>Diseño Original</strong>, cambiando el Lobby, el Foro, la carátula superior y los botones.
+                  </p>
                 </div>
               </div>
             </div>

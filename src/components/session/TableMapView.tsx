@@ -45,6 +45,10 @@ import {
   DiceRollResult,
   PlaceAlbumPhoto,
   Combatant,
+  LocationRecord,
+  ZoneMapRecord,
+  VisualQueueItem,
+  TacticalMapToken,
 } from '../../types/dnd';
 import {
   calculateModifier,
@@ -54,6 +58,8 @@ import {
   deriveEquippedWeaponAttacks,
   getEffectiveAbilityModifier,
   buildAtlasBreadcrumbs,
+  getParentAtlasFolder,
+  getReturnToParentButtonLabel,
   getChildFoldersForAtlas,
   ensureCompleteFolderHierarchy,
   getPinPositionForChildPlace,
@@ -61,6 +67,9 @@ import {
   MAX_ENCOUNTER_ENEMIES,
   canAddEnemyToEncounter,
   buildLiveProjectionFromWorkspace,
+  enqueueVisualItem,
+  removeVisualFromQueue,
+  moveTacticalTokenOnGrid,
 } from '../../utils/dnd-math';
 import { CharacterTarotCard } from '../character/CharacterTarotCard';
 import { ABILITY_LABELS, SKILL_METADATA } from '../../data/srd';
@@ -204,8 +213,31 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
   const [activePlayerDeck, setActivePlayerDeck] = useState<'attacks' | 'skills' | 'spells'>('attacks');
   const [playerDeckScrollIdx, setPlayerDeckScrollIdx] = useState<number>(0);
 
-  // DM Projection Overlay Tab ('gallery' | 'tactical')
-  const [dmProjectionTab, setDmProjectionTab] = useState<'gallery' | 'tactical'>('gallery');
+  // DM Projection Overlay Tab ('gallery' | 'tactical' | 'queue')
+  const [dmProjectionTab, setDmProjectionTab] = useState<'gallery' | 'tactical' | 'queue'>('gallery');
+
+  // DM Viewport Mode: 'dm' (Vista DM para revisar/editar) vs 'live' (Vista en Vivo que ven los jugadores)
+  const [dmViewportMode, setDmViewportMode] = useState<'dm' | 'live'>('dm');
+
+  // Tactical Grid Selected Token ID for click-to-move on grid
+  const [selectedTacticalTokenId, setSelectedTacticalTokenId] = useState<string | null>(null);
+
+  // Inline Edit Visual Modal inside DM Map View
+  const [editingVisualItem, setEditingVisualItem] = useState<{
+    kind: 'map' | 'zonemap' | 'album' | 'tactical';
+    id: string;
+    title: string;
+    imageUrl: string;
+    folder: string;
+    gridCols?: number;
+    gridRows?: number;
+  } | null>(null);
+
+  // Quick New Tactical Map Inputs inside DM Map View
+  const [newTacticalTitle, setNewTacticalTitle] = useState<string>('');
+  const [newTacticalUrl, setNewTacticalUrl] = useState<string>('');
+  const [newTacticalCols, setNewTacticalCols] = useState<number>(10);
+  const [newTacticalRows, setNewTacticalRows] = useState<number>(10);
 
   // DM Edit Map / Upload Photo / Sub-Place Modals
   const [isEditMapModalOpen, setIsEditMapModalOpen] = useState<boolean>(false);
@@ -243,6 +275,14 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
   // =========================================================================
   // 2. ATLAS / LOCATION & VISUAL PROJECTION RESOLUTION
   // =========================================================================
+  const [dmInspectedVisual, setDmInspectedVisual] = useState<{
+    kind: 'map' | 'album' | 'tactical';
+    id: string;
+    title: string;
+    imageUrl: string;
+    folder: string;
+  } | null>(null);
+
   const selectedFolder = useMemo(() => {
     if (mode === 'dm' && workspace) {
       return workspace.activeAtlasFolder || workspace.activeLiveVisual?.folder || 'all';
@@ -250,43 +290,86 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
     return liveProjection?.locationFolder || 'all';
   }, [mode, workspace, liveProjection]);
 
-  const setDmSelectedFolder = (folderPath: string) => {
-    if (!workspace || !onUpdateWorkspace) return;
+  const autoSyncLiveOnZoneChange = Boolean(workspace?.autoSyncLiveOnZoneChange);
+
+  const buildDefaultVisualForFolder = (folderPath: string, ws: DMWorkspace) => {
     const shortName =
       folderPath === 'all'
         ? worldName || 'Mundo Completo'
         : folderPath.split('/').map((s) => s.trim()).filter(Boolean).pop() || folderPath;
-    const mapForPlace = workspace.atlasMaps?.[folderPath] || '';
-    const photosForPlace = filterAlbumPhotosByPlace(workspace.placeAlbumPhotos || [], folderPath);
-    const nextVisual = mapForPlace
-      ? {
-          kind: 'map' as const,
-          id: `map-${folderPath}`,
-          title: `Mapa: ${shortName}`,
-          imageUrl: mapForPlace,
-          folder: folderPath,
-        }
-      : photosForPlace[0]
-      ? {
-          kind: 'album' as const,
-          id: photosForPlace[0].id,
-          title: photosForPlace[0].title,
-          imageUrl: photosForPlace[0].imageUrl,
-          folder: folderPath,
-        }
-      : {
-          kind: 'map' as const,
-          id: `map-${folderPath}`,
-          title: shortName,
-          imageUrl: '',
-          folder: folderPath,
-        };
+    const mapForPlace = ws.atlasMaps?.[folderPath] || '';
+    const photosForPlace = filterAlbumPhotosByPlace(ws.placeAlbumPhotos || [], folderPath);
+    if (mapForPlace) {
+      return {
+        kind: 'map' as const,
+        id: `map-${folderPath}`,
+        title: `Mapa: ${shortName}`,
+        imageUrl: mapForPlace,
+        folder: folderPath,
+      };
+    }
+    if (photosForPlace[0]) {
+      return {
+        kind: 'album' as const,
+        id: photosForPlace[0].id,
+        title: photosForPlace[0].title,
+        imageUrl: photosForPlace[0].imageUrl,
+        folder: folderPath,
+      };
+    }
+    return {
+      kind: 'map' as const,
+      id: `map-${folderPath}`,
+      title: shortName,
+      imageUrl: '',
+      folder: folderPath,
+    };
+  };
 
-    onUpdateWorkspace({
-      ...workspace,
-      activeAtlasFolder: folderPath,
-      activeLiveVisual: nextVisual,
-    });
+  const setDmSelectedFolder = (folderPath: string) => {
+    if (!workspace || !onUpdateWorkspace) return;
+    const targetFolder = String(folderPath || 'all').trim() || 'all';
+    setDmInspectedVisual(null);
+
+    if (workspace.autoSyncLiveOnZoneChange) {
+      const nextVisual = buildDefaultVisualForFolder(targetFolder, workspace);
+      onUpdateWorkspace({
+        ...workspace,
+        activeAtlasFolder: targetFolder,
+        activeLiveVisual: nextVisual,
+      });
+    } else {
+      // Preserve existing activeLiveVisual so players keep seeing the projected image/zone
+      // while the DM freely inspects maps and sub-zones!
+      const preservedLiveVisual =
+        workspace.activeLiveVisual ||
+        buildDefaultVisualForFolder(
+          workspace.activeAtlasFolder || 'all',
+          workspace
+        );
+      onUpdateWorkspace({
+        ...workspace,
+        activeAtlasFolder: targetFolder,
+        activeLiveVisual: preservedLiveVisual,
+      });
+    }
+  };
+
+  const handleToggleAutoSyncLiveOnZoneChange = (checked: boolean) => {
+    if (!workspace || !onUpdateWorkspace) return;
+    if (checked) {
+      const syncedVisual = buildDefaultVisualForFolder(selectedFolder, workspace);
+      onUpdateWorkspace({
+        ...workspace,
+        autoSyncLiveOnZoneChange: true,
+        activeLiveVisual: syncedVisual,
+      });
+    } else {
+      onUpdateWorkspace({
+        ...workspace,
+        autoSyncLiveOnZoneChange: false,
+      });
+    }
   };
 
   const allHierarchyFolders = useMemo(
@@ -329,15 +412,88 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
     return liveProjection?.galleryPhotos || [];
   }, [mode, workspace, selectedFolder, liveProjection]);
 
-  // Currently projected visual (Map or Gallery Image)
+  const filteredZoneMaps = useMemo(() => {
+    if (mode === 'dm' && workspace) {
+      const allZ = workspace.zoneMaps || [];
+      if (selectedFolder === 'all') return allZ;
+      return allZ.filter(
+        (m) => m.folder === selectedFolder || m.folder.startsWith(`${selectedFolder} / `)
+      );
+    }
+    return [];
+  }, [mode, workspace, selectedFolder]);
+
+  const filteredTacticalMaps = useMemo(() => {
+    if (mode === 'dm' && workspace) {
+      const allT = (workspace.locations || []).filter((l) => Boolean(l.mapImageUrl));
+      if (selectedFolder === 'all') return allT;
+      return allT.filter(
+        (l) => l.folder === selectedFolder || l.folder.startsWith(`${selectedFolder} / `)
+      );
+    }
+    return [];
+  }, [mode, workspace, selectedFolder]);
+
+  // Live projection currently broadcast to players
+  const liveProjectedToPlayers = useMemo(() => {
+    if (workspace) {
+      return buildLiveProjectionFromWorkspace(workspace, worldName);
+    }
+    return liveProjection;
+  }, [workspace, worldName, liveProjection]);
+
+  // Currently displayed visual on canvas (for DM: depends on dmViewportMode 'dm' vs 'live'; for Player: liveProjectedToPlayers)
   const activeVisual = useMemo(() => {
     if (mode === 'dm' && workspace) {
-      if (workspace.activeLiveVisual && workspace.activeLiveVisual.imageUrl) {
+      // When DM toggles to "Vista en Vivo", show the EXACT visual projected to players!
+      if (dmViewportMode === 'live') {
+        if (workspace.activeLiveVisual && workspace.activeLiveVisual.imageUrl) {
+          return {
+            id: workspace.activeLiveVisual.id,
+            kind: workspace.activeLiveVisual.kind,
+            title: workspace.activeLiveVisual.title,
+            imageUrl: workspace.activeLiveVisual.imageUrl,
+            folder: workspace.activeLiveVisual.folder || 'all',
+          };
+        }
+        if (liveProjectedToPlayers && liveProjectedToPlayers.visualImageUrl) {
+          return {
+            id: 'live-proj',
+            kind: (liveProjectedToPlayers.visualKind === 'photo'
+              ? 'album'
+              : liveProjectedToPlayers.visualKind || 'map') as 'map' | 'album' | 'tactical',
+            title:
+              liveProjectedToPlayers.visualTitle ||
+              liveProjectedToPlayers.locationName ||
+              'Escena en Vivo',
+            imageUrl: liveProjectedToPlayers.visualImageUrl,
+            folder: liveProjectedToPlayers.locationFolder || 'all',
+          };
+        }
+      }
+
+      // In "Vista DM", show the inspected visual first if one was clicked
+      if (dmInspectedVisual) {
+        return {
+          id: dmInspectedVisual.id,
+          kind: dmInspectedVisual.kind,
+          title: dmInspectedVisual.title,
+          imageUrl: dmInspectedVisual.imageUrl,
+          folder: dmInspectedVisual.folder,
+        };
+      }
+      const liveFolder = workspace.activeLiveVisual?.folder || 'all';
+      if (
+        workspace.activeLiveVisual &&
+        workspace.activeLiveVisual.imageUrl &&
+        liveFolder === selectedFolder
+      ) {
         return {
           id: workspace.activeLiveVisual.id,
           kind: workspace.activeLiveVisual.kind,
           title: workspace.activeLiveVisual.title,
           imageUrl: workspace.activeLiveVisual.imageUrl,
+          folder: liveFolder,
         };
       }
       if (currentPlaceMapUrl) {
@@ -346,6 +502,7 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
           kind: 'map' as const,
           title: `Mapa: ${currentPlaceShortName}`,
           imageUrl: currentPlaceMapUrl,
+          folder: selectedFolder,
         };
       }
       if (filteredAlbumPhotos[0]) {
@@ -354,6 +511,7 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
           kind: 'album' as const,
           title: filteredAlbumPhotos[0].title,
           imageUrl: filteredAlbumPhotos[0].imageUrl,
+          folder: selectedFolder,
         };
       }
       return {
@@ -361,6 +519,7 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
         kind: 'map' as const,
         title: currentPlaceShortName,
         imageUrl: '',
+        folder: selectedFolder,
       };
     }
 
@@ -527,6 +686,9 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
       currentTurnIndex: 0,
       combatants: [],
       isActive: true,
+      combatNotes: '',
+      combatLog: [],
+      broadcastEnemiesToTable: false,
     };
     onUpdateWorkspace({
       ...workspace,
@@ -548,6 +710,8 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
       currentTurnIndex: 0,
       combatants: [],
       isActive: true,
+      combatNotes: '',
+      combatLog: [],
       broadcastEnemiesToTable: true,
     };
     if (!canAddEnemyToEncounter(enc.combatants || [], MAX_ENCOUNTER_ENEMIES)) {
@@ -710,32 +874,361 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
   // =========================================================================
   // 7. DM MAP & GALLERY PROJECTION HANDLERS
   // =========================================================================
+  //Clicking a visual in Proyección de Zona previews it for the DM first (without changing players' view)
+  const handleDmPreviewMapOnly = () => {
+    setDmViewportMode('dm');
+    setDmInspectedVisual({
+      kind: 'map',
+      id: `map-${selectedFolder}`,
+      title: `Mapa: ${currentPlaceShortName}`,
+      imageUrl: currentPlaceMapUrl,
+      folder: selectedFolder,
+    });
+  };
+
+  // Explicit "Proyectar" button sends the primary zone map to the players
   const handleDmSelectMapProjection = () => {
     if (!workspace || !onUpdateWorkspace) return;
+    const nextVisual = {
+      kind: 'map' as const,
+      id: `map-${selectedFolder}`,
+      title: `Mapa: ${currentPlaceShortName}`,
+      imageUrl: currentPlaceMapUrl,
+      folder: selectedFolder,
+    };
+    setDmInspectedVisual(nextVisual);
     onUpdateWorkspace({
       ...workspace,
-      activeLiveVisual: {
-        kind: 'map',
-        id: `map-${selectedFolder}`,
-        title: `Mapa: ${currentPlaceShortName}`,
-        imageUrl: currentPlaceMapUrl,
-        folder: selectedFolder,
-      },
+      activeLiveVisual: nextVisual,
+    });
+  };
+
+  const handleDmPreviewZoneMapOnly = (zMap: ZoneMapRecord) => {
+    setDmViewportMode('dm');
+    setDmInspectedVisual({
+      kind: 'map',
+      id: zMap.id,
+      title: zMap.title,
+      imageUrl: zMap.imageUrl,
+      folder: zMap.folder,
+    });
+  };
+
+  const handleDmProjectZoneMap = (zMap: ZoneMapRecord) => {
+    if (!workspace || !onUpdateWorkspace) return;
+    const nextVisual = {
+      kind: 'map' as const,
+      id: zMap.id,
+      title: zMap.title,
+      imageUrl: zMap.imageUrl,
+      folder: zMap.folder,
+    };
+    setDmInspectedVisual(nextVisual);
+    onUpdateWorkspace({
+      ...workspace,
+      activeLiveVisual: nextVisual,
+    });
+  };
+
+  const handleDmPreviewGalleryPhotoOnly = (photo: PlaceAlbumPhoto) => {
+    setDmViewportMode('dm');
+    setDmInspectedVisual({
+      kind: 'album',
+      id: photo.id,
+      title: photo.title,
+      imageUrl: photo.imageUrl,
+      folder: selectedFolder,
     });
   };
 
   const handleDmSelectGalleryPhoto = (photo: PlaceAlbumPhoto) => {
     if (!workspace || !onUpdateWorkspace) return;
+    const nextVisual = {
+      kind: 'album' as const,
+      id: photo.id,
+      title: photo.title,
+      imageUrl: photo.imageUrl,
+      folder: selectedFolder,
+    };
+    setDmInspectedVisual(nextVisual);
     onUpdateWorkspace({
       ...workspace,
-      activeLiveVisual: {
-        kind: 'album',
-        id: photo.id,
-        title: photo.title,
-        imageUrl: photo.imageUrl,
-        folder: selectedFolder,
-      },
+      activeLiveVisual: nextVisual,
     });
+  };
+
+  const handleDmPreviewTacticalMapOnly = (tMap: LocationRecord) => {
+    setDmViewportMode('dm');
+    setDmInspectedVisual({
+      kind: 'tactical',
+      id: tMap.id,
+      title: tMap.name,
+      imageUrl: tMap.mapImageUrl || '',
+      folder: tMap.folder,
+    });
+  };
+
+  const handleDmProjectTacticalMap = (tMap: LocationRecord) => {
+    if (!workspace || !onUpdateWorkspace) return;
+    const nextVisual = {
+      kind: 'tactical' as const,
+      id: tMap.id,
+      title: tMap.name,
+      imageUrl: tMap.mapImageUrl || '',
+      folder: tMap.folder,
+      gridCols: tMap.gridCols || 10,
+      gridRows: tMap.gridRows || 10,
+      tacticalTokens: tMap.tokens || [],
+    };
+    setDmInspectedVisual({
+      kind: 'tactical',
+      id: tMap.id,
+      title: tMap.name,
+      imageUrl: tMap.mapImageUrl || '',
+      folder: tMap.folder,
+    });
+    onUpdateWorkspace({
+      ...workspace,
+      activeLiveVisual: nextVisual,
+    });
+  };
+
+  const handleDmEnqueueVisual = (item: {
+    id?: string;
+    sourceId?: string;
+    kind: 'map' | 'album' | 'tactical';
+    title: string;
+    imageUrl?: string;
+    folder?: string;
+  }) => {
+    if (!workspace || !onUpdateWorkspace) return;
+    const nextQueue = enqueueVisualItem(workspace.visualQueue, item);
+    onUpdateWorkspace({
+      ...workspace,
+      visualQueue: nextQueue,
+    });
+  };
+
+  const handleDmRemoveFromQueue = (queueItemId: string) => {
+    if (!workspace || !onUpdateWorkspace) return;
+    const nextQueue = removeVisualFromQueue(workspace.visualQueue, queueItemId);
+    onUpdateWorkspace({
+      ...workspace,
+      visualQueue: nextQueue,
+    });
+  };
+
+  const handleDmSaveEditedVisualItem = () => {
+    if (!editingVisualItem || !workspace || !onUpdateWorkspace) return;
+    const { kind, id, title, imageUrl, folder, gridCols, gridRows } = editingVisualItem;
+    const cleanTitle = title.trim() || 'Visual';
+    const cleanUrl = imageUrl.trim();
+    const cleanFolder = folder.trim() || 'General';
+
+    if (kind === 'map') {
+      const nextAtlasMaps = { ...(workspace.atlasMaps || {}), [selectedFolder]: cleanUrl };
+      onUpdateWorkspace({
+        ...workspace,
+        atlasMaps: nextAtlasMaps,
+      });
+    } else if (kind === 'zonemap') {
+      const nextZoneMaps = (workspace.zoneMaps || []).map((zm) =>
+        zm.id === id ? { ...zm, title: cleanTitle, imageUrl: cleanUrl, folder: cleanFolder } : zm
+      );
+      onUpdateWorkspace({
+        ...workspace,
+        zoneMaps: nextZoneMaps,
+      });
+    } else if (kind === 'album') {
+      const nextPhotos = (workspace.placeAlbumPhotos || []).map((p) =>
+        p.id === id ? { ...p, title: cleanTitle, imageUrl: cleanUrl, folder: cleanFolder } : p
+      );
+      onUpdateWorkspace({
+        ...workspace,
+        placeAlbumPhotos: nextPhotos,
+      });
+    } else if (kind === 'tactical') {
+      const nextLocations = (workspace.locations || []).map((loc) =>
+        loc.id === id
+          ? {
+              ...loc,
+              name: cleanTitle,
+              mapImageUrl: cleanUrl,
+              folder: cleanFolder,
+              gridCols: gridCols || loc.gridCols || 10,
+              gridRows: gridRows || loc.gridRows || 10,
+            }
+          : loc
+      );
+      onUpdateWorkspace({
+        ...workspace,
+        locations: nextLocations,
+      });
+    }
+    setEditingVisualItem(null);
+  };
+
+  const handleCreateQuickTacticalMapInTable = () => {
+    if (!newTacticalUrl.trim() || !workspace || !onUpdateWorkspace) return;
+    const newLoc: LocationRecord = {
+      id: `tactical-${Date.now()}`,
+      name: newTacticalTitle.trim() || `Tablero Táctico de ${currentPlaceShortName}`,
+      type: 'Mapa Táctico',
+      status: 'Explorando',
+      description: 'Mapa táctico con cuadrícula y fichas.',
+      dmSecrets: '',
+      folder: selectedFolder === 'all' ? 'General' : selectedFolder,
+      mapImageUrl: newTacticalUrl.trim(),
+      gridCols: Math.max(4, Math.min(24, Number(newTacticalCols) || 10)),
+      gridRows: Math.max(4, Math.min(24, Number(newTacticalRows) || 10)),
+      tokens: [],
+    };
+    onUpdateWorkspace({
+      ...workspace,
+      locations: [newLoc, ...(workspace.locations || [])],
+    });
+    setDmViewportMode('dm');
+    setDmInspectedVisual({
+      kind: 'tactical',
+      id: newLoc.id,
+      title: newLoc.name,
+      imageUrl: newLoc.mapImageUrl || '',
+      folder: newLoc.folder,
+    });
+    setNewTacticalTitle('');
+    setNewTacticalUrl('');
+  };
+
+  // Active Tactical Map LocationRecord resolution (when activeVisual.kind === 'tactical')
+  const activeTacticalLocation = useMemo(() => {
+    if (activeVisual.kind !== 'tactical') return null;
+    if (workspace) {
+      const byId = (workspace.locations || []).find((l) => l.id === activeVisual.id);
+      if (byId) return byId;
+      const byUrl = (workspace.locations || []).find((l) => l.mapImageUrl === activeVisual.imageUrl);
+      if (byUrl) return byUrl;
+    }
+    return null;
+  }, [activeVisual, workspace]);
+
+  const activeTacticalGridCols =
+    activeTacticalLocation?.gridCols ||
+    workspace?.activeLiveVisual?.gridCols ||
+    liveProjection?.tacticalGridCols ||
+    10;
+  const activeTacticalGridRows =
+    activeTacticalLocation?.gridRows ||
+    workspace?.activeLiveVisual?.gridRows ||
+    liveProjection?.tacticalGridRows ||
+    10;
+  const activeTacticalTokens: TacticalMapToken[] =
+    activeTacticalLocation?.tokens ||
+    workspace?.activeLiveVisual?.tacticalTokens ||
+    liveProjection?.tacticalTokens ||
+    [];
+
+  const handleMoveTokenOnActiveTacticalMap = (col: number, row: number) => {
+    if (mode !== 'dm' || !selectedTacticalTokenId || !workspace || !onUpdateWorkspace) return;
+    const nextTokens = moveTacticalTokenOnGrid(
+      activeTacticalTokens,
+      selectedTacticalTokenId,
+      col,
+      row,
+      activeTacticalGridCols,
+      activeTacticalGridRows
+    );
+    const targetId = activeTacticalLocation?.id || activeVisual.id;
+    const nextLocations = (workspace.locations || []).map((loc) =>
+      loc.id === targetId ? { ...loc, tokens: nextTokens } : loc
+    );
+    const isCurrentlyLive =
+      workspace.activeLiveVisual?.kind === 'tactical' &&
+      (workspace.activeLiveVisual?.id === targetId ||
+        workspace.activeLiveVisual?.imageUrl === activeVisual.imageUrl);
+
+    onUpdateWorkspace({
+      ...workspace,
+      locations: nextLocations,
+      activeLiveVisual: isCurrentlyLive && workspace.activeLiveVisual
+        ? {
+            ...workspace.activeLiveVisual,
+            tacticalTokens: nextTokens,
+          }
+        : workspace.activeLiveVisual,
+    });
+  };
+
+  const handlePopulatePlayersOnTacticalMap = () => {
+    if (mode !== 'dm' || !workspace || !onUpdateWorkspace) return;
+    const targetId = activeTacticalLocation?.id || activeVisual.id;
+    const existingTokens = [...activeTacticalTokens];
+    const sourcePlayers = resolvedPlayerCards;
+    sourcePlayers.forEach((p, idx) => {
+      const tokenId = `token-player-${p.characterId}`;
+      if (!existingTokens.some((t) => t.id === tokenId)) {
+        existingTokens.push({
+          id: tokenId,
+          label: p.characterName,
+          col: Math.min(activeTacticalGridCols - 1, 1 + (idx % 4)),
+          row: Math.min(activeTacticalGridRows - 1, activeTacticalGridRows - 2),
+          kind: 'player',
+          color: '#10b981',
+          avatarUrl: p.avatarCustomUrl,
+        });
+      }
+    });
+    const nextLocations = (workspace.locations || []).map((loc) =>
+      loc.id === targetId ? { ...loc, tokens: existingTokens } : loc
+    );
+    const isCurrentlyLive =
+      workspace.activeLiveVisual?.kind === 'tactical' &&
+      (workspace.activeLiveVisual?.id === targetId ||
+        workspace.activeLiveVisual?.imageUrl === activeVisual.imageUrl);
+
+    onUpdateWorkspace({
+      ...workspace,
+      locations: nextLocations,
+      activeLiveVisual:
+        isCurrentlyLive && workspace.activeLiveVisual
+          ? { ...workspace.activeLiveVisual, tacticalTokens: existingTokens }
+          : workspace.activeLiveVisual,
+    });
+    if (existingTokens[0] && !selectedTacticalTokenId) {
+      setSelectedTacticalTokenId(existingTokens[0].id);
+    }
+  };
+
+  const handleAddEnemyTokenToTacticalMap = () => {
+    if (mode !== 'dm' || !workspace || !onUpdateWorkspace) return;
+    const targetId = activeTacticalLocation?.id || activeVisual.id;
+    const existingTokens = [...activeTacticalTokens];
+    const enemyNum = existingTokens.filter((t) => t.kind === 'enemy').length + 1;
+    const newToken: TacticalMapToken = {
+      id: `token-enemy-${Date.now()}`,
+      label: `Enemigo ${enemyNum}`,
+      col: Math.min(activeTacticalGridCols - 1, Math.floor(activeTacticalGridCols / 2)),
+      row: Math.min(activeTacticalGridRows - 1, 2),
+      kind: 'enemy',
+      color: '#ef4444',
+    };
+    const nextTokens = [...existingTokens, newToken];
+    const nextLocations = (workspace.locations || []).map((loc) =>
+      loc.id === targetId ? { ...loc, tokens: nextTokens } : loc
+    );
+    const isCurrentlyLive =
+      workspace.activeLiveVisual?.kind === 'tactical' &&
+      (workspace.activeLiveVisual?.id === targetId ||
+        workspace.activeLiveVisual?.imageUrl === activeVisual.imageUrl);
+
+    onUpdateWorkspace({
+      ...workspace,
+      locations: nextLocations,
+      activeLiveVisual:
+        isCurrentlyLive && workspace.activeLiveVisual
+          ? { ...workspace.activeLiveVisual, tacticalTokens: nextTokens }
+          : workspace.activeLiveVisual,
+    });
+    setSelectedTacticalTokenId(newToken.id);
   };
 
   const handleDmUploadMapFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -968,13 +1461,45 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
               data-testid="dm-map-top-location-bar"
             >
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
+                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                  {selectedFolder !== 'all' && (
+                    <button
+                      type="button"
+                      data-testid="btn-dm-map-up-zone"
+                      onClick={() => setDmSelectedFolder(getParentAtlasFolder(selectedFolder))}
+                      className="px-2.5 py-1 rounded-xl bg-amber-950/90 hover:bg-amber-900 border border-[#e2c275] text-[#f5e4be] font-cinzel font-bold text-xs flex items-center gap-1 transition cursor-pointer shrink-0 shadow"
+                      title="Regresar a la zona anterior / nivel superior"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Zona Anterior</span>
+                    </button>
+                  )}
                   <span className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] truncate">
                     Ruta de la Zona ( 🍺 {currentPlaceShortName} )
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                  {/* Direct All-Zones Dropdown Selector */}
+                  <select
+                    data-testid="select-dm-map-zone-top"
+                    value={selectedFolder}
+                    onChange={(e) => setDmSelectedFolder(e.target.value)}
+                    className="px-2.5 py-1 rounded-xl bg-[#12141c] border border-[#c8a45c]/75 text-[#f5e4be] font-cinzel font-bold text-xs focus:outline-none focus:border-amber-400 cursor-pointer max-w-[210px]"
+                    title="Cambiar directamente a cualquier zona del mundo"
+                  >
+                    <option value="all">🌍 Mundo Completo ({worldName || 'Raíz'})</option>
+                    {allHierarchyFolders.map((folderPath) => {
+                      const depth = getFolderDepth(folderPath);
+                      const indent = '—'.repeat(Math.max(0, depth - 1));
+                      return (
+                        <option key={folderPath} value={folderPath}>
+                          {indent ? `${indent} ` : ''}📍 {folderPath}
+                        </option>
+                      );
+                    })}
+                  </select>
+
                   <button
                     type="button"
                     data-testid="btn-dm-map-edit"
@@ -1002,69 +1527,188 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                 </div>
               </div>
 
-              {/* Breadcrumbs + Direct Sub-Place Selector Pills */}
-              <div className="flex items-center gap-1.5 flex-wrap text-xs">
-                {breadcrumbs.map((crumb, idx) => (
-                  <React.Fragment key={crumb.fullPath}>
-                    {idx > 0 && (
-                      <ChevronRight className="w-3.5 h-3.5 text-[#c8a45c]/70 shrink-0" />
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setDmSelectedFolder(crumb.fullPath)}
-                      className={`px-2 py-0.5 rounded-lg font-cinzel font-bold transition cursor-pointer flex items-center gap-1 ${
-                        selectedFolder === crumb.fullPath
-                          ? 'bg-amber-950/90 border border-[#e2c275] text-[#f5e4be]'
-                          : 'bg-black/40 border border-stone-700 text-stone-300 hover:text-white'
-                      }`}
-                    >
-                      {idx === 0 && <Compass className="w-3 h-3 text-amber-400" />}
-                      <span>{crumb.label}</span>
-                    </button>
-                  </React.Fragment>
-                ))}
-
-                {childFolders.length > 0 && (
-                  <>
-                    <span className="text-[10px] text-stone-400 font-cinzel ml-1">
-                      Ir a sub-lugar:
-                    </span>
-                    {childFolders.map((sub) => {
-                      const shortSub = sub.split('/').pop()?.trim() || sub;
-                      return (
+              {/* Breadcrumbs + Direct Sub-Place Selector Pills + Auto-Sync Toggle */}
+              <div className="flex items-center justify-between gap-2 flex-wrap text-xs pt-0.5 border-t border-[#c8a45c]/25">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {breadcrumbs.map((crumb, idx) => {
+                    const targetPath = crumb.folderPath || crumb.fullPath || 'all';
+                    return (
+                      <React.Fragment key={targetPath}>
+                        {idx > 0 && (
+                          <ChevronRight className="w-3.5 h-3.5 text-[#c8a45c]/70 shrink-0" />
+                        )}
                         <button
-                          key={sub}
                           type="button"
-                          onClick={() => setDmSelectedFolder(sub)}
-                          className="px-2 py-0.5 rounded-lg bg-[#1e2230] hover:bg-amber-950/70 border border-[#c8a45c]/50 text-amber-200 text-[11px] font-cinzel font-bold transition cursor-pointer flex items-center gap-1"
+                          data-testid={`breadcrumb-zone-${idx}`}
+                          onClick={() => setDmSelectedFolder(targetPath)}
+                          className={`px-2 py-0.5 rounded-lg font-cinzel font-bold transition cursor-pointer flex items-center gap-1 ${
+                            selectedFolder === targetPath
+                              ? 'bg-amber-950/90 border border-[#e2c275] text-[#f5e4be]'
+                              : 'bg-black/40 border border-stone-700 text-stone-300 hover:text-white hover:border-amber-500/60'
+                          }`}
                         >
-                          <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
-                          <span>{shortSub}</span>
+                          {idx === 0 && <Compass className="w-3 h-3 text-amber-400" />}
+                          <span>{crumb.label}</span>
                         </button>
-                      );
-                    })}
-                  </>
-                )}
+                      </React.Fragment>
+                    );
+                  })}
+
+                  {childFolders.length > 0 && (
+                    <>
+                      <span className="text-[10px] text-stone-400 font-cinzel ml-1">
+                        Sub-zonas:
+                      </span>
+                      {childFolders.map((sub) => {
+                        const shortSub = sub.split('/').pop()?.trim() || sub;
+                        return (
+                          <button
+                            key={sub}
+                            type="button"
+                            onClick={() => setDmSelectedFolder(sub)}
+                            className="px-2 py-0.5 rounded-lg bg-[#1e2230] hover:bg-amber-950/70 border border-[#c8a45c]/50 text-amber-200 text-[11px] font-cinzel font-bold transition cursor-pointer flex items-center gap-1"
+                          >
+                            <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>{shortSub}</span>
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+
+                {/* Checkbox: Auto-sync live player projection when changing zone */}
+                <label
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-black/45 border border-[#c8a45c]/45 text-[11px] text-[#e8d8b9] hover:border-[#e2c275] cursor-pointer select-none"
+                  title="Si está desactivado, puedes explorar cualquier zona y revisar tus mapas sin que a los jugadores se les cambie la imagen que están viendo"
+                >
+                  <input
+                    type="checkbox"
+                    data-testid="checkbox-auto-sync-zone-live-top"
+                    checked={autoSyncLiveOnZoneChange}
+                    onChange={(e) => handleToggleAutoSyncLiveOnZoneChange(e.target.checked)}
+                    className="rounded border-amber-500 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                  />
+                  <span className="font-cinzel font-bold">
+                    Cambiar imagen a jugadores al cambiar de zona
+                  </span>
+                </label>
               </div>
             </div>
           )}
 
           {/* MAIN MAP / SCENE CANVAS CONTAINER */}
           <div className="relative flex-1 min-h-[530px] rounded-2xl bg-[#11131a] border-2 border-[#c8a45c]/80 overflow-hidden shadow-[0_0_35px_rgba(0,0,0,0.9)] flex flex-col justify-between">
-            {/* Top Bar Inside Map Viewport: Active Visual Title Badge (Left) + Zoom Controls (Right) */}
-            <div className="relative z-20 px-3.5 py-2 flex items-center justify-between gap-2 pointer-events-none">
-              <div
-                data-testid="active-projected-visual-badge"
-                className="px-2.5 py-1 rounded-xl bg-black/75 border border-[#c8a45c]/60 text-[#f5e4be] text-[11px] font-cinzel font-bold flex items-center gap-1.5 shadow-lg pointer-events-auto truncate max-w-[70%]"
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                <span className="truncate">
-                  {activeVisual.kind === 'photo' || activeVisual.kind === 'album'
-                    ? `🖼️ Imagen en Vivo: ${activeVisual.title}`
-                    : activeVisual.kind === 'tactical'
-                    ? `⚔️ Mapa Táctico: ${activeVisual.title}`
-                    : `🗺️ ${activeVisual.title}`}
-                </span>
+            {/* Top Bar Inside Map Viewport: DM/Live Mode Toggle + Active Visual Badge + Zoom Controls */}
+            <div className="relative z-20 px-3.5 py-2 flex items-center justify-between gap-2 pointer-events-none flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap max-w-[84%] pointer-events-auto">
+                {/* DM Mode Toggle: Vista DM vs Vista en Vivo */}
+                {mode === 'dm' && (
+                  <div
+                    data-testid="dm-viewport-mode-switcher"
+                    className="inline-flex items-center rounded-xl bg-black/85 border border-[#c8a45c]/75 p-0.5 shadow-lg"
+                  >
+                    <button
+                      type="button"
+                      data-testid="btn-toggle-dm-view-mode"
+                      onClick={() => setDmViewportMode('dm')}
+                      className={`px-2.5 py-1 rounded-lg font-cinzel font-bold text-[10px] flex items-center gap-1 transition cursor-pointer ${
+                        dmViewportMode === 'dm'
+                          ? 'bg-amber-600 text-stone-950 shadow'
+                          : 'text-stone-300 hover:text-white'
+                      }`}
+                      title="Modo Edición/Exploración del DM: revisa y modifica mapas sin afectar lo que ven los jugadores"
+                    >
+                      <Eye className="w-3 h-3" />
+                      <span>Vista DM</span>
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="btn-toggle-live-view-mode"
+                      onClick={() => setDmViewportMode('live')}
+                      className={`px-2.5 py-1 rounded-lg font-cinzel font-bold text-[10px] flex items-center gap-1 transition cursor-pointer ${
+                        dmViewportMode === 'live'
+                          ? 'bg-emerald-600 text-stone-950 shadow'
+                          : 'text-stone-300 hover:text-white'
+                      }`}
+                      title="Vista en Vivo: mira e interactúa exactamente con lo que les estás proyectando a los jugadores"
+                    >
+                      <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />
+                      <span>Vista en Vivo</span>
+                    </button>
+                  </div>
+                )}
+
+                <div
+                  data-testid="active-projected-visual-badge"
+                  className="px-2.5 py-1 rounded-xl bg-black/80 border border-[#c8a45c]/60 text-[#f5e4be] text-[11px] font-cinzel font-bold flex items-center gap-1.5 shadow-lg truncate"
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      mode === 'dm' && dmViewportMode === 'dm'
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-400 animate-pulse'
+                    }`}
+                  />
+                  <span className="truncate">
+                    {mode === 'dm'
+                      ? dmViewportMode === 'live'
+                        ? `🟢 Vista en Vivo Jugadores: ${activeVisual.title}`
+                        : `👁️ Vista DM (${currentPlaceShortName}): ${activeVisual.title}`
+                      : activeVisual.kind === 'photo' || activeVisual.kind === 'album'
+                      ? `🖼️ Imagen en Vivo: ${activeVisual.title}`
+                      : activeVisual.kind === 'tactical'
+                      ? `⚔️ Mapa Táctico: ${activeVisual.title}`
+                      : `🗺️ ${activeVisual.title}`}
+                  </span>
+                </div>
+
+                {mode === 'dm' && workspace && (
+                  <div
+                    data-testid="dm-live-players-status-badge"
+                    className="px-2.5 py-1 rounded-xl bg-emerald-950/90 border border-emerald-400/70 text-emerald-200 text-[10px] font-cinzel font-bold flex items-center gap-1.5 shadow-lg"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                    <span className="truncate max-w-[230px]">
+                      En Vivo para Jugadores:{' '}
+                      {workspace.activeLiveVisual?.title ||
+                        liveProjectedToPlayers?.visualTitle ||
+                        'Mapa Inicial'}
+                    </span>
+                    {(workspace.activeLiveVisual?.imageUrl !== activeVisual.imageUrl ||
+                      workspace.activeLiveVisual?.title !== activeVisual.title) && (
+                      <button
+                        type="button"
+                        data-testid="btn-dm-project-current-view-live"
+                        onClick={() => {
+                          if (!onUpdateWorkspace) return;
+                          onUpdateWorkspace({
+                            ...workspace,
+                            activeLiveVisual: {
+                              kind:
+                                activeVisual.kind === 'photo' || activeVisual.kind === 'album'
+                                  ? 'album'
+                                  : activeVisual.kind === 'tactical'
+                                  ? 'tactical'
+                                  : 'map',
+                              id: activeVisual.id || `map-${selectedFolder}`,
+                              title: activeVisual.title,
+                              imageUrl: activeVisual.imageUrl,
+                              folder: selectedFolder,
+                              gridCols: activeTacticalGridCols,
+                              gridRows: activeTacticalGridRows,
+                              tacticalTokens: activeTacticalTokens,
+                            },
+                          });
+                        }}
+                        className="ml-1 px-2 py-0.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black text-[9px] uppercase tracking-wider transition cursor-pointer shrink-0"
+                        title="Mandar este mapa o imagen actual a los jugadores ahora mismo"
+                      >
+                        Proyectar a Jugadores
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center bg-black/75 border border-[#c8a45c]/50 rounded-xl overflow-hidden pointer-events-auto shadow-lg shrink-0">
@@ -1095,8 +1739,22 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
               </div>
             </div>
 
-            {/* Center Map / Gallery Image Layer */}
+            {/* Center Map / Gallery / Interactive Tactical Grid Layer */}
             <div className="absolute inset-0 flex items-center justify-center overflow-hidden bg-[#0d0e14]">
+              {/* Top-Left Return to Parent Place Button Inside Map Drawing (DM Mode) */}
+              {mode === 'dm' && dmViewportMode === 'dm' && selectedFolder !== 'all' && (
+                <button
+                  type="button"
+                  data-testid="btn-map-canvas-return-parent"
+                  onClick={() => setDmSelectedFolder(getParentAtlasFolder(selectedFolder))}
+                  className="absolute top-12 left-3.5 z-20 px-3 py-1.5 rounded-xl bg-black/85 hover:bg-amber-950/95 border border-[#e2c275] text-[#f5e4be] font-cinzel font-bold text-xs flex items-center gap-1.5 shadow-xl transition cursor-pointer"
+                  title="Regresar a la carpeta o lugar anterior"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5 text-[#e2c275]" />
+                  <span>{getReturnToParentButtonLabel(selectedFolder, worldName)}</span>
+                </button>
+              )}
+
               {activeVisual.imageUrl ? (
                 <img
                   data-testid="table-map-projected-image"
@@ -1127,15 +1785,117 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                     </h3>
                     <p className="text-xs text-[#cbb692] leading-relaxed">
                       {mode === 'dm'
-                        ? 'Usa "Proyección de Zona" abajo a la izquierda o el botón "Editar Mapa / Galería" arriba para proyectar el mapa de este lugar o mostrar imágenes de su galería a los jugadores.'
+                        ? 'Selecciona un mapa, imagen o mapa táctico en "Proyección de Zona" abajo para revisarlo y proyectarlo a los jugadores.'
                         : `Explorando ${currentPlaceShortName}. Aquí verás en vivo los mapas e imágenes de galería que proyecte el Dungeon Master.`}
                     </p>
                   </div>
                 </div>
               )}
 
-              {/* Interactive Sub-Place Pins on Map for DM */}
+              {/* INTERACTIVE TACTICAL GRID & TOKENS OVERLAY WHEN ACTIVE VISUAL IS TACTICAL */}
+              {activeVisual.kind === 'tactical' && (
+                <div
+                  data-testid="tactical-map-grid-overlay"
+                  className="absolute inset-0 z-10 flex flex-col justify-between pointer-events-auto"
+                >
+                  {/* DM Tactical Token Toolbar */}
+                  {mode === 'dm' && (
+                    <div className="mt-12 mx-auto px-3 py-1.5 rounded-xl bg-black/85 border border-red-500/70 flex items-center gap-2 flex-wrap shadow-2xl z-20">
+                      <span className="text-[10px] font-cinzel font-bold text-red-300 uppercase">
+                        ⚔️ Cuadrícula Táctica ({activeTacticalGridCols}x{activeTacticalGridRows}):
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="btn-tactical-populate-players"
+                        onClick={handlePopulatePlayersOnTacticalMap}
+                        className="px-2 py-0.5 rounded-lg bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-400/70 text-emerald-200 text-[10px] font-cinzel font-bold cursor-pointer"
+                      >
+                        + Fichas Jugadores
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="btn-tactical-add-enemy-token"
+                        onClick={handleAddEnemyTokenToTacticalMap}
+                        className="px-2 py-0.5 rounded-lg bg-red-950/90 hover:bg-red-900 border border-red-400/70 text-red-200 text-[10px] font-cinzel font-bold cursor-pointer"
+                      >
+                        + Ficha Enemigo
+                      </button>
+                      <span className="text-[10px] text-amber-200">
+                        {selectedTacticalTokenId
+                          ? 'Haz clic en una casilla para mover la ficha seleccionada'
+                          : 'Selecciona una ficha para moverla en la cuadrícula'}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Clickable Grid Cells & Tokens */}
+                  <div
+                    className="relative flex-1 w-full h-full"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: `repeat(${activeTacticalGridCols}, minmax(0, 1fr))`,
+                      gridTemplateRows: `repeat(${activeTacticalGridRows}, minmax(0, 1fr))`,
+                    }}
+                  >
+                    {Array.from({ length: activeTacticalGridCols * activeTacticalGridRows }).map(
+                      (_, cellIdx) => {
+                        const col = cellIdx % activeTacticalGridCols;
+                        const row = Math.floor(cellIdx / activeTacticalGridCols);
+                        const tokensInCell = activeTacticalTokens.filter(
+                          (t) => (t.col ?? t.x ?? 0) === col && (t.row ?? t.y ?? 0) === row
+                        );
+                        return (
+                          <div
+                            key={`cell-${col}-${row}`}
+                            data-testid={`tactical-cell-${col}-${row}`}
+                            onClick={() => handleMoveTokenOnActiveTacticalMap(col, row)}
+                            className={`border border-amber-300/20 flex items-center justify-center relative transition ${
+                              mode === 'dm' && selectedTacticalTokenId
+                                ? 'hover:bg-amber-400/20 cursor-pointer'
+                                : ''
+                            }`}
+                          >
+                            {tokensInCell.map((tok) => {
+                              const isSelected = selectedTacticalTokenId === tok.id;
+                              return (
+                                <button
+                                  key={tok.id}
+                                  type="button"
+                                  data-testid={`tactical-token-${tok.id}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (mode === 'dm') {
+                                      setSelectedTacticalTokenId(tok.id);
+                                    }
+                                  }}
+                                  className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-[9px] font-cinzel font-black text-white shadow-xl transition cursor-pointer ${
+                                    isSelected
+                                      ? 'ring-4 ring-amber-400 scale-110 z-20'
+                                      : 'border-2 border-white/90 z-10'
+                                  }`}
+                                  style={{
+                                    backgroundColor:
+                                      tok.color || (tok.kind === 'player' ? '#10b981' : '#ef4444'),
+                                  }}
+                                  title={`${tok.label} (${col}, ${row})`}
+                                >
+                                  <span className="truncate px-0.5">
+                                    {tok.label.slice(0, 3).toUpperCase()}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Interactive Sub-Place Pins on Map for DM (in Vista DM when viewing a normal zone map) */}
               {mode === 'dm' &&
+                dmViewportMode === 'dm' &&
                 activeVisual.kind === 'map' &&
                 childFolders.map((subFolder, idx) => {
                   const shortLabel = subFolder.split('/').pop()?.trim() || subFolder;
@@ -1391,10 +2151,25 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                     className="rounded-2xl bg-[#12141d]/95 backdrop-blur-md border-2 border-[#c8a45c]/85 shadow-[0_10px_30px_rgba(0,0,0,0.95)] overflow-hidden transition-all"
                     data-testid="dm-map-projection-overlay"
                   >
-                    <div className="px-3 py-2 bg-gradient-to-r from-[#241d14] via-[#181510] to-[#13110e] border-b border-[#c8a45c]/40 flex items-center justify-between gap-2">
-                      <span className="font-cinzel font-black text-xs text-[#f5e4be] truncate">
-                        Proyección de Zona ( 🍺 {currentPlaceShortName} )
-                      </span>
+                    <div className="px-3 py-2 bg-gradient-to-r from-[#241d14] via-[#181510] to-[#13110e] border-b border-[#c8a45c]/40 flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {selectedFolder !== 'all' && (
+                          <button
+                            type="button"
+                            data-testid="btn-dm-projection-up-zone"
+                            onClick={() => setDmSelectedFolder(getParentAtlasFolder(selectedFolder))}
+                            className="px-2 py-0.5 rounded-lg bg-amber-950 hover:bg-amber-900 border border-[#e2c275] text-[#f5e4be] text-[10px] font-cinzel font-bold flex items-center gap-1 cursor-pointer shrink-0"
+                            title="Volver a la zona anterior"
+                          >
+                            <ArrowLeft className="w-3 h-3 text-amber-300" />
+                            <span>Zona Anterior</span>
+                          </button>
+                        )}
+                        <span className="font-cinzel font-black text-xs text-[#f5e4be] truncate">
+                          Proyección de Zona ( 🍺 {currentPlaceShortName} )
+                        </span>
+                      </div>
+
                       <button
                         type="button"
                         data-testid="btn-toggle-dm-projection-overlay"
@@ -1416,124 +2191,502 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                     </div>
 
                     {!isLeftOverlayMinimized && (
-                      <div className="p-2.5 space-y-2.5">
-                        {/* Tabs: Imágenes y Mapa | Mapas Tácticos */}
-                        <div className="grid grid-cols-2 gap-1.5">
+                      <div className="p-2.5 space-y-2">
+                        {/* Zone Switcher Bar + Auto-Sync Checkbox inside Proyección de Zona */}
+                        <div className="rounded-xl bg-[#181a25] border border-[#c8a45c]/45 p-2 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-[180px]">
+                              <span className="text-[10px] font-cinzel font-bold text-amber-300 shrink-0">
+                                Zona:
+                              </span>
+                              <select
+                                data-testid="select-dm-projection-zone"
+                                value={selectedFolder}
+                                onChange={(e) => setDmSelectedFolder(e.target.value)}
+                                className="flex-1 min-w-[140px] px-2 py-1 rounded-lg bg-[#10121a] border border-[#c8a45c]/60 text-[#f5e4be] font-cinzel font-bold text-[11px] focus:outline-none focus:border-amber-400 cursor-pointer"
+                              >
+                                <option value="all">🌍 Mundo Completo ({worldName || 'Raíz'})</option>
+                                {allHierarchyFolders.map((folderPath) => {
+                                  const depth = getFolderDepth(folderPath);
+                                  const indent = '—'.repeat(Math.max(0, depth - 1));
+                                  return (
+                                    <option key={folderPath} value={folderPath}>
+                                      {indent ? `${indent} ` : ''}📍 {folderPath}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </div>
+
+                            <label
+                              className="inline-flex items-center gap-1.5 text-[10px] text-[#e8d8b9] cursor-pointer select-none"
+                              title="Activa esta casilla si quieres que la imagen de los jugadores cambie automáticamente al moverte de zona. Si está desactivada, la imagen solo cambia cuando tú lo elijas."
+                            >
+                              <input
+                                type="checkbox"
+                                data-testid="checkbox-auto-sync-zone-live"
+                                checked={autoSyncLiveOnZoneChange}
+                                onChange={(e) =>
+                                  handleToggleAutoSyncLiveOnZoneChange(e.target.checked)
+                                }
+                                className="rounded border-amber-500 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                              />
+                              <span className="font-cinzel font-bold">
+                                Cambiar imagen al cambiar de zona
+                              </span>
+                            </label>
+                          </div>
+
+                          {/* Breadcrumbs & Quick Sub-Zone Pills inside Proyección de Zona */}
+                          <div className="flex items-center gap-1 flex-wrap text-[10px]">
+                            {breadcrumbs.map((crumb, idx) => {
+                              const targetPath = crumb.folderPath || crumb.fullPath || 'all';
+                              return (
+                                <React.Fragment key={`proj-crumb-${targetPath}`}>
+                                  {idx > 0 && (
+                                    <ChevronRight className="w-3 h-3 text-[#c8a45c]/60 shrink-0" />
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setDmSelectedFolder(targetPath)}
+                                    className={`px-1.5 py-0.5 rounded font-cinzel font-bold transition cursor-pointer ${
+                                      selectedFolder === targetPath
+                                        ? 'bg-amber-950 border border-[#e2c275] text-[#f5e4be]'
+                                        : 'bg-black/40 border border-stone-700 text-stone-300 hover:text-white'
+                                    }`}
+                                  >
+                                    {crumb.label}
+                                  </button>
+                                </React.Fragment>
+                              );
+                            })}
+                            {childFolders.map((sub) => {
+                              const shortSub = sub.split('/').pop()?.trim() || sub;
+                              return (
+                                <button
+                                  key={`proj-sub-${sub}`}
+                                  type="button"
+                                  onClick={() => setDmSelectedFolder(sub)}
+                                  className="px-1.5 py-0.5 rounded bg-[#212536] hover:bg-amber-950/70 border border-[#c8a45c]/45 text-amber-200 font-cinzel font-bold transition cursor-pointer flex items-center gap-0.5"
+                                >
+                                  <MapPin className="w-2.5 h-2.5 text-amber-400" />
+                                  <span>{shortSub}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* 3 Tabs: Mapa e Imágenes | Mapas Tácticos | Ver Cola */}
+                        <div className="grid grid-cols-3 gap-1.5">
                           <button
                             type="button"
+                            data-testid="tab-dm-projection-gallery"
                             onClick={() => setDmProjectionTab('gallery')}
-                            className={`py-1.5 px-2 rounded-xl font-cinzel font-bold text-xs border transition cursor-pointer ${
+                            className={`py-1.5 px-2 rounded-xl font-cinzel font-bold text-[11px] border transition cursor-pointer ${
                               dmProjectionTab === 'gallery'
                                 ? 'bg-amber-950/80 border-[#e2c275] text-[#f5e4be]'
                                 : 'bg-[#181a24] border-stone-700 text-stone-400 hover:text-white'
                             }`}
                           >
-                            Mapa e Imágenes ({filteredAlbumPhotos.length + 1})
+                            Mapa e Imágenes ({filteredAlbumPhotos.length + filteredZoneMaps.length + 1})
                           </button>
                           <button
                             type="button"
+                            data-testid="tab-dm-projection-tactical"
                             onClick={() => setDmProjectionTab('tactical')}
-                            className={`py-1.5 px-2 rounded-xl font-cinzel font-bold text-xs border transition cursor-pointer ${
+                            className={`py-1.5 px-2 rounded-xl font-cinzel font-bold text-[11px] border transition cursor-pointer ${
                               dmProjectionTab === 'tactical'
-                                ? 'bg-amber-950/80 border-[#e2c275] text-[#f5e4be]'
+                                ? 'bg-red-950/80 border-red-400 text-[#f5e4be]'
                                 : 'bg-[#181a24] border-stone-700 text-stone-400 hover:text-white'
                             }`}
                           >
-                            Mapas Tácticos
+                            Mapas Tácticos ({filteredTacticalMaps.length})
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="tab-dm-projection-queue"
+                            onClick={() => setDmProjectionTab('queue')}
+                            className={`py-1.5 px-2 rounded-xl font-cinzel font-bold text-[11px] border transition cursor-pointer ${
+                              dmProjectionTab === 'queue'
+                                ? 'bg-emerald-950/80 border-emerald-400 text-emerald-100'
+                                : 'bg-[#181a24] border-stone-700 text-stone-400 hover:text-white'
+                            }`}
+                          >
+                            Ver Cola ({(workspace?.visualQueue || []).length})
                           </button>
                         </div>
 
+                        {/* Inline Quick Editor Modal/Box when DM clicks Editar on any item */}
+                        {editingVisualItem && (
+                          <div
+                            data-testid="dm-inline-visual-editor"
+                            className="p-2.5 rounded-xl bg-[#181b26] border-2 border-amber-400/80 space-y-1.5"
+                          >
+                            <div className="flex items-center justify-between text-[10px] font-cinzel font-bold text-amber-300 uppercase">
+                              <span>Editando Visual: {editingVisualItem.title}</span>
+                              <button
+                                type="button"
+                                onClick={() => setEditingVisualItem(null)}
+                                className="text-stone-400 hover:text-white cursor-pointer"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                              <input
+                                type="text"
+                                data-testid="input-inline-edit-visual-title"
+                                value={editingVisualItem.title}
+                                onChange={(e) =>
+                                  setEditingVisualItem((prev) =>
+                                    prev ? { ...prev, title: e.target.value } : null
+                                  )
+                                }
+                                placeholder="Nombre"
+                                className="bg-stone-950 border border-stone-700 rounded px-2 py-1 text-xs text-stone-100"
+                              />
+                              <input
+                                type="text"
+                                data-testid="input-inline-edit-visual-url"
+                                value={editingVisualItem.imageUrl}
+                                onChange={(e) =>
+                                  setEditingVisualItem((prev) =>
+                                    prev ? { ...prev, imageUrl: e.target.value } : null
+                                  )
+                                }
+                                placeholder="URL de Imagen"
+                                className="bg-stone-950 border border-stone-700 rounded px-2 py-1 text-xs text-stone-100"
+                              />
+                              <input
+                                type="text"
+                                data-testid="input-inline-edit-visual-folder"
+                                value={editingVisualItem.folder}
+                                onChange={(e) =>
+                                  setEditingVisualItem((prev) =>
+                                    prev ? { ...prev, folder: e.target.value } : null
+                                  )
+                                }
+                                placeholder="Carpeta / Lugar"
+                                className="bg-stone-950 border border-stone-700 rounded px-2 py-1 text-xs text-amber-200"
+                              />
+                            </div>
+                            <div className="flex justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditingVisualItem(null)}
+                                className="px-2.5 py-1 rounded bg-stone-800 text-[10px] text-stone-300 cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                type="button"
+                                data-testid="btn-save-inline-visual-edit"
+                                onClick={handleDmSaveEditedVisualItem}
+                                className="px-3 py-1 rounded bg-emerald-600 text-stone-950 font-cinzel font-bold text-[10px] cursor-pointer"
+                              >
+                                Guardar Cambios
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         {dmProjectionTab === 'gallery' ? (
                           <>
-                            {/* Horizontal Thumbnail Cards: Base Place Map + Gallery Photos */}
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[128px] overflow-y-auto pr-1">
-                              {/* Card 1: Base Map of the Place */}
+                            {/* Horizontal Thumbnail Cards: Base Place Map + Extra Zone Maps + Gallery Photos */}
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[155px] overflow-y-auto pr-1">
+                              {/* Card 1: Base Map of the Place (Click previews for DM; Proyectar sends to players) */}
                               {(() => {
-                                const isMapLive = activeVisual.kind === 'map';
+                                const liveVis = workspace?.activeLiveVisual;
+                                const isMapLiveForPlayers =
+                                  (liveVis?.kind === 'map' &&
+                                    (liveVis?.folder || 'all') === selectedFolder &&
+                                    liveVis?.id === `map-${selectedFolder}`) ||
+                                  (!liveVis && selectedFolder === (workspace?.activeAtlasFolder || 'all'));
+                                const isMapInspectedByDm =
+                                  activeVisual.kind === 'map' &&
+                                  activeVisual.id === `map-${selectedFolder}`;
                                 return (
-                                  <button
-                                    type="button"
-                                    onClick={handleDmSelectMapProjection}
-                                    className={`rounded-xl border-2 p-1.5 flex flex-col justify-between text-left transition cursor-pointer overflow-hidden ${
-                                      isMapLive
+                                  <div
+                                    className={`rounded-xl border-2 p-1.5 flex flex-col justify-between text-left transition overflow-hidden ${
+                                      isMapLiveForPlayers
                                         ? 'bg-emerald-950/40 border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
+                                        : isMapInspectedByDm
+                                        ? 'bg-amber-950/30 border-[#e2c275]'
                                         : 'bg-[#171922] border-stone-700 hover:border-[#c8a45c]'
                                     }`}
                                   >
-                                    <span className="text-[10px] font-cinzel font-bold text-[#f5e4be] truncate w-full">
-                                      Mapa: {currentPlaceShortName}
-                                    </span>
-                                    <div className="h-12 w-full rounded-lg bg-black/60 border border-stone-800 my-1 overflow-hidden flex items-center justify-center">
-                                      {currentPlaceMapUrl ? (
-                                        <img
-                                          src={currentPlaceMapUrl}
-                                          alt={currentPlaceShortName}
-                                          className="w-full h-full object-cover"
-                                        />
-                                      ) : (
-                                        <Compass className="w-5 h-5 text-amber-400/70" />
-                                      )}
-                                    </div>
-                                    <div className="flex items-center justify-center gap-1 text-[9px] font-cinzel font-bold">
-                                      <span
-                                        className={`w-2 h-2 rounded-full ${
-                                          isMapLive ? 'bg-emerald-400 animate-pulse' : 'bg-stone-500'
-                                        }`}
-                                      />
-                                      <span
-                                        className={
-                                          isMapLive ? 'text-emerald-300' : 'text-stone-400'
-                                        }
-                                      >
-                                        {isMapLive ? 'EN VIVO' : 'MOSTRAR'}
+                                    {/* Clicking thumbnail ONLY previews for DM! */}
+                                    <button
+                                      type="button"
+                                      data-testid="btn-preview-base-zone-map"
+                                      onClick={handleDmPreviewMapOnly}
+                                      className="text-left w-full cursor-pointer"
+                                      title="Clic para ver y editar en tu Vista DM (no cambia la vista de los jugadores hasta que presiones Proyectar)"
+                                    >
+                                      <span className="text-[10px] font-cinzel font-bold text-[#f5e4be] truncate block w-full">
+                                        Mapa: {currentPlaceShortName}
                                       </span>
+                                      <div className="h-11 w-full rounded-lg bg-black/60 border border-stone-800 my-1 overflow-hidden flex items-center justify-center">
+                                        {currentPlaceMapUrl ? (
+                                          <img
+                                            src={currentPlaceMapUrl}
+                                            alt={currentPlaceShortName}
+                                            className="w-full h-full object-cover"
+                                          />
+                                        ) : (
+                                          <Compass className="w-5 h-5 text-amber-400/70" />
+                                        )}
+                                      </div>
+                                    </button>
+                                    <div className="flex items-center justify-between gap-1 text-[9px] font-cinzel font-bold flex-wrap">
+                                      <button
+                                        type="button"
+                                        data-testid="btn-project-base-zone-map"
+                                        onClick={handleDmSelectMapProjection}
+                                        className="flex items-center gap-1 cursor-pointer"
+                                        title="Mandar este mapa a los jugadores"
+                                      >
+                                        <span
+                                          className={`w-2 h-2 rounded-full ${
+                                            isMapLiveForPlayers
+                                              ? 'bg-emerald-400 animate-pulse'
+                                              : 'bg-stone-500'
+                                          }`}
+                                        />
+                                        <span
+                                          className={
+                                            isMapLiveForPlayers
+                                              ? 'text-emerald-300'
+                                              : 'text-amber-200 hover:underline'
+                                          }
+                                        >
+                                          {isMapLiveForPlayers ? 'EN VIVO' : 'PROYECTAR'}
+                                        </span>
+                                      </button>
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setEditingVisualItem({
+                                              kind: 'map',
+                                              id: `map-${selectedFolder}`,
+                                              title: `Mapa: ${currentPlaceShortName}`,
+                                              imageUrl: currentPlaceMapUrl,
+                                              folder: selectedFolder,
+                                            })
+                                          }
+                                          className="px-1 py-0.2 rounded bg-stone-800 hover:bg-stone-700 text-[8px] text-stone-200 cursor-pointer"
+                                        >
+                                          Editar
+                                        </button>
+                                        {currentPlaceMapUrl && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleDmEnqueueVisual({
+                                                kind: 'map',
+                                                sourceId: `map-${selectedFolder}`,
+                                                title: `Mapa: ${currentPlaceShortName}`,
+                                                imageUrl: currentPlaceMapUrl,
+                                                folder: selectedFolder,
+                                              })
+                                            }
+                                            className="px-1 py-0.2 rounded bg-amber-950 hover:bg-amber-900 border border-amber-500/50 text-[8px] text-amber-200 cursor-pointer"
+                                          >
+                                            + Cola
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
-                                  </button>
+                                  </div>
                                 );
                               })()}
 
-                              {/* Gallery / Album Photos of the Place */}
-                              {filteredAlbumPhotos.map((photo) => {
-                                const isPhotoLive =
-                                  activeVisual.kind === 'album' && activeVisual.id === photo.id;
+                              {/* Extra Zone Maps of the Place */}
+                              {filteredZoneMaps.map((zMap) => {
+                                const liveVis = workspace?.activeLiveVisual;
+                                const isZMapLive =
+                                  liveVis?.kind === 'map' && liveVis?.id === zMap.id;
+                                const isZMapInspected =
+                                  activeVisual.kind === 'map' && activeVisual.id === zMap.id;
                                 return (
-                                  <button
-                                    key={photo.id}
-                                    type="button"
-                                    onClick={() => handleDmSelectGalleryPhoto(photo)}
-                                    className={`rounded-xl border-2 p-1.5 flex flex-col justify-between text-left transition cursor-pointer overflow-hidden ${
-                                      isPhotoLive
+                                  <div
+                                    key={zMap.id}
+                                    className={`rounded-xl border-2 p-1.5 flex flex-col justify-between text-left transition overflow-hidden ${
+                                      isZMapLive
                                         ? 'bg-emerald-950/40 border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
+                                        : isZMapInspected
+                                        ? 'bg-amber-950/30 border-[#e2c275]'
                                         : 'bg-[#171922] border-stone-700 hover:border-[#c8a45c]'
                                     }`}
                                   >
-                                    <span className="text-[10px] font-cinzel font-bold text-[#f5e4be] truncate w-full">
-                                      {photo.title}
-                                    </span>
-                                    <div className="h-12 w-full rounded-lg bg-black/60 border border-stone-800 my-1 overflow-hidden flex items-center justify-center">
-                                      <img
-                                        src={photo.imageUrl}
-                                        alt={photo.title}
-                                        className="w-full h-full object-cover"
-                                      />
-                                    </div>
-                                    <div className="flex items-center justify-center gap-1 text-[9px] font-cinzel font-bold">
-                                      <span
-                                        className={`w-2 h-2 rounded-full ${
-                                          isPhotoLive
-                                            ? 'bg-emerald-400 animate-pulse'
-                                            : 'bg-stone-500'
-                                        }`}
-                                      />
-                                      <span
-                                        className={
-                                          isPhotoLive ? 'text-emerald-300' : 'text-stone-400'
-                                        }
-                                      >
-                                        {isPhotoLive ? 'EN VIVO' : 'IDLE'}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDmPreviewZoneMapOnly(zMap)}
+                                      className="text-left w-full cursor-pointer"
+                                      title="Clic para previsualizar en Vista DM sin cambiar lo que ven los jugadores"
+                                    >
+                                      <span className="text-[10px] font-cinzel font-bold text-[#f5e4be] truncate block w-full">
+                                        {zMap.title}
                                       </span>
+                                      <div className="h-11 w-full rounded-lg bg-black/60 border border-stone-800 my-1 overflow-hidden flex items-center justify-center">
+                                        <img
+                                          src={zMap.imageUrl}
+                                          alt={zMap.title}
+                                          className="w-full h-full object-cover"
+                                        />
+                                      </div>
+                                    </button>
+                                    <div className="flex items-center justify-between gap-1 text-[9px] font-cinzel font-bold flex-wrap">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDmProjectZoneMap(zMap)}
+                                        className="flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <span
+                                          className={`w-2 h-2 rounded-full ${
+                                            isZMapLive ? 'bg-emerald-400 animate-pulse' : 'bg-stone-500'
+                                          }`}
+                                        />
+                                        <span className={isZMapLive ? 'text-emerald-300' : 'text-amber-200 hover:underline'}>
+                                          {isZMapLive ? 'EN VIVO' : 'PROYECTAR'}
+                                        </span>
+                                      </button>
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setEditingVisualItem({
+                                              kind: 'zonemap',
+                                              id: zMap.id,
+                                              title: zMap.title,
+                                              imageUrl: zMap.imageUrl,
+                                              folder: zMap.folder,
+                                            })
+                                          }
+                                          className="px-1 py-0.2 rounded bg-stone-800 hover:bg-stone-700 text-[8px] text-stone-200 cursor-pointer"
+                                        >
+                                          Editar
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleDmEnqueueVisual({
+                                              kind: 'map',
+                                              sourceId: zMap.id,
+                                              title: zMap.title,
+                                              imageUrl: zMap.imageUrl,
+                                              folder: zMap.folder,
+                                            })
+                                          }
+                                          className="px-1 py-0.2 rounded bg-amber-950 hover:bg-amber-900 border border-amber-500/50 text-[8px] text-amber-200 cursor-pointer"
+                                        >
+                                          + Cola
+                                        </button>
+                                      </div>
                                     </div>
-                                  </button>
+                                  </div>
+                                );
+                              })}
+
+                              {/* Gallery / Album Photos of the Place */}
+                              {filteredAlbumPhotos.map((photo) => {
+                                const liveVis = workspace?.activeLiveVisual;
+                                const isPhotoLiveForPlayers =
+                                  (liveVis?.kind === 'album' || (liveVis?.kind as string) === 'photo') &&
+                                  liveVis?.id === photo.id;
+                                const isPhotoInspectedByDm =
+                                  activeVisual.kind === 'album' && activeVisual.id === photo.id;
+                                return (
+                                  <div
+                                    key={photo.id}
+                                    className={`rounded-xl border-2 p-1.5 flex flex-col justify-between text-left transition overflow-hidden ${
+                                      isPhotoLiveForPlayers
+                                        ? 'bg-emerald-950/40 border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
+                                        : isPhotoInspectedByDm
+                                        ? 'bg-amber-950/30 border-[#e2c275]'
+                                        : 'bg-[#171922] border-stone-700 hover:border-[#c8a45c]'
+                                    }`}
+                                  >
+                                    {/* Clicking thumbnail ONLY previews for DM! */}
+                                    <button
+                                      type="button"
+                                      data-testid={`btn-preview-gallery-photo-${photo.id}`}
+                                      onClick={() => handleDmPreviewGalleryPhotoOnly(photo)}
+                                      className="text-left w-full cursor-pointer"
+                                      title="Clic para revisar en Vista DM sin cambiar lo que ven los jugadores"
+                                    >
+                                      <span className="text-[10px] font-cinzel font-bold text-[#f5e4be] truncate block w-full">
+                                        {photo.title}
+                                      </span>
+                                      <div className="h-11 w-full rounded-lg bg-black/60 border border-stone-800 my-1 overflow-hidden flex items-center justify-center">
+                                        <img
+                                          src={photo.imageUrl}
+                                          alt={photo.title}
+                                          className="w-full h-full object-cover"
+                                        />
+                                      </div>
+                                    </button>
+                                    <div className="flex items-center justify-between gap-1 text-[9px] font-cinzel font-bold flex-wrap">
+                                      <button
+                                        type="button"
+                                        data-testid={`btn-project-gallery-photo-${photo.id}`}
+                                        onClick={() => handleDmSelectGalleryPhoto(photo)}
+                                        className="flex items-center gap-1 cursor-pointer"
+                                        title="Mostrar esta imagen en vivo a los jugadores"
+                                      >
+                                        <span
+                                          className={`w-2 h-2 rounded-full ${
+                                            isPhotoLiveForPlayers
+                                              ? 'bg-emerald-400 animate-pulse'
+                                              : 'bg-stone-500'
+                                          }`}
+                                        />
+                                        <span
+                                          className={
+                                            isPhotoLiveForPlayers
+                                              ? 'text-emerald-300'
+                                              : 'text-amber-200 hover:underline'
+                                          }
+                                        >
+                                          {isPhotoLiveForPlayers ? 'EN VIVO' : 'PROYECTAR'}
+                                        </span>
+                                      </button>
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setEditingVisualItem({
+                                              kind: 'album',
+                                              id: photo.id,
+                                              title: photo.title,
+                                              imageUrl: photo.imageUrl,
+                                              folder: photo.folder,
+                                            })
+                                          }
+                                          className="px-1 py-0.2 rounded bg-stone-800 hover:bg-stone-700 text-[8px] text-stone-200 cursor-pointer"
+                                        >
+                                          Editar
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleDmEnqueueVisual({
+                                              kind: 'album',
+                                              sourceId: photo.id,
+                                              title: photo.title,
+                                              imageUrl: photo.imageUrl,
+                                              folder: photo.folder,
+                                            })
+                                          }
+                                          className="px-1 py-0.2 rounded bg-amber-950 hover:bg-amber-900 border border-amber-500/50 text-[8px] text-amber-200 cursor-pointer"
+                                        >
+                                          + Cola
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
                                 );
                               })}
                             </div>
@@ -1550,14 +2703,233 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                               <span>+ Subir Mapa o Imágenes de Galería</span>
                             </button>
                           </>
+                        ) : dmProjectionTab === 'tactical' ? (
+                          <div className="space-y-2">
+                            {filteredTacticalMaps.length > 0 ? (
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[145px] overflow-y-auto pr-1">
+                                {filteredTacticalMaps.map((tMap) => {
+                                  const liveVis = workspace?.activeLiveVisual;
+                                  const isTacLive =
+                                    liveVis?.kind === 'tactical' && liveVis?.id === tMap.id;
+                                  const isTacInspected =
+                                    activeVisual.kind === 'tactical' && activeVisual.id === tMap.id;
+                                  return (
+                                    <div
+                                      key={tMap.id}
+                                      className={`rounded-xl border-2 p-1.5 flex flex-col justify-between text-left transition overflow-hidden ${
+                                        isTacLive
+                                          ? 'bg-emerald-950/40 border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.35)]'
+                                          : isTacInspected
+                                          ? 'bg-red-950/30 border-red-400'
+                                          : 'bg-[#171922] border-stone-700 hover:border-red-400/70'
+                                      }`}
+                                    >
+                                      {/* Clicking previews tactical map for DM so DM can place/move tokens before projecting! */}
+                                      <button
+                                        type="button"
+                                        data-testid={`btn-preview-tactical-map-${tMap.id}`}
+                                        onClick={() => handleDmPreviewTacticalMapOnly(tMap)}
+                                        className="text-left w-full cursor-pointer"
+                                        title="Clic para abrir y preparar fichas en Vista DM antes de proyectar a los jugadores"
+                                      >
+                                        <span className="text-[10px] font-cinzel font-bold text-[#f5e4be] truncate block w-full">
+                                          ⚔️ {tMap.name}
+                                        </span>
+                                        <div className="h-11 w-full rounded-lg bg-black/60 border border-stone-800 my-1 overflow-hidden flex items-center justify-center relative">
+                                          <img
+                                            src={tMap.mapImageUrl}
+                                            alt={tMap.name}
+                                            className="w-full h-full object-cover"
+                                          />
+                                          <span className="absolute bottom-0.5 right-1 px-1 rounded bg-black/80 text-[8px] font-mono text-red-200">
+                                            {tMap.gridCols || 10}x{tMap.gridRows || 10}
+                                          </span>
+                                        </div>
+                                      </button>
+                                      <div className="flex items-center justify-between gap-1 text-[9px] font-cinzel font-bold flex-wrap">
+                                        <button
+                                          type="button"
+                                          data-testid={`btn-project-tactical-map-${tMap.id}`}
+                                          onClick={() => handleDmProjectTacticalMap(tMap)}
+                                          className="flex items-center gap-1 cursor-pointer"
+                                        >
+                                          <span
+                                            className={`w-2 h-2 rounded-full ${
+                                              isTacLive ? 'bg-emerald-400 animate-pulse' : 'bg-stone-500'
+                                            }`}
+                                          />
+                                          <span className={isTacLive ? 'text-emerald-300' : 'text-amber-200 hover:underline'}>
+                                            {isTacLive ? 'EN VIVO' : 'PROYECTAR'}
+                                          </span>
+                                        </button>
+                                        <div className="flex items-center gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setEditingVisualItem({
+                                                kind: 'tactical',
+                                                id: tMap.id,
+                                                title: tMap.name,
+                                                imageUrl: tMap.mapImageUrl || '',
+                                                folder: tMap.folder,
+                                                gridCols: tMap.gridCols || 10,
+                                                gridRows: tMap.gridRows || 10,
+                                              })
+                                            }
+                                            className="px-1 py-0.2 rounded bg-stone-800 hover:bg-stone-700 text-[8px] text-stone-200 cursor-pointer"
+                                          >
+                                            Editar
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleDmEnqueueVisual({
+                                                kind: 'tactical',
+                                                sourceId: tMap.id,
+                                                title: tMap.name,
+                                                imageUrl: tMap.mapImageUrl || '',
+                                                folder: tMap.folder,
+                                              })
+                                            }
+                                            className="px-1 py-0.2 rounded bg-amber-950 hover:bg-amber-900 border border-amber-500/50 text-[8px] text-amber-200 cursor-pointer"
+                                          >
+                                            + Cola
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-stone-400 text-center py-2">
+                                No hay mapas tácticos en esta zona. Crea uno abajo:
+                              </p>
+                            )}
+
+                            {/* Quick create tactical map */}
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-1.5 items-center pt-1 border-t border-stone-800">
+                              <input
+                                type="text"
+                                value={newTacticalTitle}
+                                onChange={(e) => setNewTacticalTitle(e.target.value)}
+                                placeholder="Nombre del tablero táctico..."
+                                className="sm:col-span-4 bg-stone-950 border border-stone-700 rounded-lg px-2 py-1 text-[11px] text-stone-100"
+                              />
+                              <input
+                                type="text"
+                                value={newTacticalUrl}
+                                onChange={(e) => setNewTacticalUrl(e.target.value)}
+                                placeholder="URL de imagen del mapa táctico..."
+                                className="sm:col-span-5 bg-stone-950 border border-stone-700 rounded-lg px-2 py-1 text-[11px] text-stone-100"
+                              />
+                              <button
+                                type="button"
+                                data-testid="btn-quick-create-tactical-in-map"
+                                onClick={handleCreateQuickTacticalMapInTable}
+                                disabled={!newTacticalUrl.trim()}
+                                className="sm:col-span-3 py-1 px-2 rounded-lg bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white font-cinzel font-bold text-[10px] cursor-pointer"
+                              >
+                                + Tablero Táctico
+                              </button>
+                            </div>
+                          </div>
                         ) : (
-                          <div className="rounded-xl bg-black/50 border border-[#c8a45c]/40 p-3 text-center space-y-1">
-                            <span className="font-cinzel font-bold text-xs text-amber-300 block">
-                              🗺️ Mapas Tácticos Interactivos (Próximamente)
-                            </span>
-                            <p className="text-[11px] text-stone-400">
-                              Aquí podrás proyectar mapas tácticos con cuadrícula y tokens. Por ahora puedes proyectar el mapa del lugar o las imágenes de su galería.
-                            </p>
+                          /* TAB 3: VER COLA (Ordered Visual Queue across all zones) */
+                          <div data-testid="dm-projection-queue-panel" className="space-y-2">
+                            {(workspace?.visualQueue || []).length > 0 ? (
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[155px] overflow-y-auto pr-1">
+                                {(workspace?.visualQueue || []).map((qItem, idx) => {
+                                  const isLive =
+                                    workspace?.activeLiveVisual?.imageUrl === qItem.imageUrl &&
+                                    workspace?.activeLiveVisual?.title === qItem.title;
+                                  return (
+                                    <div
+                                      key={qItem.id}
+                                      data-testid={`projection-queue-card-${idx}`}
+                                      className={`rounded-xl border-2 p-1.5 flex flex-col justify-between text-left transition overflow-hidden ${
+                                        isLive
+                                          ? 'bg-emerald-950/40 border-emerald-400'
+                                          : 'bg-[#171922] border-stone-700 hover:border-amber-400'
+                                      }`}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setDmViewportMode('dm');
+                                          setDmInspectedVisual({
+                                            kind: qItem.kind,
+                                            id: qItem.sourceId,
+                                            title: qItem.title,
+                                            imageUrl: qItem.imageUrl,
+                                            folder: qItem.folder,
+                                          });
+                                        }}
+                                        className="text-left w-full cursor-pointer"
+                                        title="Clic para previsualizar en Vista DM"
+                                      >
+                                        <div className="flex items-center justify-between gap-1">
+                                          <span className="text-[10px] font-cinzel font-bold text-[#f5e4be] truncate">
+                                            #{idx + 1} {qItem.title}
+                                          </span>
+                                        </div>
+                                        <div className="h-11 w-full rounded-lg bg-black/60 border border-stone-800 my-1 overflow-hidden flex items-center justify-center">
+                                          <img
+                                            src={qItem.imageUrl}
+                                            alt={qItem.title}
+                                            className="w-full h-full object-cover"
+                                          />
+                                        </div>
+                                      </button>
+                                      <div className="flex items-center justify-between gap-1 text-[9px] font-cinzel font-bold">
+                                        <button
+                                          type="button"
+                                          data-testid={`btn-project-queued-item-${idx}`}
+                                          onClick={() => {
+                                            if (!workspace || !onUpdateWorkspace) return;
+                                            const matchingTac =
+                                              qItem.kind === 'tactical'
+                                                ? (workspace.locations || []).find(
+                                                    (l) => l.id === qItem.sourceId
+                                                  )
+                                                : undefined;
+                                            onUpdateWorkspace({
+                                              ...workspace,
+                                              activeLiveVisual: {
+                                                kind: qItem.kind,
+                                                id: qItem.sourceId,
+                                                title: qItem.title,
+                                                imageUrl: qItem.imageUrl,
+                                                folder: qItem.folder,
+                                                gridCols: matchingTac?.gridCols,
+                                                gridRows: matchingTac?.gridRows,
+                                                tacticalTokens: matchingTac?.tokens,
+                                              },
+                                            });
+                                          }}
+                                          className="text-amber-200 hover:underline cursor-pointer"
+                                        >
+                                          {isLive ? 'EN VIVO' : 'PROYECTAR'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          data-testid={`btn-remove-queued-item-${idx}`}
+                                          onClick={() => handleDmRemoveFromQueue(qItem.id)}
+                                          className="px-1.5 py-0.5 rounded bg-red-950/70 hover:bg-red-900 text-red-300 cursor-pointer"
+                                          title="Tachar / Quitar de la cola"
+                                        >
+                                          ✕ Quitar
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="rounded-xl bg-black/40 border border-stone-800 p-3 text-center text-[11px] text-stone-400">
+                                La cola está vacía. Usa el botón <strong className="text-amber-300">+ Cola</strong> en cualquier mapa, foto o tablero táctico para preparar el orden de tu sesión.
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

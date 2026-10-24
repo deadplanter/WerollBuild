@@ -143,6 +143,7 @@ export interface Character5e {
   tempHp: number;
   armorClass: number;
   initiativeBonus: number;
+  initiative?: number;
   speed: number;
   hitDiceTotal: string; // e.g. "1d10"
   hitDiceUsed: number;
@@ -151,6 +152,7 @@ export interface Character5e {
     failures: number; // 0-3
   };
   inspiration: boolean;
+  playerSkinId?: string; // Optional Creator Studio Player Skin ID
 
   // Ability Scores
   abilities: Record<AbilityKey, AbilityScore>;
@@ -264,18 +266,57 @@ export interface MonsterRecord {
   avatarIcon?: string;
 }
 
+export interface TacticalMapToken {
+  id: string;
+  label: string;
+  kind: 'player' | 'monster' | 'npc' | 'enemy';
+  x?: number; // grid column (0-indexed)
+  y?: number; // grid row (0-indexed)
+  col?: number; // grid column alias
+  row?: number; // grid row alias
+  color?: string;
+  avatarUrl?: string;
+  linkedId?: string;
+}
+
+export interface ZoneMapRecord {
+  id: string;
+  title: string;
+  imageUrl: string;
+  folder: string;
+  isCover?: boolean;
+  createdAt: number;
+}
+
+export interface VisualQueueItem {
+  queueId: string;
+  id: string;
+  sourceId?: string;
+  kind: 'map' | 'album' | 'tactical';
+  title: string;
+  imageUrl: string;
+  folder: string;
+  addedAt: number;
+}
+
 export interface LocationRecord {
   id: string;
   name: string;
-  region: string;
-  type: 'Ciudad' | 'Mazmorra' | 'Templo' | 'Bosque' | 'Castillo' | 'Taberna' | 'Ruinas' | 'Poblado' | 'Zona' | 'Zona Táctica' | 'Otro' | string;
+  region?: string;
+  type: 'Ciudad' | 'Mazmorra' | 'Templo' | 'Bosque' | 'Castillo' | 'Taberna' | 'Ruinas' | 'Poblado' | 'Zona' | 'Zona Táctica' | 'Mapa Táctico' | 'Otro' | string;
+  status?: string;
   description: string;
-  secretsForDm: string;
+  secretsForDm?: string;
+  dmSecrets?: string;
   notes?: string; // DM private notes
   evolution?: string; // Changes to location over campaign
-  pointsOfInterest: string[];
+  pointsOfInterest?: string[];
   mapImageUrl?: string;
   folder?: string;
+  gridCols?: number;
+  gridRows?: number;
+  tacticalTokens?: TacticalMapToken[];
+  tokens?: TacticalMapToken[];
 }
 
 export interface CampaignLogEntry {
@@ -301,9 +342,14 @@ export interface Combatant {
   passivePerception?: number;
   isPlayer: boolean;
   characterId?: string;
+  sourceId?: string;
   conditions: string[];
   notes?: string;
   faction?: 'enemy' | 'ally';
+  avatarType?: 'icon' | 'custom';
+  avatarCustomUrl?: string;
+  avatarIcon?: string;
+  avatarUrl?: string;
 }
 
 export interface CombatLogEvent {
@@ -432,16 +478,36 @@ export interface DMWorkspace {
   playerMessages?: PlayerMessageToDM[];
   folders: string[];
   atlasMaps?: Record<string, string>; // key: 'all' or folder path -> square map image URL / DataURL
+  zoneMaps?: ZoneMapRecord[]; // Multiple maps per folder/zone
   atlasPinPositions?: Record<string, AtlasPinPosition>; // key: child folder path -> { x, y }
   placeAlbumPhotos?: PlaceAlbumPhoto[];
+  visualQueue?: VisualQueueItem[]; // Ordered visual storytelling queue prepared by the DM
+  tacticalTokensByMapId?: Record<string, TacticalMapToken[]>; // Tokens per tactical map ID
   activeAtlasFolder?: string; // Current folder/place path selected by the DM
+  autoSyncLiveOnZoneChange?: boolean; // When true, changing activeAtlasFolder automatically updates activeLiveVisual for players
+  autoSyncLiveMapOnZoneChange?: boolean;
+  dmPreviewVisual?: {
+    kind: 'album' | 'tactical' | 'map';
+    id: string;
+    title: string;
+    imageUrl?: string;
+    folder?: string;
+    gridCols?: number;
+    gridRows?: number;
+    tacticalTokens?: TacticalMapToken[];
+  };
   activeLiveVisual?: {
     kind: 'album' | 'tactical' | 'map';
     id: string;
     title: string;
     imageUrl?: string;
     folder?: string;
+    gridCols?: number;
+    gridRows?: number;
+    tacticalTokens?: TacticalMapToken[];
   };
+  dmSkinId?: string; // Optional Creator Studio DM Skin ID
+  installedDlcIds?: string[]; // Installed Creator Studio DLC package IDs
   activeEncounter: EncounterState;
   currentQuest?: string; // DM's active quest objective broadcast
   quickNotification?: string; // Quick alert banner
@@ -452,10 +518,24 @@ export interface DMWorkspace {
 export interface LiveRoomProjection {
   locationName: string;
   locationFolder: string;
-  visualKind: 'map' | 'album' | 'tactical';
+  visualId?: string;
+  visualKind: 'map' | 'album' | 'photo' | 'tactical';
   visualTitle: string;
   visualImageUrl?: string;
-  galleryPhotos?: PlaceAlbumPhoto[];
+  gridCols?: number;
+  gridRows?: number;
+  tacticalGridCols?: number;
+  tacticalGridRows?: number;
+  tacticalTokens?: TacticalMapToken[];
+  galleryPhotos?: Array<{
+    id: string;
+    title: string;
+    imageUrl: string;
+    folder?: string;
+    placePath?: string;
+    description?: string;
+    createdAt?: number;
+  }>;
 }
 
 // Dice & Session Types
@@ -598,6 +678,10 @@ export interface UserAccountPublic {
   approvedAt?: number;
   approvedBy?: string;
   lastActiveAt: number;
+  isOnline?: boolean;
+  totalConnectedMs?: number;
+  sessionCount?: number;
+  currentActivity?: string;
 }
 
 // Forum Data Structures (WeRoll Forum)
@@ -775,4 +859,115 @@ export interface HostSettings {
   liveBroadcastPopup?: LiveBroadcastPopup;
   changelog?: ChangelogEntry[];
   roleSwitchingAllowed?: 'strict' | 'open'; // 'strict' locks player to player and DM to DM; 'open' allows switcher
+  activeAppSkinId?: string; // Optional Creator Studio global app skin ID (e.g. Christmas theme, original theme)
 }
+
+// ==========================================
+// CREATOR STUDIO (4 APARTADOS) & DELTA SYNC TYPES
+// ==========================================
+
+export type CreatorModuleKind =
+  | 'creator_skin_player'
+  | 'creator_skin_dm'
+  | 'creator_dlc'
+  | 'creator_skin_app';
+
+export interface CreatorPlayerSkin {
+  id: string;
+  name: string;
+  authorTag: string;
+  description: string;
+  sheetTheme: {
+    backgroundTextureUrl?: string;
+    primaryBorderColor: string;
+    accentColor: string;
+    cardFrameStyle: string;
+  };
+  tarotCardDesign: {
+    frameBorderUrl?: string;
+    glowColor: string;
+    badgeStyle: string;
+  };
+  updatedAt: number;
+}
+
+export interface CreatorDmSkin {
+  id: string;
+  name: string;
+  authorTag: string;
+  description: string;
+  worldSheetTheme: {
+    panelBgColor: string;
+    borderGoldTone: string;
+    mapHudFrameStyle: string;
+  };
+  updatedAt: number;
+}
+
+export interface CreatorDlcPackage {
+  id: string;
+  name: string;
+  version: string;
+  authorTag: string;
+  description: string;
+  counts: {
+    maps: number;
+    albums: number;
+    monsters: number;
+    itemsAndWeapons: number;
+    stories: number;
+  };
+  updatedAt: number;
+}
+
+export interface CreatorAppSkin {
+  id: string;
+  name: string;
+  seasonTag: string; // e.g. 'Original', 'Navidad', 'Halloween', 'Aniversario'
+  authorTag: string;
+  description: string;
+  themeTokens: {
+    headerBannerBg: string;
+    lobbyBgAccent: string;
+    forumAccentColor: string;
+    buttonPrimaryGradient: string;
+  };
+  isDefault?: boolean;
+  updatedAt: number;
+}
+
+export type DeltaEntityKind =
+  | 'sheet'
+  | 'world'
+  | 'user'
+  | 'settings'
+  | 'creator_skin_player'
+  | 'creator_skin_dm'
+  | 'creator_dlc'
+  | 'creator_skin_app';
+
+export interface DeltaSyncRecord {
+  id: string;
+  revision: number;
+  timestamp: number;
+  entityKind: DeltaEntityKind;
+  entityId: string;
+  entityLabel: string;
+  actorEmail?: string;
+  changedFields: string[];
+  payloadSizeKb: number;
+  summary: string;
+}
+
+export interface SeparatedAssetEntry {
+  assetId: string;
+  hash: string;
+  category: 'atlas_map' | 'album_photo' | 'character_avatar' | 'dm_avatar' | 'creator_skin_asset';
+  ownerEntityId: string;
+  ownerLabel: string;
+  title: string;
+  mimeType: string;
+  sizeKb: number;
+  updatedAt: number;
+}
+
