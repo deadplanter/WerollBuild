@@ -9,6 +9,8 @@ import {
   calculatePassivePerception,
   getEffectiveAbilityModifier,
   parseAlignmentDescriptor,
+  calculateEquippedItemStatBonuses,
+  calculateTotalAbilityScore,
 } from '../../utils/dnd-math';
 
 export interface CharacterTarotCardProps {
@@ -232,45 +234,61 @@ export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
     : (member?.characterClass || 'Humano • Aventurero').replace(/\s+/, ' • ');
 
   const profBonus = calculateProficiencyBonus(level);
-  const ac = character?.armorClass ?? member?.ac ?? 10;
-  const speed = character?.speed ?? member?.speed ?? 30;
+
+  const equippedBonuses = React.useMemo(
+    () => (character?.inventory ? calculateEquippedItemStatBonuses(character.inventory) : null),
+    [character?.inventory]
+  );
+
+  const ac = character
+    ? (character.armorClass ?? 10) + (equippedBonuses?.ac ?? 0)
+    : member?.ac ?? 10;
+  const speed = character
+    ? (character.speed ?? 30) + (equippedBonuses?.speed ?? 0)
+    : member?.speed ?? 30;
+
+  const strMod = character
+    ? calculateTotalAbilityScore(character.abilities.str, equippedBonuses?.str ?? 0).modifier
+    : calculateModifier(member?.abilities?.str ?? 10);
+  const dexMod = character
+    ? calculateTotalAbilityScore(character.abilities.dex, equippedBonuses?.dex ?? 0).modifier
+    : calculateModifier(member?.abilities?.dex ?? 10);
+  const conMod = character
+    ? calculateTotalAbilityScore(character.abilities.con, equippedBonuses?.con ?? 0).modifier
+    : calculateModifier(member?.abilities?.con ?? 10);
+  const intMod = character
+    ? calculateTotalAbilityScore(character.abilities.int, equippedBonuses?.int ?? 0).modifier
+    : calculateModifier(member?.abilities?.int ?? 10);
+  const wisMod = character
+    ? calculateTotalAbilityScore(character.abilities.wis, equippedBonuses?.wis ?? 0).modifier
+    : calculateModifier(member?.abilities?.wis ?? 10);
+  const chaMod = character
+    ? calculateTotalAbilityScore(character.abilities.cha, equippedBonuses?.cha ?? 0).modifier
+    : calculateModifier(member?.abilities?.cha ?? 10);
+
+  const wisScore = character
+    ? calculateTotalAbilityScore(character.abilities.wis, equippedBonuses?.wis ?? 0).totalScore
+    : (member?.abilities?.wis ?? 10);
   const pp = character
     ? calculatePassivePerception(
-        character.abilities.wis.score,
+        wisScore,
         character.skills.perception,
         profBonus
       )
     : member?.passivePerception ?? 10;
 
-  const strMod = character
-    ? getEffectiveAbilityModifier(character.abilities.str)
-    : calculateModifier(member?.abilities?.str ?? 10);
-  const dexMod = character
-    ? getEffectiveAbilityModifier(character.abilities.dex)
-    : calculateModifier(member?.abilities?.dex ?? 10);
-  const conMod = character
-    ? getEffectiveAbilityModifier(character.abilities.con)
-    : calculateModifier(member?.abilities?.con ?? 10);
-  const intMod = character
-    ? getEffectiveAbilityModifier(character.abilities.int)
-    : calculateModifier(member?.abilities?.int ?? 10);
-  const wisMod = character
-    ? getEffectiveAbilityModifier(character.abilities.wis)
-    : calculateModifier(member?.abilities?.wis ?? 10);
-  const chaMod = character
-    ? getEffectiveAbilityModifier(character.abilities.cha)
-    : calculateModifier(member?.abilities?.cha ?? 10);
-
-  const initiative = character
-    ? typeof character.initiative === 'number'
-      ? character.initiative
-      : dexMod
-    : typeof member?.initiative === 'number'
-    ? member.initiative
-    : dexMod;
+  const baseInit = character
+    ? (typeof character.initiative === 'number'
+        ? character.initiative
+        : dexMod)
+    : (typeof member?.initiative === 'number'
+        ? member.initiative
+        : dexMod);
+  const initiative = baseInit + (equippedBonuses?.initiative ?? 0);
 
   const currentHp = character?.currentHp ?? member?.currentHp ?? 10;
-  const maxHp = Math.max(1, character?.maxHp ?? member?.maxHp ?? 10);
+  const baseMaxHp = Math.max(1, character?.maxHp ?? member?.maxHp ?? 10);
+  const maxHp = baseMaxHp + (equippedBonuses?.maxHp ?? 0);
   const hpPercent = Math.min(100, Math.max(0, (currentHp / maxHp) * 100));
 
   const currency = character?.currency ||

@@ -16,6 +16,7 @@ import {
   Check,
   Gift,
   Lock,
+  Zap,
 } from 'lucide-react';
 import {
   DMCustomItemOrSpell,
@@ -26,6 +27,9 @@ import {
   PartyMemberLive,
   WeaponAttack,
   AbilityKey,
+  ItemStatModifier,
+  ItemSpecialAction,
+  StatModifierTarget,
 } from '../../types/dnd';
 import { EntityAvatar } from '../common/EntityAvatar';
 import { AvatarCustomizerModal } from '../common/AvatarCustomizerModal';
@@ -154,6 +158,64 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
     setForm((prev) => ({ ...prev, weaponAttacks: current }));
   };
 
+  const handleAddStatModifier = () => {
+    const newMod: ItemStatModifier = {
+      id: `mod-${Date.now()}-${(form.statModifiers || []).length + 1}`,
+      stat: 'dex',
+      value: 1,
+      label: 'Destreza Ligera',
+    };
+    setForm((prev) => ({
+      ...prev,
+      statModifiers: [...(prev.statModifiers || []), newMod],
+    }));
+  };
+
+  const handleUpdateStatModifier = (idx: number, patch: Partial<ItemStatModifier>) => {
+    const current = [...(form.statModifiers || [])];
+    if (!current[idx]) return;
+    current[idx] = { ...current[idx], ...patch };
+    setForm((prev) => ({ ...prev, statModifiers: current }));
+  };
+
+  const handleRemoveStatModifier = (idx: number) => {
+    const current = [...(form.statModifiers || [])];
+    current.splice(idx, 1);
+    setForm((prev) => ({ ...prev, statModifiers: current }));
+  };
+
+  const handleAddItemAction = () => {
+    const count = (form.itemActions || []).length + 1;
+    const newAction: ItemSpecialAction = {
+      id: `act-${Date.now()}-${count}`,
+      name: `Acción Especial ${count}`,
+      description: 'Acción potenciada otorgada por este elemento.',
+      dice: '1d6',
+      bonus: 2,
+      potenciador: 2,
+      damageType: 'Fuego',
+      actionType: 'action',
+      range: '5 pies',
+    };
+    setForm((prev) => ({
+      ...prev,
+      itemActions: [...(prev.itemActions || []), newAction],
+    }));
+  };
+
+  const handleUpdateItemAction = (idx: number, patch: Partial<ItemSpecialAction>) => {
+    const current = [...(form.itemActions || [])];
+    if (!current[idx]) return;
+    current[idx] = { ...current[idx], ...patch };
+    setForm((prev) => ({ ...prev, itemActions: current }));
+  };
+
+  const handleRemoveItemAction = (idx: number) => {
+    const current = [...(form.itemActions || [])];
+    current.splice(idx, 1);
+    setForm((prev) => ({ ...prev, itemActions: current }));
+  };
+
   const showToast = (msg: string) => {
     setFeedbackToast(msg);
     setTimeout(() => setFeedbackToast(''), 3000);
@@ -213,6 +275,9 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       properties: '',
       dmSecrets: '',
       folder: selectedFolder !== 'all' ? selectedFolder : 'General',
+      weight: 3,
+      statModifiers: [],
+      itemActions: [],
       weaponAttacks: [
         {
           id: `atk-${Date.now()}-1`,
@@ -243,6 +308,9 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
     setForm({
       ...item,
       itemGroup: inferredGroup,
+      weight: item.weight ?? (inferredGroup === 'armor' ? 10 : inferredGroup === 'weapon' ? 3 : 1),
+      statModifiers: item.statModifiers || [],
+      itemActions: item.itemActions || [],
       weaponAttacks:
         item.weaponAttacks && item.weaponAttacks.length > 0
           ? item.weaponAttacks
@@ -284,15 +352,20 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
           }))
         : undefined;
 
+    const safeWeight = typeof form.weight === 'number' ? form.weight : Number(form.weight) || (effectiveGroup === 'armor' ? 10 : effectiveGroup === 'weapon' ? 3 : 1);
+
     if (editingId) {
       const updated = customItemsAndSpells.map((i) =>
         i.id === editingId
           ? ({
               ...i,
               ...form,
+              weight: safeWeight,
               kind: effectiveKind,
               itemGroup: effectiveGroup,
               weaponAttacks: effectiveAttacks,
+              statModifiers: form.statModifiers && form.statModifiers.length > 0 ? form.statModifiers : undefined,
+              itemActions: form.itemActions && form.itemActions.length > 0 ? form.itemActions : undefined,
             } as DMCustomItemOrSpell)
           : i
       );
@@ -314,8 +387,11 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
         properties: form.properties || '',
         dmSecrets: form.dmSecrets || '',
         folder: form.folder || (selectedFolder !== 'all' ? selectedFolder : 'General'),
+        weight: safeWeight,
         weaponAttacks: effectiveAttacks,
         abilityStat: effectiveKind === 'ability' ? form.abilityStat || 'int' : undefined,
+        statModifiers: form.statModifiers && form.statModifiers.length > 0 ? form.statModifiers : undefined,
+        itemActions: form.itemActions && form.itemActions.length > 0 ? form.itemActions : undefined,
       };
       onUpdateItemsAndSpells([...customItemsAndSpells, newItem]);
       showToast(`¡"${newItem.name}" creado como elemento único del DM!`);
@@ -445,6 +521,8 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
   // Give generic armor directly to player
   const handleGiveArmorToPlayer = (a: ArmorDefinition) => {
     if (!onGiveItemToPlayer) return;
+    const isCuero = a.name.toLowerCase().includes('cuero') || a.name.toLowerCase().includes('leather');
+    const isEscudo = a.category === 'Escudo';
     const invItem: InventoryItem = {
       id: `inv-${Date.now()}`,
       name: a.name,
@@ -455,6 +533,39 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       rarity: 'Común',
       description: `Armadura ${a.category.toLowerCase()}. CA: ${a.ac}. Peso: ${a.weight} lb.${a.strengthReq ? ` FUE mínima ${a.strengthReq}.` : ''}${a.stealthDisadvantage ? ' Desventaja en Sigilo.' : ''}`,
       equipped: false,
+      statModifiers: [
+        {
+          id: `mod-ca-${Date.now()}`,
+          stat: 'ac',
+          value: isEscudo ? 2 : 1,
+          label: isEscudo ? 'Escudo (+2 CA)' : 'Protección de Armadura (+1 CA)',
+        },
+        ...(isCuero
+          ? [
+              {
+                id: `mod-dex-${Date.now()}`,
+                stat: 'dex' as const,
+                value: 1,
+                label: 'Modificador de Destreza Ligera (+1)',
+              },
+            ]
+          : []),
+      ],
+      itemActions: isCuero
+        ? [
+            {
+              id: `act-cuero-${Date.now()}`,
+              name: 'Movimiento Evasivo',
+              description: 'Maniobra ligera de cuero para esquivar ataques o reposicionarse ágilmente.',
+              dice: '1d6',
+              bonus: 1,
+              potenciador: 1,
+              damageType: 'Evasión',
+              actionType: 'bonus',
+              range: 'Personal',
+            },
+          ]
+        : undefined,
     };
     onGiveItemToPlayer(invItem);
     showToast(`¡"${a.name}" entregada a la hoja del personaje activo!`);
@@ -467,7 +578,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       id: `inv-${Date.now()}`,
       name: entry.name,
       quantity: 1,
-      weight: entry.kind === 'spell' ? 0.5 : 3,
+      weight: typeof entry.weight === 'number' ? entry.weight : (entry.kind === 'spell' ? 0.5 : 3),
       category:
         entry.itemGroup === 'weapon'
           ? 'Arma'
@@ -481,6 +592,8 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       description: `${entry.description}\n\nPropiedades: ${entry.properties || 'Sin propiedades'}${entry.whoHasIt ? `\nProcedencia: ${entry.whoHasIt}` : ''}`,
       equipped: false,
       weaponAttacks: entry.weaponAttacks,
+      statModifiers: entry.statModifiers,
+      itemActions: entry.itemActions,
     };
     onGiveItemToPlayer(invItem);
     showToast(`¡"${entry.name}" asignado a la hoja del personaje activo!`);
@@ -687,6 +800,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                               : item.kind === 'ability'
                               ? 'Habilidad / Rasgo'
                               : 'Objeto Único'}
+                            {typeof item.weight === 'number' ? ` • ${item.weight} lb` : ''}
                           </span>
                         </div>
                       </div>
@@ -726,6 +840,46 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                     <p className="text-xs text-stone-300 leading-relaxed mb-2.5">
                       {item.description || 'Sin descripción detallada.'}
                     </p>
+
+                    {/* Stat Modifiers Badges */}
+                    {item.statModifiers && item.statModifiers.length > 0 && (
+                      <div className="p-2 rounded-lg bg-emerald-950/30 border border-emerald-800/50 mb-2">
+                        <span className="text-[10px] uppercase font-bold text-emerald-400 block mb-1">
+                          Modificadores de Atributos:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {item.statModifiers.map((m) => (
+                            <span
+                              key={m.id}
+                              className="text-[10px] px-2 py-0.5 rounded bg-emerald-950 border border-emerald-600 text-emerald-300 font-mono font-bold"
+                              title={m.label || `Modificador a ${m.stat.toUpperCase()}`}
+                            >
+                              {m.value >= 0 ? `+${m.value}` : m.value} {m.stat.toUpperCase()}
+                              {m.label ? ` (${m.label})` : ''}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Special Actions Badges */}
+                    {item.itemActions && item.itemActions.length > 0 && (
+                      <div className="p-2 rounded-lg bg-purple-950/30 border border-purple-800/50 mb-2">
+                        <span className="text-[10px] uppercase font-bold text-purple-400 block mb-1">
+                          Acciones Especiales Otorgadas:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {item.itemActions.map((act) => (
+                            <span
+                              key={act.id}
+                              className="text-[10px] px-2 py-0.5 rounded bg-purple-950 border border-purple-600 text-purple-200 font-mono"
+                            >
+                              ⚡ {act.name}: {act.dice}{act.bonus ? `+${act.bonus}` : ''} {act.damageType}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Weapon Attacks preview if weapon */}
                     {item.weaponAttacks && item.weaponAttacks.length > 0 && (
@@ -1193,8 +1347,8 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                 </div>
               )}
 
-              {/* Rarity, Category, Folder */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Rarity, Category, Folder, Weight */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-[11px] text-stone-400 mb-1">Rareza:</label>
                   <select
@@ -1215,7 +1369,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                   <label className="block text-[11px] text-stone-400 mb-1">Categoría / Subtipo:</label>
                   <input
                     type="text"
-                    placeholder="Ej. Espada, Armadura Pesada, Conjuro Nivel 3..."
+                    placeholder="Ej. Espada, Armadura, Conjuro..."
                     value={form.category || ''}
                     onChange={(e) => setForm({ ...form, category: e.target.value })}
                     className="w-full bg-[#121316] border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100"
@@ -1236,6 +1390,19 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-amber-300 font-bold mb-1">Peso (lb):</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    placeholder="Ej. 10"
+                    value={form.weight ?? 1}
+                    onChange={(e) => setForm({ ...form, weight: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-[#121316] border border-amber-700/60 rounded-lg px-3 py-2 text-xs text-amber-300 font-mono font-bold"
+                  />
                 </div>
               </div>
 
@@ -1436,6 +1603,216 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                   })()}
                 </div>
               )}
+
+              {/* STAT MODIFIERS CONFIGURATOR */}
+              <div className="p-3.5 rounded-xl bg-[#121316] border border-emerald-900/60 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-stone-800">
+                  <div>
+                    <h4 className="text-xs font-cinzel font-bold text-emerald-300 flex items-center gap-1.5">
+                      <Shield className="w-4 h-4 text-emerald-400" />
+                      <span>Modificadores de Estadísticas (Stats que Altera al Equipar)</span>
+                    </h4>
+                    <p className="text-[11px] text-stone-400">
+                      Elige qué modifica (FUE, DES, CON, INT, SAB, CAR, CA, Velocidad, PG Máx, Iniciativa). Se suma automáticamente a los puntos de objetos equipados.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddStatModifier}
+                    className="py-1 px-2.5 rounded-lg bg-emerald-950 hover:bg-emerald-800 border border-emerald-600/60 text-emerald-200 text-xs font-cinzel font-bold flex items-center gap-1 transition shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Añadir Modificador</span>
+                  </button>
+                </div>
+
+                {(!form.statModifiers || form.statModifiers.length === 0) ? (
+                  <p className="text-xs text-stone-500 italic py-1">
+                    No tiene modificadores mecánicos directos de estadísticas asignados.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {form.statModifiers.map((mod, idx) => (
+                      <div
+                        key={mod.id || idx}
+                        className="p-2.5 rounded-lg bg-[#181920] border border-stone-800 flex flex-col sm:flex-row items-center gap-2"
+                      >
+                        <div className="w-full sm:w-1/3">
+                          <label className="block text-[10px] text-stone-400 mb-0.5">Estadística que modifica:</label>
+                          <select
+                            value={mod.stat}
+                            onChange={(e) => handleUpdateStatModifier(idx, { stat: e.target.value as any })}
+                            className="w-full bg-[#121316] border border-stone-700 rounded px-2 py-1 text-xs text-emerald-300 font-bold"
+                          >
+                            <option value="dex">Destreza (DES)</option>
+                            <option value="str">Fuerza (FUE)</option>
+                            <option value="con">Constitución (CON)</option>
+                            <option value="int">Inteligencia (INT)</option>
+                            <option value="wis">Sabiduría (SAB)</option>
+                            <option value="cha">Carisma (CAR)</option>
+                            <option value="ac">Clase de Armadura (CA)</option>
+                            <option value="speed">Velocidad (pies)</option>
+                            <option value="maxHp">Puntos de Golpe Máx (PG)</option>
+                            <option value="initiative">Iniciativa (+)</option>
+                          </select>
+                        </div>
+
+                        <div className="w-full sm:w-28">
+                          <label className="block text-[10px] text-stone-400 mb-0.5">Valor del Bono:</label>
+                          <input
+                            type="number"
+                            value={mod.value}
+                            onChange={(e) => handleUpdateStatModifier(idx, { value: parseInt(e.target.value, 10) || 0 })}
+                            className="w-full bg-[#121316] border border-stone-700 rounded px-2 py-1 text-xs text-center font-mono font-bold text-emerald-300"
+                          />
+                        </div>
+
+                        <div className="w-full sm:flex-1">
+                          <label className="block text-[10px] text-stone-400 mb-0.5">Nota / Etiqueta explicativa:</label>
+                          <input
+                            type="text"
+                            placeholder="Ej. Destreza Ligera / Bendición de CA"
+                            value={mod.label || ''}
+                            onChange={(e) => handleUpdateStatModifier(idx, { label: e.target.value })}
+                            className="w-full bg-[#121316] border border-stone-700 rounded px-2 py-1 text-xs text-stone-200"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveStatModifier(idx)}
+                          className="p-1.5 text-stone-400 hover:text-red-400 hover:bg-red-950/40 rounded transition shrink-0 cursor-pointer"
+                          title="Eliminar modificador"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* SPECIAL ACTIONS CONFIGURATOR */}
+              <div className="p-3.5 rounded-xl bg-[#121316] border border-amber-900/60 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-stone-800">
+                  <div>
+                    <h4 className="text-xs font-cinzel font-bold text-amber-300 flex items-center gap-1.5">
+                      <Zap className="w-4 h-4 text-amber-400" />
+                      <span>Acciones Especiales (Mostradas en Combates y Acciones)</span>
+                    </h4>
+                    <p className="text-[11px] text-stone-400">
+                      Crea acciones como ataques con nombre, descripción, dados, potenciadores y tipo de daño/efecto.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddItemAction}
+                    className="py-1 px-2.5 rounded-lg bg-amber-950 hover:bg-amber-800 border border-amber-600/60 text-amber-200 text-xs font-cinzel font-bold flex items-center gap-1 transition shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Añadir Acción Especial</span>
+                  </button>
+                </div>
+
+                {(!form.itemActions || form.itemActions.length === 0) ? (
+                  <p className="text-xs text-stone-500 italic py-1">
+                    No tiene acciones especiales configuradas.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {form.itemActions.map((act, idx) => (
+                      <div
+                        key={act.id || idx}
+                        className="p-3 rounded-xl bg-[#181920] border border-amber-800/40 space-y-2 relative"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-cinzel font-bold text-amber-300 uppercase">
+                            Acción #{idx + 1}: {act.name || 'Sin Nombre'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveItemAction(idx)}
+                            className="p-1 text-stone-400 hover:text-red-400 hover:bg-red-950/40 rounded transition cursor-pointer"
+                            title="Eliminar acción"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] text-stone-400 mb-0.5">Nombre de la Acción:</label>
+                            <input
+                              type="text"
+                              placeholder="Ej. Maniobra Evasiva / Descarga Ígnea"
+                              value={act.name || ''}
+                              onChange={(e) => handleUpdateItemAction(idx, { name: e.target.value })}
+                              className="w-full bg-[#121316] border border-stone-700 rounded px-2.5 py-1 text-xs text-stone-100 font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-stone-400 mb-0.5">Tipo de Daño / Efecto:</label>
+                            <input
+                              type="text"
+                              placeholder="Ej. Fuego, Curación, Trueno, Evasión..."
+                              value={act.damageType || ''}
+                              onChange={(e) => handleUpdateItemAction(idx, { damageType: e.target.value })}
+                              className="w-full bg-[#121316] border border-stone-700 rounded px-2.5 py-1 text-xs text-stone-100"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-[10px] text-stone-400 mb-0.5">¿Qué tipo de dado usa?:</label>
+                            <input
+                              type="text"
+                              placeholder="Ej. 1d8, 2d6, 1d10"
+                              value={act.dice || '1d6'}
+                              onChange={(e) => handleUpdateItemAction(idx, { dice: e.target.value })}
+                              className="w-full bg-[#121316] border border-stone-700 rounded px-2.5 py-1 text-xs text-amber-300 font-mono font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-stone-400 mb-0.5">Potenciador (+Bono):</label>
+                            <input
+                              type="number"
+                              placeholder="0"
+                              value={act.potenciador ?? act.bonus ?? 0}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10) || 0;
+                                handleUpdateItemAction(idx, { potenciador: val, bonus: val });
+                              }}
+                              className="w-full bg-[#121316] border border-stone-700 rounded px-2.5 py-1 text-xs text-amber-300 font-mono font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-stone-400 mb-0.5">Alcance / Tipo:</label>
+                            <input
+                              type="text"
+                              placeholder="Ej. 5 pies / 30 pies / Personal"
+                              value={act.range || '5 pies'}
+                              onChange={(e) => handleUpdateItemAction(idx, { range: e.target.value })}
+                              className="w-full bg-[#121316] border border-stone-700 rounded px-2.5 py-1 text-xs text-stone-100"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] text-stone-400 mb-0.5">Descripción de la Acción:</label>
+                          <input
+                            type="text"
+                            placeholder="Ej. Realiza un ataque rápido o movimiento evasivo..."
+                            value={act.description || ''}
+                            onChange={(e) => handleUpdateItemAction(idx, { description: e.target.value })}
+                            className="w-full bg-[#121316] border border-stone-700 rounded px-2.5 py-1 text-xs text-stone-200"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* WHO HAS IT & WHERE FOUND (User requirement) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-[#121316] border border-stone-800">

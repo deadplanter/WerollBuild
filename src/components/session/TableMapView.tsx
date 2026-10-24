@@ -56,6 +56,9 @@ import {
   calculateProficiencyBonus,
   calculatePassivePerception,
   deriveEquippedWeaponAttacks,
+  deriveAllCharacterActions,
+  calculateEquippedItemStatBonuses,
+  calculateTotalAbilityScore,
   getEffectiveAbilityModifier,
   buildAtlasBreadcrumbs,
   getParentAtlasFolder,
@@ -585,8 +588,19 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
     // Ensure the active player's own character is always present and up to date
     if (mode === 'player' && character) {
       const prof = calculateProficiencyBonus(character.level);
+      const equippedBonuses = character.inventory
+        ? calculateEquippedItemStatBonuses(character.inventory)
+        : null;
+
+      const strScore = calculateTotalAbilityScore(character.abilities.str, equippedBonuses?.str ?? 0).totalScore;
+      const dexScore = calculateTotalAbilityScore(character.abilities.dex, equippedBonuses?.dex ?? 0).totalScore;
+      const conScore = calculateTotalAbilityScore(character.abilities.con, equippedBonuses?.con ?? 0).totalScore;
+      const intScore = calculateTotalAbilityScore(character.abilities.int, equippedBonuses?.int ?? 0).totalScore;
+      const wisScore = calculateTotalAbilityScore(character.abilities.wis, equippedBonuses?.wis ?? 0).totalScore;
+      const chaScore = calculateTotalAbilityScore(character.abilities.cha, equippedBonuses?.cha ?? 0).totalScore;
+
       const pp = calculatePassivePerception(
-        character.abilities.wis.score,
+        wisScore,
         character.skills.perception,
         prof
       );
@@ -599,24 +613,24 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
         avatarIcon: character.avatarIcon || 'anonymous',
         avatarUrl: character.avatarUrl,
         currentHp: character.currentHp,
-        maxHp: character.maxHp,
-        ac: character.armorClass,
+        maxHp: character.maxHp + (equippedBonuses?.maxHp ?? 0),
+        ac: character.armorClass + (equippedBonuses?.ac ?? 0),
         passivePerception: pp,
         level: character.level,
         experience: character.experience ?? character.xp ?? 0,
         alignment: character.alignment,
-        speed: character.speed,
-        initiative: character.initiativeBonus,
+        speed: (character.speed ?? 30) + (equippedBonuses?.speed ?? 0),
+        initiative: (character.initiativeBonus ?? 0) + (equippedBonuses?.initiative ?? 0),
         race: character.race,
         characterClass: `${character.race} ${character.characterClass}`,
         lastPing: Date.now(),
         abilities: {
-          str: character.abilities.str.score,
-          dex: character.abilities.dex.score,
-          con: character.abilities.con.score,
-          int: character.abilities.int.score,
-          wis: character.abilities.wis.score,
-          cha: character.abilities.cha.score,
+          str: strScore,
+          dex: dexScore,
+          con: conScore,
+          int: intScore,
+          wis: wisScore,
+          cha: chaScore,
         },
         currency: character.currency || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
       });
@@ -750,19 +764,26 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
     if (!character) return [];
     const customAtks = character.attacks || [];
     const profBonus = calculateProficiencyBonus(character.level);
-    const derivedWeaponAtks = deriveEquippedWeaponAttacks(
+    const derivedActions = deriveAllCharacterActions(
       character.inventory || [],
+      character.spells || [],
+      character.featuresAndTraits || [],
       character.abilities?.str?.score ?? 10,
       character.abilities?.dex?.score ?? 10,
       profBonus
     ).map((d) => ({
-      ...d,
-      damageDice: d.damageFormula || d.formula || '1d6',
+      id: d.id,
+      name: d.name,
+      attackBonus: d.attackBonus ?? d.potenciador ?? 0,
+      damageDice: d.damageDice || d.dice || '1d6',
+      damageType: d.damageType || '',
+      type: (d.actionType === 'bonus' ? 'bonus' : d.actionType === 'reaction' ? 'reaction' : 'melee') as any,
+      notes: d.description || '',
     }));
     const existingNames = new Set(customAtks.map((a) => a.name.toLowerCase()));
     const combined = [
       ...customAtks,
-      ...derivedWeaponAtks.filter((d) => !existingNames.has(d.name.toLowerCase())),
+      ...derivedActions.filter((d) => !existingNames.has(d.name.toLowerCase())),
     ];
     return combined;
   }, [character]);

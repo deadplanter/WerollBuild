@@ -139,12 +139,14 @@ export const DMTransferModal: React.FC<DMTransferModalProps> = ({
               id: `inv-transfer-${Date.now()}`,
               itemGroup: entity.item.itemGroup || inferredGroup,
               weaponAttacks: entity.item.weaponAttacks || entity.customObj?.weaponAttacks,
+              statModifiers: entity.item.statModifiers || entity.customObj?.statModifiers,
+              itemActions: entity.item.itemActions || entity.customObj?.itemActions,
             }
           : {
               id: `inv-transfer-${Date.now()}`,
               name: entity.customObj?.name || entity.title,
               quantity: 1,
-              weight: 1,
+              weight: entity.customObj?.weight ?? 1,
               category:
                 inferredGroup === 'weapon'
                   ? 'Arma'
@@ -156,10 +158,17 @@ export const DMTransferModal: React.FC<DMTransferModalProps> = ({
               description: fullDescription.trim() || 'Objeto otorgado por el Dungeon Master.',
               equipped: false,
               weaponAttacks: entity.customObj?.weaponAttacks,
+              statModifiers: entity.customObj?.statModifiers,
+              itemActions: entity.customObj?.itemActions,
             };
       } else if (entity.kind === 'spell') {
         spellObj = entity.spell
-          ? { ...entity.spell, id: `spell-transfer-${Date.now()}` }
+          ? {
+              ...entity.spell,
+              id: `spell-transfer-${Date.now()}`,
+              statModifiers: entity.spell.statModifiers || entity.customObj?.statModifiers,
+              itemActions: entity.spell.itemActions || entity.customObj?.itemActions,
+            }
           : {
               id: `spell-transfer-${Date.now()}`,
               name: entity.customObj?.name || entity.title,
@@ -171,6 +180,8 @@ export const DMTransferModal: React.FC<DMTransferModalProps> = ({
               duration: 'Instantánea',
               description: fullDescription.trim() || 'Conjuro enseñado por el Dungeon Master.',
               prepared: true,
+              statModifiers: entity.customObj?.statModifiers,
+              itemActions: entity.customObj?.itemActions,
             };
       } else if (entity.kind === 'ability') {
         abilityObj = entity.ability
@@ -179,6 +190,8 @@ export const DMTransferModal: React.FC<DMTransferModalProps> = ({
               id: `feat-transfer-${Date.now()}`,
               abilityStat: entity.ability.abilityStat || entity.customObj?.abilityStat || 'int',
               isSkill: true,
+              statModifiers: entity.ability.statModifiers || entity.customObj?.statModifiers,
+              itemActions: entity.ability.itemActions || entity.customObj?.itemActions,
             }
           : {
               id: `feat-transfer-${Date.now()}`,
@@ -187,6 +200,8 @@ export const DMTransferModal: React.FC<DMTransferModalProps> = ({
               description: fullDescription.trim() || 'Habilidad especial otorgada por el Dungeon Master.',
               abilityStat: entity.customObj?.abilityStat || 'int',
               isSkill: true,
+              statModifiers: entity.customObj?.statModifiers,
+              itemActions: entity.customObj?.itemActions,
             };
       }
 

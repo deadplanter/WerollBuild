@@ -8,16 +8,101 @@ export function calculateModifier(score: number): number {
   return Math.floor((score - 10) / 2);
 }
 
+export interface AbilityBreakdown {
+  baseScore: number;
+  extraScore: number;
+  itemScore: number;
+  totalScore: number;
+  modifier: number;
+}
+
+export function calculateTotalAbilityScore(
+  ability?: {
+    score?: number;
+    baseScore?: number;
+    extraScore?: number;
+    itemScore?: number;
+    customModifier?: number;
+    modifierOverride?: number;
+  } | number | null,
+  itemBonus: number = 0
+): AbilityBreakdown {
+  if (ability === null || ability === undefined) {
+    const total = 10 + itemBonus;
+    return {
+      baseScore: 10,
+      extraScore: 0,
+      itemScore: itemBonus,
+      totalScore: total,
+      modifier: calculateModifier(total),
+    };
+  }
+  if (typeof ability === 'number') {
+    const total = ability + itemBonus;
+    return {
+      baseScore: ability,
+      extraScore: 0,
+      itemScore: itemBonus,
+      totalScore: total,
+      modifier: calculateModifier(total),
+    };
+  }
+
+  const baseScore = typeof ability.baseScore === 'number' ? ability.baseScore : (ability.score ?? 10);
+  const extraScore =
+    typeof ability.extraScore === 'number'
+      ? ability.extraScore
+      : typeof ability.customModifier === 'number'
+      ? ability.customModifier
+      : 0;
+  const itemScore = itemBonus || (typeof ability.itemScore === 'number' ? ability.itemScore : 0);
+  const totalScore = baseScore + extraScore + itemScore;
+
+  const modifier =
+    typeof ability.modifierOverride === 'number' && !isNaN(ability.modifierOverride)
+      ? Math.round(ability.modifierOverride)
+      : calculateModifier(totalScore);
+
+  return {
+    baseScore,
+    extraScore,
+    itemScore,
+    totalScore,
+    modifier,
+  };
+}
+
 export function getEffectiveAbilityModifier(
-  ability?: { score: number; customModifier?: number; modifierOverride?: number } | number | null
+  ability?: {
+    score: number;
+    baseScore?: number;
+    extraScore?: number;
+    itemScore?: number;
+    customModifier?: number;
+    modifierOverride?: number;
+  } | number | null,
+  itemBonus: number = 0
 ): number {
   if (ability === null || ability === undefined) return 0;
   if (typeof ability === 'number') {
-    return calculateModifier(ability);
+    return calculateModifier(ability + itemBonus);
   }
   if (typeof ability.modifierOverride === 'number' && !isNaN(ability.modifierOverride)) {
     return Math.round(ability.modifierOverride);
   }
+
+  // If baseScore or extraScore or explicit itemScore/itemBonus is provided, calculate 3-way sum
+  if (
+    typeof ability.baseScore === 'number' ||
+    typeof ability.extraScore === 'number' ||
+    typeof ability.itemScore === 'number' ||
+    itemBonus !== 0
+  ) {
+    const breakdown = calculateTotalAbilityScore(ability, itemBonus);
+    return breakdown.modifier;
+  }
+
+  // Legacy behavior: score modifier + customModifier
   const baseMod = calculateModifier(ability.score ?? 10);
   const bonus = typeof ability.customModifier === 'number' && !isNaN(ability.customModifier) ? Math.round(ability.customModifier) : 0;
   return baseMod + bonus;
@@ -411,6 +496,337 @@ export function deriveEquippedWeaponAttacks(
         attackType: aType,
         attackBonus: statMod + parsedBonus,
         toHitBonus: profBonus + statMod + parsedBonus,
+      });
+    }
+  }
+
+  return result;
+}
+
+export interface EquippedItemStatBonuses {
+  str: number;
+  dex: number;
+  con: number;
+  int: number;
+  wis: number;
+  cha: number;
+  ac: number;
+  speed: number;
+  maxHp: number;
+  initiative: number;
+  sources: Record<string, { itemName: string; value: number }[]>;
+}
+
+export function calculateEquippedItemStatBonuses(
+  inventory?: {
+    id: string;
+    name: string;
+    equipped?: boolean;
+    statModifiers?: { id: string; stat: string; value: number; label?: string }[];
+  }[]
+): EquippedItemStatBonuses {
+  const result: EquippedItemStatBonuses = {
+    str: 0,
+    dex: 0,
+    con: 0,
+    int: 0,
+    wis: 0,
+    cha: 0,
+    ac: 0,
+    speed: 0,
+    maxHp: 0,
+    initiative: 0,
+    sources: {
+      str: [],
+      dex: [],
+      con: [],
+      int: [],
+      wis: [],
+      cha: [],
+      ac: [],
+      speed: [],
+      maxHp: [],
+      initiative: [],
+    },
+  };
+
+  const safeInv = Array.isArray(inventory) ? inventory : [];
+  for (const item of safeInv) {
+    if (!item.equipped) continue;
+    if (Array.isArray(item.statModifiers)) {
+      for (const mod of item.statModifiers) {
+        const raw = (mod.stat || '').toLowerCase().trim();
+        const statKey =
+          raw === 'maxhp' || raw === 'hp'
+            ? 'maxHp'
+            : raw === 'ca' || raw === 'ac'
+            ? 'ac'
+            : raw === 'velocidad'
+            ? 'speed'
+            : raw === 'iniciativa'
+            ? 'initiative'
+            : raw;
+        const val = Number(mod.value) || 0;
+        if (statKey in result && typeof (result as any)[statKey] === 'number') {
+          (result as any)[statKey] += val;
+          if (result.sources[statKey]) {
+            result.sources[statKey].push({
+              itemName: item.name || 'Objeto equipado',
+              value: val,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+export interface DerivedCharacterAction {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  sourceKind: 'weapon' | 'armor' | 'item' | 'spell' | 'feature';
+  name: string;
+  actionName?: string;
+  description: string;
+  dice: string;
+  bonus: number;
+  potenciador: number;
+  formula: string;
+  damageFormula: string;
+  damageDice?: string;
+  damageType: string;
+  actionType: 'melee' | 'ranged' | 'spell' | 'action' | 'bonus' | 'reaction' | 'special';
+  attackBonus: number;
+  toHitBonus: number;
+  range?: string;
+  usesMax?: number;
+  usesLeft?: number;
+  recharge?: string;
+  isSpecialAction?: boolean;
+}
+
+export function deriveAllCharacterActions(
+  paramsOrInventory:
+    | {
+        inventory?: {
+          id: string;
+          name: string;
+          itemGroup?: string;
+          category?: string;
+          equipped?: boolean;
+          description?: string;
+          weaponAttacks?: {
+            id: string;
+            name: string;
+            description: string;
+            dice: string;
+            bonus?: number;
+            potenciador?: number;
+            attackBonus?: number;
+            damageType: string;
+            attackType?: 'melee' | 'ranged' | 'spell';
+            range?: string;
+          }[];
+          itemActions?: {
+            id: string;
+            name: string;
+            description: string;
+            dice: string;
+            bonus?: number;
+            potenciador?: number;
+            attackBonus?: number;
+            damageType: string;
+            actionType?: 'action' | 'bonus' | 'reaction' | 'melee' | 'ranged' | 'spell' | 'special';
+            range?: string;
+            usesMax?: number;
+            usesLeft?: number;
+            recharge?: string;
+          }[];
+        }[];
+        spells?: {
+          id: string;
+          name: string;
+          description?: string;
+          prepared?: boolean;
+          itemActions?: {
+            id: string;
+            name: string;
+            description: string;
+            dice: string;
+            bonus?: number;
+            potenciador?: number;
+            damageType: string;
+            range?: string;
+          }[];
+        }[];
+        features?: {
+          id: string;
+          name: string;
+          description?: string;
+          itemActions?: {
+            id: string;
+            name: string;
+            description: string;
+            dice: string;
+            bonus?: number;
+            potenciador?: number;
+            damageType: string;
+            range?: string;
+          }[];
+        }[];
+        strScore?: number;
+        dexScore?: number;
+        profBonus?: number;
+      }
+    | any[],
+  spellsArg?: any[],
+  featuresArg?: any[],
+  strScoreArg?: number,
+  dexScoreArg?: number,
+  profBonusArg?: number
+): DerivedCharacterAction[] {
+  let inventory: any[] = [];
+  let spells: any[] = [];
+  let features: any[] = [];
+  let strScore = 10;
+  let dexScore = 10;
+  let profBonus = 2;
+
+  if (Array.isArray(paramsOrInventory)) {
+    inventory = paramsOrInventory;
+    spells = spellsArg || [];
+    features = featuresArg || [];
+    strScore = strScoreArg ?? 10;
+    dexScore = dexScoreArg ?? 10;
+    profBonus = profBonusArg ?? 2;
+  } else if (paramsOrInventory && typeof paramsOrInventory === 'object') {
+    inventory = paramsOrInventory.inventory || [];
+    spells = paramsOrInventory.spells || [];
+    features = paramsOrInventory.features || [];
+    strScore = paramsOrInventory.strScore ?? 10;
+    dexScore = paramsOrInventory.dexScore ?? 10;
+    profBonus = paramsOrInventory.profBonus ?? 2;
+  }
+
+  const result: DerivedCharacterAction[] = [];
+
+  // 1. Equipped weapon attacks
+  const weaponAttacks = deriveEquippedWeaponAttacks(inventory, strScore, dexScore, profBonus);
+  for (const wa of weaponAttacks) {
+    result.push({
+      ...wa,
+      sourceId: wa.weaponId,
+      sourceName: wa.weaponName,
+      sourceKind: 'weapon',
+      actionName: wa.name,
+      damageDice: wa.formula || wa.dice,
+      actionType: wa.attackType,
+      isSpecialAction: false,
+    });
+  }
+
+  // 2. Equipped items with special actions
+  for (const item of inventory) {
+    if (!item.equipped) continue;
+    if (Array.isArray(item.itemActions) && item.itemActions.length > 0) {
+      item.itemActions.forEach((act: any, idx: number) => {
+        const cleanDice = String(act.dice || '1d6').trim();
+        const pot = Number(act.bonus ?? act.potenciador) || 0;
+        const dmgFormula = formatWeaponAttackFormula(cleanDice, pot);
+        const aType = act.actionType || 'action';
+        const actName = act.name || `Acción ${idx + 1}`;
+        const sourceKind = item.itemGroup === 'weapon' ? 'weapon' : item.itemGroup === 'armor' ? 'armor' : 'item';
+
+        result.push({
+          id: `${item.id}-act-${act.id || idx}`,
+          sourceId: item.id,
+          sourceName: item.name,
+          sourceKind,
+          name: actName,
+          actionName: actName,
+          description: act.description || item.description || '',
+          dice: cleanDice,
+          bonus: pot,
+          potenciador: pot,
+          formula: dmgFormula,
+          damageFormula: dmgFormula,
+          damageDice: dmgFormula,
+          damageType: act.damageType || 'Especial',
+          actionType: aType,
+          attackBonus: pot,
+          toHitBonus: profBonus + pot,
+          range: act.range || '5 pies',
+          usesMax: act.usesMax,
+          usesLeft: act.usesLeft,
+          recharge: act.recharge,
+          isSpecialAction: true,
+        });
+      });
+    }
+  }
+
+  // 3. Spells with special actions
+  for (const sp of spells) {
+    if (sp.prepared === false) continue;
+    if (Array.isArray(sp.itemActions) && sp.itemActions.length > 0) {
+      sp.itemActions.forEach((act, idx) => {
+        const cleanDice = String(act.dice || '1d8').trim();
+        const pot = Number(act.bonus ?? act.potenciador) || 0;
+        const dmgFormula = formatWeaponAttackFormula(cleanDice, pot);
+        result.push({
+          id: `${sp.id}-spact-${act.id || idx}`,
+          sourceId: sp.id,
+          sourceName: sp.name,
+          sourceKind: 'spell',
+          name: act.name || sp.name,
+          actionName: act.name || sp.name,
+          description: act.description || sp.description || '',
+          dice: cleanDice,
+          bonus: pot,
+          potenciador: pot,
+          formula: dmgFormula,
+          damageFormula: dmgFormula,
+          damageType: act.damageType || 'Radiante',
+          actionType: 'spell',
+          attackBonus: pot,
+          toHitBonus: profBonus + pot,
+          range: act.range || '60 pies',
+          isSpecialAction: true,
+        });
+      });
+    }
+  }
+
+  // 4. Features with special actions
+  for (const feat of features) {
+    if (Array.isArray(feat.itemActions) && feat.itemActions.length > 0) {
+      feat.itemActions.forEach((act, idx) => {
+        const cleanDice = String(act.dice || '1d6').trim();
+        const pot = Number(act.bonus ?? act.potenciador) || 0;
+        const dmgFormula = formatWeaponAttackFormula(cleanDice, pot);
+        result.push({
+          id: `${feat.id}-featact-${act.id || idx}`,
+          sourceId: feat.id,
+          sourceName: feat.name,
+          sourceKind: 'feature',
+          name: act.name || feat.name,
+          actionName: act.name || feat.name,
+          description: act.description || feat.description || '',
+          dice: cleanDice,
+          bonus: pot,
+          potenciador: pot,
+          formula: dmgFormula,
+          damageFormula: dmgFormula,
+          damageType: act.damageType || 'Fuerza',
+          actionType: 'special',
+          attackBonus: pot,
+          toHitBonus: profBonus + pot,
+          range: act.range || 'Personal',
+          isSpecialAction: true,
+        });
       });
     }
   }

@@ -683,3 +683,118 @@ test('buildLiveProjectionFromWorkspace keeps projected tavern image locked for p
   assert.equal(projLocked.visualTitle, 'Interior de la Taberna');
 });
 
+import {
+  calculateTotalAbilityScore,
+  calculateEquippedItemStatBonuses,
+  deriveAllCharacterActions,
+} from './dnd-math.ts';
+
+test('calculateTotalAbilityScore cleanly decomposes base points, extra points, and item points and computes total modifier', () => {
+  // Base 14, Extra +1, Item +1 => Total = 16 => Mod = +3
+  const res = calculateTotalAbilityScore({ score: 14, baseScore: 14, extraScore: 1 }, 1);
+  assert.equal(res.baseScore, 14);
+  assert.equal(res.extraScore, 1);
+  assert.equal(res.itemScore, 1);
+  assert.equal(res.totalScore, 16);
+  assert.equal(res.modifier, 3);
+
+  // Base 10, Extra 0, Item +2 => Total = 12 => Mod = +1
+  const res2 = calculateTotalAbilityScore({ score: 10, baseScore: 10, extraScore: 0 }, 2);
+  assert.equal(res2.totalScore, 12);
+  assert.equal(res2.modifier, 1);
+});
+
+test('calculateEquippedItemStatBonuses aggregates stats only from equipped gear and tracks sources', () => {
+  const inv = [
+    {
+      id: 'arm-1',
+      name: 'Armadura de Cuero Mejorada',
+      equipped: true,
+      statModifiers: [
+        { id: 'm1', stat: 'dex', value: 1, label: 'Bono de Destreza' },
+        { id: 'm2', stat: 'ac', value: 1, label: 'Refuerzo de CA' },
+      ],
+    },
+    {
+      id: 'ring-1',
+      name: 'Anillo de Fuerza de Gigante',
+      equipped: true,
+      statModifiers: [
+        { id: 'm3', stat: 'str', value: 2, label: 'Fuerza Titánica' },
+        { id: 'm4', stat: 'maxHp', value: 5, label: 'Vigor' },
+      ],
+    },
+    {
+      id: 'amulet-unequipped',
+      name: 'Amuleto del Sabio',
+      equipped: false, // Not equipped!
+      statModifiers: [
+        { id: 'm5', stat: 'wis', value: 5 },
+      ],
+    },
+  ];
+
+  const bonuses = calculateEquippedItemStatBonuses(inv);
+  assert.equal(bonuses.dex, 1);
+  assert.equal(bonuses.ac, 1);
+  assert.equal(bonuses.str, 2);
+  assert.equal(bonuses.maxHp, 5);
+  assert.equal(bonuses.wis, 0); // Not equipped so 0
+  assert.equal(bonuses.sources.dex[0].itemName, 'Armadura de Cuero Mejorada');
+  assert.equal(bonuses.sources.str[0].itemName, 'Anillo de Fuerza de Gigante');
+});
+
+test('deriveAllCharacterActions aggregates both weapon attacks and custom item actions in Ataques y Acciones', () => {
+  const actions = deriveAllCharacterActions({
+    inventory: [
+      {
+        id: 'w-1',
+        name: 'Espada Larga Rúnica',
+        itemGroup: 'weapon',
+        equipped: true,
+        weaponAttacks: [
+          {
+            id: 'atk-1',
+            name: 'Corte Celestial',
+            description: 'Tajo bañado en luz solar',
+            dice: '1d8',
+            bonus: 2,
+            damageType: 'Radiante',
+            attackType: 'melee',
+            range: '5 pies',
+          },
+        ],
+      },
+      {
+        id: 'arm-boots',
+        name: 'Botas del Relámpago',
+        itemGroup: 'armor',
+        equipped: true,
+        itemActions: [
+          {
+            id: 'act-zap',
+            name: 'Paso Atronador',
+            description: 'Explosión de trueno al saltar',
+            dice: '2d6',
+            bonus: 0,
+            damageType: 'Trueno',
+            actionType: 'bonus',
+            range: '10 pies',
+          },
+        ],
+      },
+    ],
+    strScore: 16, // +3
+    dexScore: 14,
+    profBonus: 2,
+  });
+
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0].name, 'Corte Celestial');
+  assert.equal(actions[0].formula, '1d8+2');
+  assert.equal(actions[1].name, 'Paso Atronador');
+  assert.equal(actions[1].formula, '2d6');
+  assert.equal(actions[1].damageType, 'Trueno');
+  assert.equal(actions[1].isSpecialAction, true);
+});
+

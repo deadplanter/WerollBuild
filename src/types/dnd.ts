@@ -2,9 +2,47 @@ export type AbilityKey = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
 
 export interface AbilityScore {
   score: number;
+  baseScore?: number; // Puntos base (ej. 14)
+  extraScore?: number; // Puntos extra asignados manualmente (ej. 1)
+  itemScore?: number; // Puntos dados por objetos equipados (calculados)
   proficientSave: boolean;
   customModifier?: number;
   modifierOverride?: number;
+}
+
+export type StatModifierTarget =
+  | 'str'
+  | 'dex'
+  | 'con'
+  | 'int'
+  | 'wis'
+  | 'cha'
+  | 'ac'
+  | 'speed'
+  | 'maxHp'
+  | 'initiative';
+
+export interface ItemStatModifier {
+  id: string;
+  stat: StatModifierTarget;
+  value: number; // e.g. +1, +2, -1
+  label?: string; // Optional descriptive label
+}
+
+export interface ItemSpecialAction {
+  id: string;
+  name: string; // Nombre de la acción
+  description: string; // Descripción
+  dice: string; // e.g. "1d6", "1d8", "2d6"
+  bonus?: number; // Potenciador / bono
+  potenciador?: number;
+  attackBonus?: number;
+  damageType: string; // Cortante, Perforante, Contundente, Fuego, etc.
+  actionType?: 'action' | 'bonus' | 'reaction' | 'melee' | 'ranged' | 'spell' | 'special';
+  range?: string;
+  usesMax?: number;
+  usesLeft?: number;
+  recharge?: string;
 }
 
 export type SkillKey =
@@ -58,6 +96,8 @@ export interface SpellItem {
   description: string;
   prepared?: boolean;
   damageOrHeal?: string;
+  statModifiers?: ItemStatModifier[];
+  itemActions?: ItemSpecialAction[];
 }
 
 export interface WeaponAttack {
@@ -107,6 +147,8 @@ export interface InventoryItem {
   category: 'Objeto Común' | 'Objeto' | 'Arma' | 'Armadura' | 'Poción' | 'Mágico' | 'Equipo' | 'Herramienta' | 'Munición' | 'Otro';
   rarity?: 'Común' | 'Poco común' | 'Raro' | 'Muy Raro' | 'Legendario' | 'Artefacto';
   weaponAttacks?: WeaponAttack[];
+  statModifiers?: ItemStatModifier[];
+  itemActions?: ItemSpecialAction[];
 }
 
 export interface Currency {
@@ -391,6 +433,8 @@ export interface SharedFeatureOrAbility {
   ability?: AbilityKey;
   abilityStat?: AbilityKey;
   isSkill?: boolean;
+  statModifiers?: ItemStatModifier[];
+  itemActions?: ItemSpecialAction[];
 }
 
 export interface DMCustomItemOrSpell {
@@ -406,7 +450,10 @@ export interface DMCustomItemOrSpell {
   properties?: string; // Daño, bonificadores, alcance, cargas, componentes...
   dmSecrets?: string; // Notas secretas del DM, maldiciones, efectos ocultos
   folder?: string;
+  weight?: number; // Peso en libras
   weaponAttacks?: WeaponAttack[];
+  statModifiers?: ItemStatModifier[];
+  itemActions?: ItemSpecialAction[];
   skillAbility?: AbilityKey;
   abilityStat?: AbilityKey;
 }

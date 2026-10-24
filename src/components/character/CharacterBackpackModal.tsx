@@ -17,6 +17,8 @@ import {
   WeaponAttack,
   SpellItem,
   Currency,
+  ItemStatModifier,
+  ItemSpecialAction,
 } from '../../types/dnd';
 import {
   calculateCarryCapacity,
@@ -81,6 +83,8 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
     equipped: boolean;
     description: string;
     weaponAttacks: WeaponAttack[];
+    statModifiers: ItemStatModifier[];
+    itemActions: ItemSpecialAction[];
   }>({
     name: '',
     quantity: 1,
@@ -102,6 +106,8 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
         range: '5 pies',
       },
     ],
+    statModifiers: [],
+    itemActions: [],
   });
 
   // Spell Form state
@@ -184,7 +190,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
     setItemDraft({
       name: '',
       quantity: 1,
-      weight: group === 'armor' ? 15 : group === 'weapon' ? 3 : 1,
+      weight: group === 'armor' ? 10 : group === 'weapon' ? 3 : 1,
       itemGroup: group,
       category: group === 'weapon' ? 'Arma' : group === 'armor' ? 'Armadura' : 'Objeto Común',
       rarity: 'Común',
@@ -205,6 +211,18 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
               },
             ]
           : [],
+      statModifiers:
+        group === 'armor'
+          ? [
+              {
+                id: `mod-${Date.now()}`,
+                stat: 'dex',
+                value: 1,
+                label: 'Bono de Destreza',
+              },
+            ]
+          : [],
+      itemActions: [],
     });
     setShowItemForm(true);
   };
@@ -229,7 +247,8 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
       weaponAttacks:
         Array.isArray(item.weaponAttacks) && item.weaponAttacks.length > 0
           ? item.weaponAttacks.map((a) => ({ ...a }))
-          : [
+          : group === 'weapon'
+          ? [
               {
                 id: `iatk-${Date.now()}-1`,
                 name: 'Ataque Principal',
@@ -240,9 +259,74 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
                 attackType: 'melee',
                 range: '5 pies',
               },
-            ],
+            ]
+          : [],
+      statModifiers: Array.isArray(item.statModifiers) ? item.statModifiers.map((m) => ({ ...m })) : [],
+      itemActions: Array.isArray(item.itemActions) ? item.itemActions.map((a) => ({ ...a })) : [],
     });
     setShowItemForm(true);
+  };
+
+  const handleAddModifierToDraft = () => {
+    setItemDraft((prev) => ({
+      ...prev,
+      statModifiers: [
+        ...prev.statModifiers,
+        {
+          id: `mod-${Date.now()}-${prev.statModifiers.length + 1}`,
+          stat: 'dex',
+          value: 1,
+          label: '',
+        },
+      ],
+    }));
+  };
+
+  const handleRemoveModifierFromDraft = (idx: number) => {
+    setItemDraft((prev) => ({
+      ...prev,
+      statModifiers: prev.statModifiers.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleUpdateModifierInDraft = (idx: number, patch: Partial<{ stat: any; value: number; label: string }>) => {
+    const next = [...itemDraft.statModifiers];
+    if (!next[idx]) return;
+    next[idx] = { ...next[idx], ...patch };
+    setItemDraft((prev) => ({ ...prev, statModifiers: next }));
+  };
+
+  const handleAddActionToDraft = () => {
+    setItemDraft((prev) => ({
+      ...prev,
+      itemActions: [
+        ...prev.itemActions,
+        {
+          id: `act-${Date.now()}-${prev.itemActions.length + 1}`,
+          name: `Acción Especial ${prev.itemActions.length + 1}`,
+          description: '',
+          dice: '1d6',
+          bonus: 0,
+          damageType: 'Fuego',
+          actionType: 'action',
+          range: '5 pies',
+        },
+      ],
+    }));
+  };
+
+  const handleRemoveActionFromDraft = (idx: number) => {
+    setItemDraft((prev) => ({
+      ...prev,
+      itemActions: prev.itemActions.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleUpdateActionInDraft = (idx: number, patch: any) => {
+    const next = [...itemDraft.itemActions];
+    if (!next[idx]) return;
+    next[idx] = { ...next[idx], ...patch };
+    setItemDraft((prev) => ({ ...prev, itemActions: next }));
   };
 
   const handleSetAttackCount = (count: number) => {
@@ -292,6 +376,8 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
       equipped: itemDraft.equipped,
       description: itemDraft.description.trim(),
       weaponAttacks: itemDraft.itemGroup === 'weapon' ? itemDraft.weaponAttacks : undefined,
+      statModifiers: itemDraft.statModifiers.length > 0 ? itemDraft.statModifiers : undefined,
+      itemActions: itemDraft.itemActions.length > 0 ? itemDraft.itemActions : undefined,
     };
 
     const nextInv = editingItemId
@@ -911,6 +997,197 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
                     </div>
                   )}
 
+                  {/* Section: Modificadores de Estadísticas (Stats & Atributos) */}
+                  <div className="bg-[#18110b] border border-[#634824] rounded-xl p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-cinzel font-bold text-[#e2c275] block">
+                          Modificadores de Estadísticas (Stats):
+                        </span>
+                        <span className="text-[10px] text-[#a99477]">
+                          Elige qué atributos modifica directamente al equiparse (ej. +1 Destreza, +1 CA, +2 Fuerza)
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleAddModifierToDraft}
+                        className="px-2.5 py-1 rounded bg-[#332214] hover:bg-[#48301d] border border-[#8b6b35] text-amber-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Añadir Modificador</span>
+                      </button>
+                    </div>
+
+                    {itemDraft.statModifiers.length === 0 ? (
+                      <div className="text-[11px] text-[#8c775a] italic py-1">
+                        Sin modificadores de atributos configurados.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {itemDraft.statModifiers.map((mod, mIdx) => (
+                          <div key={mod.id || mIdx} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-black/40 p-2 rounded-lg border border-[#523d21]">
+                            <div className="sm:col-span-5">
+                              <label className="block text-[9px] text-[#cbb692] mb-0.5">Atributo a Modificar</label>
+                              <select
+                                value={mod.stat}
+                                onChange={(e) => handleUpdateModifierInDraft(mIdx, { stat: e.target.value })}
+                                className="w-full bg-[#20150d] border border-[#6e522b] rounded px-2 py-1 text-xs text-white"
+                              >
+                                <option value="dex">Destreza (DES)</option>
+                                <option value="str">Fuerza (FUE)</option>
+                                <option value="con">Constitución (CON)</option>
+                                <option value="int">Inteligencia (INT)</option>
+                                <option value="wis">Sabiduría (SAB)</option>
+                                <option value="cha">Carisma (CAR)</option>
+                                <option value="ac">Clase de Armadura (CA)</option>
+                                <option value="speed">Velocidad (FT)</option>
+                                <option value="maxHp">Puntos de Golpe Máx (PG)</option>
+                                <option value="initiative">Bono de Iniciativa</option>
+                              </select>
+                            </div>
+                            <div className="sm:col-span-3">
+                              <label className="block text-[9px] text-[#cbb692] mb-0.5">Bono / Modificador</label>
+                              <input
+                                type="number"
+                                value={mod.value}
+                                onChange={(e) => handleUpdateModifierInDraft(mIdx, { value: parseInt(e.target.value, 10) || 0 })}
+                                className="w-full bg-black/60 border border-[#6e522b] rounded px-2 py-1 text-xs font-mono font-bold text-amber-300"
+                                placeholder="+1"
+                              />
+                            </div>
+                            <div className="sm:col-span-3">
+                              <label className="block text-[9px] text-[#cbb692] mb-0.5">Nota / Etiqueta</label>
+                              <input
+                                type="text"
+                                value={mod.label || ''}
+                                onChange={(e) => handleUpdateModifierInDraft(mIdx, { label: e.target.value })}
+                                placeholder="Ej. Cuero flexible"
+                                className="w-full bg-black/60 border border-[#6e522b] rounded px-2 py-1 text-xs text-stone-200"
+                              />
+                            </div>
+                            <div className="sm:col-span-1 flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveModifierFromDraft(mIdx)}
+                                className="p-1 rounded text-red-400 hover:text-red-200 hover:bg-red-950/40 cursor-pointer"
+                                title="Quitar modificador"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Section: Acciones Especiales del Objeto */}
+                  <div className="bg-[#18110b] border border-[#634824] rounded-xl p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-cinzel font-bold text-[#e2c275] block">
+                          Acciones Especiales del Objeto:
+                        </span>
+                        <span className="text-[10px] text-[#a99477]">
+                          Habilidades o ataques especiales otorgados por este objeto (aparecen en Combates y Acciones)
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleAddActionToDraft}
+                        className="px-2.5 py-1 rounded bg-[#332214] hover:bg-[#48301d] border border-[#8b6b35] text-amber-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Añadir Acción</span>
+                      </button>
+                    </div>
+
+                    {itemDraft.itemActions.length === 0 ? (
+                      <div className="text-[11px] text-[#8c775a] italic py-1">
+                        Sin acciones especiales añadidas.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {itemDraft.itemActions.map((act, aIdx) => (
+                          <div key={act.id || aIdx} className="bg-black/40 p-2.5 rounded-lg border border-[#523d21] space-y-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                              <div>
+                                <label className="block text-[9px] text-[#cbb692] mb-0.5">Nombre de la Acción</label>
+                                <input
+                                  type="text"
+                                  value={act.name}
+                                  onChange={(e) => handleUpdateActionInDraft(aIdx, { name: e.target.value })}
+                                  placeholder="Ej. Descarga Ígnea"
+                                  className="w-full bg-black/60 border border-[#6e522b] rounded px-2 py-1 text-xs text-white"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] text-[#cbb692] mb-0.5">Dado (ej. 1d6, 2d8)</label>
+                                <input
+                                  type="text"
+                                  value={act.dice}
+                                  onChange={(e) => handleUpdateActionInDraft(aIdx, { dice: e.target.value })}
+                                  className="w-full bg-black/60 border border-[#6e522b] rounded px-2 py-1 text-xs font-mono font-bold text-amber-300"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] text-[#cbb692] mb-0.5">Potenciador / Bono</label>
+                                <input
+                                  type="number"
+                                  value={act.bonus ?? 0}
+                                  onChange={(e) => handleUpdateActionInDraft(aIdx, { bonus: parseInt(e.target.value, 10) || 0 })}
+                                  className="w-full bg-black/60 border border-[#6e522b] rounded px-2 py-1 text-xs font-mono text-white"
+                                />
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <div className="flex-1">
+                                  <label className="block text-[9px] text-[#cbb692] mb-0.5">Tipo Daño / Efecto</label>
+                                  <select
+                                    value={act.damageType}
+                                    onChange={(e) => handleUpdateActionInDraft(aIdx, { damageType: e.target.value })}
+                                    className="w-full bg-[#20150d] border border-[#6e522b] rounded px-2 py-1 text-xs text-white"
+                                  >
+                                    {DAMAGE_TYPES.map((dt) => (
+                                      <option key={dt} value={dt}>
+                                        {dt}
+                                      </option>
+                                    ))}
+                                    <option value="Curación">Curación</option>
+                                    <option value="Especial">Especial</option>
+                                  </select>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveActionFromDraft(aIdx)}
+                                  className="p-1 rounded text-red-400 hover:text-red-200 mt-3 cursor-pointer"
+                                  title="Quitar acción"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <input
+                                type="text"
+                                value={act.description || ''}
+                                onChange={(e) => handleUpdateActionInDraft(aIdx, { description: e.target.value })}
+                                placeholder="Descripción del efecto o condición..."
+                                className="w-full bg-black/50 border border-[#6e522b] rounded px-2 py-1 text-[11px] text-stone-200"
+                              />
+                              <input
+                                type="text"
+                                value={act.range || ''}
+                                onChange={(e) => handleUpdateActionInDraft(aIdx, { range: e.target.value })}
+                                placeholder="Alcance (ej. 30 pies, Personal, 5 pies)"
+                                className="w-full bg-black/50 border border-[#6e522b] rounded px-2 py-1 text-[11px] text-stone-200"
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <input
                       type="text"
@@ -977,6 +1254,22 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
                             )}
                           </div>
 
+                          {/* Stat Modifiers Badges */}
+                          {item.statModifiers && item.statModifiers.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-0.5">
+                              {item.statModifiers.map((m) => (
+                                <span
+                                  key={m.id}
+                                  className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 font-mono font-bold"
+                                  title={m.label || `Modificador a ${m.stat.toUpperCase()}`}
+                                >
+                                  {m.value >= 0 ? `+${m.value}` : m.value} {m.stat.toUpperCase()}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Weapon Attacks Badges */}
                           {item.weaponAttacks && item.weaponAttacks.length > 0 && (
                             <div className="flex flex-wrap gap-1.5 pt-0.5">
                               {item.weaponAttacks.map((atk) => (
@@ -990,6 +1283,20 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
                                     Number(atk.bonus ?? atk.potenciador) || 0
                                   )}{' '}
                                   {atk.damageType}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Special Actions Badges */}
+                          {item.itemActions && item.itemActions.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-0.5">
+                              {item.itemActions.map((act) => (
+                                <span
+                                  key={act.id}
+                                  className="text-[10px] px-2 py-0.5 rounded bg-purple-950/70 border border-purple-500/40 text-purple-200 font-mono"
+                                >
+                                  ⚡ {act.name}: {act.dice}{act.bonus ? `+${act.bonus}` : ''} {act.damageType}
                                 </span>
                               ))}
                             </div>

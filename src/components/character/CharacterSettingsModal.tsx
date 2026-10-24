@@ -20,6 +20,8 @@ import {
   formatModifier,
   calculateProficiencyBonus,
   getEffectiveAbilityModifier,
+  calculateEquippedItemStatBonuses,
+  calculateTotalAbilityScore,
 } from '../../utils/dnd-math';
 
 interface CharacterSettingsModalProps {
@@ -123,39 +125,46 @@ export const CharacterSettingsModal: React.FC<CharacterSettingsModalProps> = ({
 
   const profBonus = calculateProficiencyBonus(level);
 
-  const handleUpdateAbilityBase = (key: AbilityKey, nextScore: number) => {
-    const clamped = Math.max(1, Math.min(30, Math.round(nextScore || 10)));
-    setAbilities((prev) => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        score: clamped,
-      },
-    }));
+  const equippedBonuses = calculateEquippedItemStatBonuses(character.inventory || []);
+
+  const handleUpdateAbilityBase = (key: AbilityKey, nextBase: number) => {
+    const clamped = Math.max(1, Math.min(30, Math.round(nextBase || 10)));
+    setAbilities((prev) => {
+      const cur = prev[key];
+      const extra = cur.extraScore ?? cur.customModifier ?? 0;
+      const items = equippedBonuses[key] || 0;
+      return {
+        ...prev,
+        [key]: {
+          ...cur,
+          baseScore: clamped,
+          extraScore: extra,
+          itemScore: items,
+          score: clamped + extra + items,
+        },
+      };
+    });
   };
 
-  const handleUpdateCustomModifier = (key: AbilityKey, nextCustomBonus: number) => {
-    setAbilities((prev) => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        customModifier: Math.round(nextCustomBonus || 0),
-        modifierOverride: undefined,
-      },
-    }));
-  };
-
-  const handleSetDirectFinalModifier = (key: AbilityKey, desiredFinalMod: number) => {
-    const baseMod = calculateModifier(abilities[key].score);
-    const neededBonus = Math.round(desiredFinalMod) - baseMod;
-    setAbilities((prev) => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        customModifier: neededBonus,
-        modifierOverride: undefined,
-      },
-    }));
+  const handleUpdateCustomModifier = (key: AbilityKey, nextExtra: number) => {
+    const clamped = Math.max(-10, Math.min(20, Math.round(nextExtra || 0)));
+    setAbilities((prev) => {
+      const cur = prev[key];
+      const base = cur.baseScore ?? cur.score ?? 10;
+      const items = equippedBonuses[key] || 0;
+      return {
+        ...prev,
+        [key]: {
+          ...cur,
+          baseScore: base,
+          extraScore: clamped,
+          customModifier: clamped,
+          itemScore: items,
+          score: base + clamped + items,
+          modifierOverride: undefined,
+        },
+      };
+    });
   };
 
   const handleToggleSaveProf = (key: AbilityKey) => {
@@ -174,6 +183,22 @@ export const CharacterSettingsModal: React.FC<CharacterSettingsModalProps> = ({
     const validXp = Math.max(0, Number(xp) || 0);
     const validMaxHp = Math.max(1, Number(maxHp) || 1);
     const validCurrentHp = Math.max(0, Math.min(validMaxHp, Number(currentHp) || 0));
+
+    const finalAbilities = { ...abilities };
+    (Object.keys(finalAbilities) as AbilityKey[]).forEach((key) => {
+      const cur = finalAbilities[key];
+      const items = equippedBonuses[key] || 0;
+      const base = cur.baseScore ?? cur.score ?? 10;
+      const extra = cur.extraScore ?? cur.customModifier ?? 0;
+      finalAbilities[key] = {
+        ...cur,
+        baseScore: base,
+        extraScore: extra,
+        customModifier: extra,
+        itemScore: items,
+        score: base + extra + items,
+      };
+    });
 
     onSaveCharacter({
       ...character,
@@ -198,7 +223,7 @@ export const CharacterSettingsModal: React.FC<CharacterSettingsModalProps> = ({
       spellSaveDcOverride: spellSaveDcOverride.trim() !== '' ? Number(spellSaveDcOverride) : undefined,
       spellAttackBonusOverride:
         spellAttackBonusOverride.trim() !== '' ? Number(spellAttackBonusOverride) : undefined,
-      abilities,
+      abilities: finalAbilities,
     });
     onClose();
   };
@@ -303,15 +328,14 @@ export const CharacterSettingsModal: React.FC<CharacterSettingsModalProps> = ({
                 {(Object.keys(ABILITY_LABELS) as AbilityKey[]).map((key) => {
                   const meta = ABILITY_LABELS[key];
                   const ab = abilities[key];
-                  const baseCalculatedMod = calculateModifier(ab.score);
-                  const customBonus = ab.customModifier || 0;
-                  const finalMod = getEffectiveAbilityModifier(ab);
-                  const saveMod = finalMod + (ab.proficientSave ? profBonus : 0);
+                  const itemBonus = equippedBonuses[key] || 0;
+                  const breakdown = calculateTotalAbilityScore(ab, itemBonus);
+                  const saveMod = breakdown.modifier + (ab.proficientSave ? profBonus : 0);
 
                   return (
                     <div
                       key={key}
-                      className="bg-[#181b24] border border-[#c8a45a]/40 rounded-xl p-4 flex flex-col justify-between space-y-3 shadow-lg"
+                      className="bg-[#181b24] border border-[#c8a45a]/40 rounded-xl p-4 flex flex-col justify-between space-y-2.5 shadow-lg"
                     >
                       <div className="flex items-center justify-between border-b border-stone-800 pb-2">
                         <div>
@@ -320,87 +344,105 @@ export const CharacterSettingsModal: React.FC<CharacterSettingsModalProps> = ({
                           </span>
                           <span className="text-xs text-stone-400 ml-2">{meta.nameEs}</span>
                         </div>
-                        <div className="px-2.5 py-0.5 rounded-lg bg-[#111319] border border-[#c8a45a]/50 font-cinzel font-black text-lg text-white">
-                          {formatModifier(finalMod)}
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono font-bold text-amber-300">
+                            Total: {breakdown.totalScore}
+                          </span>
+                          <div className="px-2 py-0.5 rounded-lg bg-[#111319] border border-[#c8a45a]/50 font-cinzel font-black text-base text-white">
+                            {formatModifier(breakdown.modifier)}
+                          </div>
                         </div>
                       </div>
 
                       {/* 1. Puntos Base (Score) */}
-                      <div className="bg-[#12141b] rounded-lg p-2.5 border border-stone-800/90">
-                        <div className="flex items-center justify-between text-xs mb-1.5">
-                          <span className="text-stone-300 font-semibold">Puntos Base (Stat):</span>
-                          <span className="text-[11px] text-stone-400 font-mono">
-                            Base 5E: {formatModifier(baseCalculatedMod)}
+                      <div className="bg-[#12141b] rounded-lg p-2 border border-stone-800/90">
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-stone-300 font-semibold text-[11px]">1. Puntos Base:</span>
+                          <span className="text-[10px] text-stone-400 font-mono">
+                            Mod base: {formatModifier(calculateModifier(breakdown.baseScore))}
                           </span>
                         </div>
                         <div className="flex items-center justify-between gap-2">
                           <button
                             type="button"
-                            onClick={() => handleUpdateAbilityBase(key, ab.score - 1)}
-                            className="w-8 h-8 rounded-lg bg-[#222530] hover:bg-stone-700 text-stone-200 border border-stone-700 flex items-center justify-center font-bold"
+                            onClick={() => handleUpdateAbilityBase(key, breakdown.baseScore - 1)}
+                            className="w-7 h-7 rounded-lg bg-[#222530] hover:bg-stone-700 text-stone-200 border border-stone-700 flex items-center justify-center font-bold text-xs"
                           >
-                            <Minus className="w-3.5 h-3.5" />
+                            <Minus className="w-3 h-3" />
                           </button>
                           <input
                             type="number"
                             min={1}
                             max={30}
                             aria-label={`Puntos base de ${meta.nameEs}`}
-                            value={ab.score}
+                            value={breakdown.baseScore}
                             onChange={(e) => handleUpdateAbilityBase(key, parseInt(e.target.value, 10) || 10)}
-                            className="w-20 bg-[#181b24] border border-stone-700 focus:border-[#c8a45a] rounded-lg py-1 text-center font-mono font-bold text-sm text-[#e6c77c] outline-none"
+                            className="w-20 bg-[#181b24] border border-stone-700 focus:border-[#c8a45a] rounded-lg py-0.5 text-center font-mono font-bold text-sm text-[#e6c77c] outline-none"
                           />
                           <button
                             type="button"
-                            onClick={() => handleUpdateAbilityBase(key, ab.score + 1)}
-                            className="w-8 h-8 rounded-lg bg-[#222530] hover:bg-stone-700 text-stone-200 border border-stone-700 flex items-center justify-center font-bold"
+                            onClick={() => handleUpdateAbilityBase(key, breakdown.baseScore + 1)}
+                            className="w-7 h-7 rounded-lg bg-[#222530] hover:bg-stone-700 text-stone-200 border border-stone-700 flex items-center justify-center font-bold text-xs"
                           >
-                            <Plus className="w-3.5 h-3.5" />
+                            <Plus className="w-3 h-3" />
                           </button>
                         </div>
                       </div>
 
-                      {/* 2. Modificador Final / Puntos Extra de Modificador */}
-                      <div className="bg-[#12141b] rounded-lg p-2.5 border border-amber-900/30">
-                        <div className="flex items-center justify-between text-xs mb-1.5">
-                          <span className="text-[#e6c77c] font-semibold">Modificador Final:</span>
-                          <span className="text-[11px] text-amber-400/90 font-mono">
-                            Bono Extra: {customBonus >= 0 ? `+${customBonus}` : customBonus}
+                      {/* 2. Puntos Extra Asignados */}
+                      <div className="bg-[#12141b] rounded-lg p-2 border border-amber-900/30">
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-[#e6c77c] font-semibold text-[11px]">2. Puntos Extra:</span>
+                          <span className="text-[10px] text-amber-400 font-mono">
+                            {breakdown.extraScore >= 0 ? `+${breakdown.extraScore}` : breakdown.extraScore} pts
                           </span>
                         </div>
                         <div className="flex items-center justify-between gap-2">
                           <button
                             type="button"
-                            onClick={() => handleUpdateCustomModifier(key, customBonus - 1)}
-                            className="w-8 h-8 rounded-lg bg-[#222530] hover:bg-amber-950 text-amber-200 border border-amber-800/60 flex items-center justify-center font-bold"
-                            title="Restar 1 al modificador"
+                            onClick={() => handleUpdateCustomModifier(key, breakdown.extraScore - 1)}
+                            className="w-7 h-7 rounded-lg bg-[#222530] hover:bg-amber-950 text-amber-200 border border-amber-800/60 flex items-center justify-center font-bold text-xs"
+                            title="Restar 1 punto extra"
                           >
-                            <Minus className="w-3.5 h-3.5" />
+                            <Minus className="w-3 h-3" />
                           </button>
                           <input
                             type="number"
                             min={-10}
                             max={20}
-                            aria-label={`Modificador final de ${meta.nameEs}`}
-                            value={finalMod}
+                            aria-label={`Puntos extra de ${meta.nameEs}`}
+                            value={breakdown.extraScore}
                             onChange={(e) =>
-                              handleSetDirectFinalModifier(key, parseInt(e.target.value, 10) || 0)
+                              handleUpdateCustomModifier(key, parseInt(e.target.value, 10) || 0)
                             }
-                            className="w-20 bg-[#181b24] border border-amber-700/60 focus:border-amber-400 rounded-lg py-1 text-center font-mono font-bold text-sm text-white outline-none"
+                            className="w-20 bg-[#181b24] border border-amber-700/60 focus:border-amber-400 rounded-lg py-0.5 text-center font-mono font-bold text-sm text-white outline-none"
                           />
                           <button
                             type="button"
-                            onClick={() => handleUpdateCustomModifier(key, customBonus + 1)}
-                            className="w-8 h-8 rounded-lg bg-[#222530] hover:bg-amber-950 text-amber-200 border border-amber-800/60 flex items-center justify-center font-bold"
-                            title="Sumar 1 al modificador"
+                            onClick={() => handleUpdateCustomModifier(key, breakdown.extraScore + 1)}
+                            className="w-7 h-7 rounded-lg bg-[#222530] hover:bg-amber-950 text-amber-200 border border-amber-800/60 flex items-center justify-center font-bold text-xs"
+                            title="Sumar 1 punto extra"
                           >
-                            <Plus className="w-3.5 h-3.5" />
+                            <Plus className="w-3 h-3" />
                           </button>
                         </div>
                       </div>
 
-                      {/* 3. Competencia en Salvación */}
-                      <div className="flex items-center justify-between pt-1 text-xs">
+                      {/* 3. Puntos Dados por Objetos Equipados (Read-only) */}
+                      <div className="bg-[#12141b] rounded-lg p-2 border border-emerald-900/40 flex items-center justify-between">
+                        <div>
+                          <span className="text-emerald-300 font-semibold text-[11px] flex items-center gap-1">
+                            <Shield className="w-3 h-3 text-emerald-400" /> 3. Objetos Equipados:
+                          </span>
+                          <span className="text-[10px] text-stone-400">Sumado automáticamente de tu equipo</span>
+                        </div>
+                        <span className="px-2.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 font-mono font-bold text-xs">
+                          {breakdown.itemScore >= 0 ? `+${breakdown.itemScore}` : breakdown.itemScore}
+                        </span>
+                      </div>
+
+                      {/* 4. Competencia en Salvación */}
+                      <div className="flex items-center justify-between pt-1 border-t border-stone-800/80 text-xs">
                         <label className="flex items-center gap-2 cursor-pointer select-none">
                           <input
                             type="checkbox"
