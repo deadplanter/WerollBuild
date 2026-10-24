@@ -60,6 +60,9 @@ import {
   deriveEquippedWeaponAttacks,
   getEffectiveAbilityModifier,
   buildJournalIndexEntries,
+  calculateEquippedItemStatBonuses,
+  calculateTotalAbilityScore,
+  deriveAllCharacterActions,
 } from '../../utils/dnd-math';
 import { ABILITY_LABELS, SKILL_METADATA } from '../../data/srd';
 
@@ -193,7 +196,20 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
   });
 
   const profBonus = calculateProficiencyBonus(character.level);
-  const wisEffectiveMod = getEffectiveAbilityModifier(character.abilities.wis);
+
+  // Dynamic Equipped Item Bonuses (Stats, AC, Speed, HP, Initiative)
+  const equippedBonuses = React.useMemo(
+    () => calculateEquippedItemStatBonuses(character.inventory || []),
+    [character.inventory]
+  );
+
+  const effectiveAc = (character.armorClass ?? 10) + equippedBonuses.ac;
+  const effectiveInitiativeBonus = (character.initiativeBonus ?? 0) + equippedBonuses.initiative;
+  const effectiveSpeed = (character.speed ?? 30) + equippedBonuses.speed;
+  const effectiveMaxHp = (character.maxHp ?? 10) + equippedBonuses.maxHp;
+
+  const wisBreakdown = calculateTotalAbilityScore(character.abilities.wis, equippedBonuses.wis);
+  const wisEffectiveMod = wisBreakdown.modifier;
   const percProf = character.skills?.perception || 'none';
   const passivePerception =
     10 +
@@ -201,7 +217,8 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
     (percProf === 'expertise' ? profBonus * 2 : percProf === 'proficient' ? profBonus : 0);
 
   const spellAbilityKey: AbilityKey = character.spellcastingAbility || 'wis';
-  const spellAbilityScore = character.abilities[spellAbilityKey]?.score || 10;
+  const spellBreakdown = calculateTotalAbilityScore(character.abilities[spellAbilityKey], equippedBonuses[spellAbilityKey]);
+  const spellAbilityScore = spellBreakdown.totalScore;
   const spellSaveDC =
     character.spellSaveDcOverride !== undefined
       ? character.spellSaveDcOverride
@@ -211,17 +228,27 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
       ? character.spellAttackBonusOverride
       : calculateSpellAttackBonus(spellAbilityScore, profBonus);
 
-  // Derived Equipped Weapons & Attacks for "Combates y Acciones" Deck
-  const equippedWeaponAttacks = React.useMemo(
+  // Derived Equipped Weapons & Actions for "Combates y Acciones" Deck
+  const allCharacterActions = React.useMemo(
     () =>
-      deriveEquippedWeaponAttacks(
-        character.inventory || [],
-        character.abilities.str.score,
-        character.abilities.dex.score,
-        profBonus
-      ),
-    [character.inventory, character.abilities.str.score, character.abilities.dex.score, profBonus]
+      deriveAllCharacterActions({
+        inventory: character.inventory || [],
+        spells: character.spells || [],
+        features: character.featuresAndTraits || [],
+        strScore: calculateTotalAbilityScore(character.abilities.str, equippedBonuses.str).totalScore,
+        dexScore: calculateTotalAbilityScore(character.abilities.dex, equippedBonuses.dex).totalScore,
+        profBonus,
+      }),
+    [
+      character.inventory,
+      character.spells,
+      character.featuresAndTraits,
+      character.abilities,
+      equippedBonuses,
+      profBonus,
+    ]
   );
+  const equippedWeaponAttacks = allCharacterActions;
 
   // Derived Possessed / Unlocked Skills for "Habilidades" Deck
   const possessedSkills: CustomSkillEntry[] = React.useMemo(() => {
@@ -338,19 +365,52 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
     });
   };
 
-  const updateAbilityBaseScore = (key: AbilityKey, nextScore: number) => {
+  const updateAbilityBaseScore = (key: AbilityKey, nextBase: number) => {
     if (isLocked) {
       if (onUnlockRequest) onUnlockRequest();
       return;
     }
-    const clamped = Math.max(1, Math.min(30, Math.round(nextScore || 10)));
+    const currentAb = character.abilities[key];
+    const itemBonus = equippedBonuses[key] || 0;
+    const clampedBase = Math.max(1, Math.min(30, Math.round(nextBase || 10)));
+    const extraPts = currentAb.extraScore ?? currentAb.customModifier ?? 0;
+    const totalScore = clampedBase + extraPts + itemBonus;
     onUpdateCharacter({
       ...character,
       abilities: {
         ...character.abilities,
         [key]: {
-          ...character.abilities[key],
-          score: clamped,
+          ...currentAb,
+          baseScore: clampedBase,
+          extraScore: extraPts,
+          itemScore: itemBonus,
+          score: totalScore,
+        },
+      },
+    });
+  };
+
+  const updateAbilityExtraScore = (key: AbilityKey, nextExtra: number) => {
+    if (isLocked) {
+      if (onUnlockRequest) onUnlockRequest();
+      return;
+    }
+    const currentAb = character.abilities[key];
+    const itemBonus = equippedBonuses[key] || 0;
+    const basePts = currentAb.baseScore ?? currentAb.score ?? 10;
+    const clampedExtra = Math.max(-10, Math.min(20, Math.round(nextExtra || 0)));
+    const totalScore = basePts + clampedExtra + itemBonus;
+    onUpdateCharacter({
+      ...character,
+      abilities: {
+        ...character.abilities,
+        [key]: {
+          ...currentAb,
+          baseScore: basePts,
+          extraScore: clampedExtra,
+          customModifier: clampedExtra,
+          itemScore: itemBonus,
+          score: totalScore,
         },
       },
     });
@@ -677,37 +737,43 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
 
             {/* Right: 4 Tall Ornate Gold-Bordered Combat Stat Boxes */}
             <div className="grid grid-cols-4 gap-2 shrink-0">
-              <div className="bg-gradient-to-b from-[#1d202b] to-[#12141c] border-2 border-[#c8a45c]/70 rounded-xl px-2.5 py-1 text-center min-w-[68px] shadow-inner">
+              <div
+                className="bg-gradient-to-b from-[#1d202b] to-[#12141c] border-2 border-[#c8a45c]/70 rounded-xl px-2.5 py-1 text-center min-w-[68px] shadow-inner"
+                title={equippedBonuses.ac ? `Base ${character.armorClass ?? 10} + ${equippedBonuses.ac} por objetos equipados` : undefined}
+              >
                 <div className="text-[10px] font-cinzel font-bold uppercase tracking-wider text-[#cbb692] flex items-center justify-center gap-1">
                   <Shield className="w-3 h-3 text-[#e2c275]" />
                   <span>CA</span>
                 </div>
                 <div className="font-cinzel font-black text-xl text-[#f5e4be] leading-tight">
-                  {character.armorClass}
+                  {effectiveAc}
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={() => onTriggerRoll('Iniciativa', character.initiativeBonus)}
+                onClick={() => onTriggerRoll('Iniciativa', effectiveInitiativeBonus)}
                 className="bg-gradient-to-b from-[#1d202b] to-[#12141c] hover:from-[#262a38] border-2 border-[#c8a45c]/70 hover:border-[#f3dfb2] rounded-xl px-2.5 py-1 text-center min-w-[68px] shadow-inner transition cursor-pointer"
-                title="Tirar Iniciativa (1d20)"
+                title={`Tirar Iniciativa (1d20 ${formatModifier(effectiveInitiativeBonus)})`}
               >
                 <div className="text-[10px] font-cinzel font-bold uppercase tracking-wider text-[#cbb692] flex items-center justify-center gap-1">
                   <Zap className="w-3 h-3 text-[#e2c275]" />
                   <span>INIC.</span>
                 </div>
                 <div className="font-cinzel font-black text-xl text-white leading-tight">
-                  {formatModifier(character.initiativeBonus)}
+                  {formatModifier(effectiveInitiativeBonus)}
                 </div>
               </button>
 
-              <div className="bg-gradient-to-b from-[#1d202b] to-[#12141c] border-2 border-[#c8a45c]/70 rounded-xl px-2.5 py-1 text-center min-w-[78px] shadow-inner">
+              <div
+                className="bg-gradient-to-b from-[#1d202b] to-[#12141c] border-2 border-[#c8a45c]/70 rounded-xl px-2.5 py-1 text-center min-w-[78px] shadow-inner"
+                title={equippedBonuses.speed ? `Base ${character.speed ?? 30} + ${equippedBonuses.speed} por objetos equipados` : undefined}
+              >
                 <div className="text-[10px] font-cinzel font-bold uppercase tracking-wider text-[#cbb692]">
                   VELOCIDAD
                 </div>
                 <div className="font-cinzel font-black text-lg text-white leading-tight">
-                  {character.speed} <span className="text-[10px] text-[#cbb692]">FT</span>
+                  {effectiveSpeed} <span className="text-[10px] text-[#cbb692]">FT</span>
                 </div>
               </div>
 
@@ -917,8 +983,9 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
             {(Object.keys(ABILITY_LABELS) as AbilityKey[]).map((key) => {
               const ab = character.abilities[key];
-              const effectiveMod = getEffectiveAbilityModifier(ab);
-              const saveMod = effectiveMod + (ab.proficientSave ? profBonus : 0);
+              const itemBonus = equippedBonuses[key] || 0;
+              const breakdown = calculateTotalAbilityScore(ab, itemBonus);
+              const saveMod = breakdown.modifier + (ab.proficientSave ? profBonus : 0);
               const meta = ABILITY_LABELS[key];
 
               return (
@@ -937,36 +1004,91 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                   {/* Center Large Modifier Button */}
                   <button
                     type="button"
-                    onClick={() => onTriggerRoll(`Prueba de ${meta.nameEs}`, effectiveMod)}
-                    className="my-0.5 w-13 h-9 rounded-xl bg-[#0e1016] border border-[#c8a45c]/50 group-hover:border-[#e2c275] flex items-center justify-center font-cinzel font-black text-xl text-white group-hover:text-[#f5e4be] transition shadow-inner cursor-pointer"
-                    title={`Tirar prueba de ${meta.nameEs} (1d20 ${formatModifier(effectiveMod)})`}
+                    onClick={() => onTriggerRoll(`Prueba de ${meta.nameEs}`, breakdown.modifier)}
+                    className="my-1 w-14 h-9 rounded-xl bg-[#0e1016] border border-[#c8a45c]/50 group-hover:border-[#e2c275] flex items-center justify-center font-cinzel font-black text-xl text-white group-hover:text-[#f5e4be] transition shadow-inner cursor-pointer"
+                    title={`Tirar prueba de ${meta.nameEs} (1d20 ${formatModifier(breakdown.modifier)})`}
                   >
-                    {formatModifier(effectiveMod)}
+                    {formatModifier(breakdown.modifier)}
                   </button>
 
-                  {/* Base Score & Save Proficiency Row */}
-                  <div className="text-[10px] font-mono text-[#cbb692] mb-0.5">
-                    Puntos: <strong className="text-[#f3dfb2]">{ab.score}</strong>
-                    {ab.customModifier ? (
-                      <span className="text-amber-300 ml-1">
-                        ({ab.customModifier > 0 ? `+${ab.customModifier}` : ab.customModifier})
-                      </span>
-                    ) : null}
+                  {/* Total Points Header */}
+                  <div className="text-[10px] font-cinzel font-bold text-[#e5c478] mb-0.5">
+                    TOTAL: <strong className="text-white text-xs">{breakdown.totalScore}</strong>
                   </div>
 
-                  {/* Bottom Control Bar: [-] [Save Dot & Roll] [+] */}
-                  <div className="w-full flex items-center justify-between pt-1 border-t border-[#c8a45c]/25">
-                    <button
-                      type="button"
-                      aria-label={`Restar 1 a ${meta.nameEs}`}
-                      onClick={() => updateAbilityBaseScore(key, ab.score - 1)}
-                      className="w-4 h-4 rounded bg-[#232634] hover:bg-[#32364a] border border-[#c8a45c]/40 text-[#f3dfb2] text-[10px] font-bold flex items-center justify-center cursor-pointer"
-                      title="Disminuir puntos base (-1)"
-                    >
-                      -
-                    </button>
+                  {/* 3-Part Decomposition: Base, Extra, Objetos Equipados */}
+                  <div className="w-full bg-black/50 rounded-lg p-1 border border-[#c8a45c]/25 space-y-1 mb-1">
+                    {/* 1. Base Score */}
+                    <div className="flex items-center justify-between text-[9px] font-mono">
+                      <span className="text-[#cbb692]">Base:</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => updateAbilityBaseScore(key, breakdown.baseScore - 1)}
+                          className="w-3.5 h-3.5 rounded bg-[#202330] hover:bg-[#2e3346] border border-stone-600 text-stone-300 font-bold flex items-center justify-center cursor-pointer"
+                          title="Restar 1 punto base"
+                        >
+                          -
+                        </button>
+                        <span className="w-4 text-center font-bold text-white">{breakdown.baseScore}</span>
+                        <button
+                          type="button"
+                          onClick={() => updateAbilityBaseScore(key, breakdown.baseScore + 1)}
+                          className="w-3.5 h-3.5 rounded bg-[#202330] hover:bg-[#2e3346] border border-stone-600 text-stone-300 font-bold flex items-center justify-center cursor-pointer"
+                          title="Sumar 1 punto base"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
 
-                    <div className="flex items-center gap-1">
+                    {/* 2. Extra Score */}
+                    <div className="flex items-center justify-between text-[9px] font-mono">
+                      <span className="text-amber-300">Extra:</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => updateAbilityExtraScore(key, breakdown.extraScore - 1)}
+                          className="w-3.5 h-3.5 rounded bg-[#202330] hover:bg-[#2e3346] border border-stone-600 text-stone-300 font-bold flex items-center justify-center cursor-pointer"
+                          title="Restar 1 punto extra"
+                        >
+                          -
+                        </button>
+                        <span className="w-4 text-center font-bold text-amber-300">
+                          {breakdown.extraScore >= 0 ? `+${breakdown.extraScore}` : breakdown.extraScore}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateAbilityExtraScore(key, breakdown.extraScore + 1)}
+                          className="w-3.5 h-3.5 rounded bg-[#202330] hover:bg-[#2e3346] border border-stone-600 text-stone-300 font-bold flex items-center justify-center cursor-pointer"
+                          title="Sumar 1 punto extra"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 3. Objetos Equipados (Read-only, dynamically derived from equipped gear) */}
+                    <div
+                      className="flex items-center justify-between text-[9px] font-mono bg-emerald-950/40 rounded px-1 py-0.5 border border-emerald-500/30"
+                      title={
+                        breakdown.itemScore > 0
+                          ? `Puntos dados por objetos equipados: +${breakdown.itemScore}`
+                          : 'Sin bonos de objetos equipados para esta estadística'
+                      }
+                    >
+                      <span className="text-emerald-300 font-semibold flex items-center gap-0.5">
+                        <Shield className="w-2.5 h-2.5 text-emerald-400" /> Objetos:
+                      </span>
+                      <span className="font-bold text-emerald-300">
+                        {breakdown.itemScore >= 0 ? `+${breakdown.itemScore}` : breakdown.itemScore}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Bottom Control Bar: Save Dot & Roll */}
+                  <div className="w-full flex items-center justify-between pt-1 border-t border-[#c8a45c]/25 text-[10px]">
+                    <div className="flex items-center gap-1.5 w-full justify-center">
                       <button
                         type="button"
                         aria-label={`Competencia en salvación de ${meta.nameEs}`}
@@ -981,22 +1103,12 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                       <button
                         type="button"
                         onClick={() => onTriggerRoll(`Salvación de ${meta.nameEs}`, saveMod)}
-                        className="text-[10px] font-mono text-[#d6c5a7] hover:text-[#e2c275] cursor-pointer"
+                        className="font-mono text-[#d6c5a7] hover:text-[#e2c275] cursor-pointer"
                         title="Tirar Salvación"
                       >
                         Salv {formatModifier(saveMod)}
                       </button>
                     </div>
-
-                    <button
-                      type="button"
-                      aria-label={`Sumar 1 a ${meta.nameEs}`}
-                      onClick={() => updateAbilityBaseScore(key, ab.score + 1)}
-                      className="w-4 h-4 rounded bg-[#232634] hover:bg-[#32364a] border border-[#c8a45c]/40 text-[#f3dfb2] text-[10px] font-bold flex items-center justify-center cursor-pointer"
-                      title="Aumentar puntos base (+1)"
-                    >
-                      +
-                    </button>
                   </div>
                 </div>
               );
@@ -1147,56 +1259,82 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                         {/* DECK 1 CARDS: COMBATES Y ACCIONES */}
                         {activeDeck === 'combat' && (
                           <>
-                            {equippedWeaponAttacks
+                            {allCharacterActions
                               .slice(safeScrollIdx, safeScrollIdx + 2)
-                              .map((watk) => (
+                              .map((action) => (
                                 <div
-                                  key={watk.id}
-                                  data-testid={`player-card-${watk.id}`}
+                                  key={action.id}
+                                  data-testid={`player-card-${action.id}`}
                                   onClick={() =>
                                     onTriggerRoll(
-                                      `${watk.weaponName}: ${watk.attackName} (${watk.damageFormula} ${watk.damageType})`,
-                                      watk.toHitBonus,
+                                      `${action.sourceName}: ${action.name} (${action.damageFormula} ${action.damageType})`,
+                                      action.toHitBonus,
                                       20
                                     )
                                   }
-                                  className="group relative rounded-2xl border-2 border-[#c8a45c] ring-1 ring-inset ring-[#e2c275]/35 hover:border-[#fff0c2] bg-gradient-to-b from-[#231d17] via-[#17161d] to-[#11131a] p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer"
+                                  className={`group relative rounded-2xl border-2 ring-1 ring-inset p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer ${
+                                    action.isSpecialAction
+                                      ? 'border-purple-400/80 ring-purple-300/35 hover:border-purple-200 bg-gradient-to-b from-[#2a173d] via-[#1a1226] to-[#110e1a]'
+                                      : 'border-[#c8a45c] ring-[#e2c275]/35 hover:border-[#fff0c2] bg-gradient-to-b from-[#231d17] via-[#17161d] to-[#11131a]'
+                                  }`}
                                 >
                                   {/* Card Top Header */}
-                                  <div className="flex items-center justify-between text-[11px] text-[#d8ba73] font-cinzel font-bold border-b border-[#c8a45c]/30 pb-1">
-                                    <span className="truncate uppercase">{watk.weaponName}</span>
-                                    <Sword className="w-3.5 h-3.5 shrink-0 text-[#e2c275]" />
+                                  <div
+                                    className={`flex items-center justify-between text-[11px] font-cinzel font-bold border-b pb-1 ${
+                                      action.isSpecialAction
+                                        ? 'text-purple-300 border-purple-500/30'
+                                        : 'text-[#d8ba73] border-[#c8a45c]/30'
+                                    }`}
+                                  >
+                                    <span className="truncate uppercase">{action.sourceName}</span>
+                                    {action.isSpecialAction ? (
+                                      <Sparkles className="w-3.5 h-3.5 shrink-0 text-purple-300" />
+                                    ) : (
+                                      <Sword className="w-3.5 h-3.5 shrink-0 text-[#e2c275]" />
+                                    )}
                                   </div>
 
                                   {/* Framed Tarot Illustration Box */}
-                                  <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#2b2318] to-[#141210] border-2 border-[#786545] shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition">
-                                    <svg
-                                      viewBox="0 0 64 64"
-                                      className="w-full h-full text-[#dcb868] drop-shadow"
-                                      fill="currentColor"
-                                    >
-                                      <path d="M52 8L40 12L18 34L12 32L8 36L16 44L10 50L14 54L20 48L28 56L32 52L30 46L52 24L56 12L52 8ZM22 40L44 18L46 20L24 42L22 40Z" />
-                                    </svg>
+                                  <div
+                                    className={`my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl border-2 shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition ${
+                                      action.isSpecialAction
+                                        ? 'bg-gradient-to-b from-[#3d1e58] to-[#180f24] border-purple-400/50'
+                                        : 'bg-gradient-to-b from-[#2b2318] to-[#141210] border-[#786545]'
+                                    }`}
+                                  >
+                                    {action.isSpecialAction ? (
+                                      <Zap className="w-9 h-9 text-purple-300 drop-shadow" />
+                                    ) : (
+                                      <svg
+                                        viewBox="0 0 64 64"
+                                        className="w-full h-full text-[#dcb868] drop-shadow"
+                                        fill="currentColor"
+                                      >
+                                        <path d="M52 8L40 12L18 34L12 32L8 36L16 44L10 50L14 54L20 48L28 56L32 52L30 46L52 24L56 12L52 8ZM22 40L44 18L46 20L24 42L22 40Z" />
+                                      </svg>
+                                    )}
                                   </div>
 
                                   {/* Title & Formula Pill */}
                                   <div className="text-center space-y-1.5">
                                     <div className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase leading-tight line-clamp-2">
-                                      {watk.attackName}
+                                      {action.name}
                                     </div>
                                     <div className="rounded-xl bg-[#181c29] border border-white/10 py-1.5 px-2.5 shadow-inner">
                                       <div className="font-cinzel font-black text-base sm:text-lg text-white leading-none">
-                                        {watk.damageFormula}
+                                        {action.damageFormula}
                                       </div>
                                       <div className="text-[9px] font-cinzel font-bold text-[#8e96aa] uppercase tracking-wider mt-0.5">
-                                        {watk.damageType}
+                                        {action.damageType}
                                       </div>
                                     </div>
                                   </div>
 
                                   {/* Footer */}
                                   <div className="pt-1.5 mt-1.5 border-t border-[#c8a45c]/35 flex items-center justify-between text-[11px] font-sans text-[#e2d6c1]">
-                                    <span>Impacto: {formatModifier(watk.toHitBonus)}</span>
+                                    <span>
+                                      {action.isSpecialAction ? 'Bono/Acción' : `Impacto: ${formatModifier(action.toHitBonus)}`}
+                                    </span>
                                     <span className="font-cinzel font-black text-[#e5c478] uppercase tracking-wider">
                                       TIRAR
                                     </span>
@@ -1204,7 +1342,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                 </div>
                               ))}
 
-                            {equippedWeaponAttacks.length === 0 && (
+                            {allCharacterActions.length === 0 && (
                               <div
                                 data-testid="player-card-unarmed"
                                 onClick={() =>
