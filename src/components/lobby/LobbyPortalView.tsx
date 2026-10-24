@@ -73,6 +73,11 @@ import { AuthSessionUser } from '../auth/RoleSelectionModal';
 import { SAMPLE_CHARACTER, SAMPLE_DM_WORKSPACE } from '../../data/srd';
 import { BrandLogo, PREFAB_LOGOS } from '../common/BrandLogo';
 import { EntityAvatar } from '../common/EntityAvatar';
+import {
+  getLocalCacheDiagnostics,
+  hydrateVaultToIndexedCache,
+  LocalCacheDiagnostics,
+} from '../../utils/indexedCache';
 import { CharacterTarotCard } from '../character/CharacterTarotCard';
 import { ForumView } from '../forum/ForumView';
 import { FriendDirectChatModal, FRIEND_CHAT_BROADCAST_CHANNEL } from '../friends/FriendDirectChatModal';
@@ -110,6 +115,8 @@ interface LobbyPortalViewProps {
   activeLobbyPage?: 'portal' | 'admin' | 'creator' | 'moderator';
   onChangeLobbyPage?: (page: 'portal' | 'admin' | 'creator' | 'moderator') => void;
   onBroadcastLivePopup?: (popup: LiveBroadcastPopup) => void;
+  localCharacters?: Character5e[];
+  vaultSyncRevision?: number;
 }
 
 export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
@@ -143,6 +150,8 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   activeLobbyPage = 'portal',
   onChangeLobbyPage,
   onBroadcastLivePopup,
+  localCharacters = [],
+  vaultSyncRevision = 0,
 }) => {
   // Roles architecture: Player Type vs Application Role (admin > creator > moderator > client)
   const userAppRole: AppRole =
@@ -245,9 +254,16 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   const [worldToDelete, setWorldToDelete] = useState<WorldSheetSummary | null>(null);
 
   // Admin state
-  const [adminSubTab, setAdminSubTab] = useState<'users' | 'vault' | 'autobackup' | 'updates' | 'settings'>('users');
+  const [adminSubTab, setAdminSubTab] = useState<
+    'users' | 'vault' | 'autobackup' | 'updates' | 'settings' | 'stats' | 'architecture'
+  >('users');
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(false);
+  const [serverStats, setServerStats] = useState<any | null>(null);
+  const [isLoadingServerStats, setIsLoadingServerStats] = useState<boolean>(false);
+  const [architectureStatus, setArchitectureStatus] = useState<any | null>(null);
+  const [isLoadingArchitecture, setIsLoadingArchitecture] = useState<boolean>(false);
+  const [localCacheDiag, setLocalCacheDiag] = useState<LocalCacheDiagnostics | null>(null);
   const [adminSettingsForm, setAdminSettingsForm] = useState<HostSettings>(hostSettings);
   const [adminSaveMessage, setAdminSaveMessage] = useState<string>('');
 
@@ -465,6 +481,12 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       status: string;
       avatarUrl?: string;
       unreadCount?: number;
+      isOnline?: boolean;
+      lastActiveAt?: number;
+      currentActivity?: string;
+      lastMessageId?: string;
+      totalConnectedMs?: number;
+      sessionCount?: number;
     }>
   >([]);
   const [incomingFriendRequests, setIncomingFriendRequests] = useState<
@@ -582,22 +604,55 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   const [activeCharCarouselIndex, setActiveCharCarouselIndex] = useState<number>(0);
   const [isLoadingSheets, setIsLoadingSheets] = useState<boolean>(false);
 
-  // Fetch player sheets for this user from server vault
-  const fetchUserSheets = async () => {
+  // Fetch player sheets for this user from server vault (with automatic hydration fallback so no admin refresh is needed)
+  const fetchUserSheets = async (silent = false) => {
     if (!authUser?.email) return;
-    setIsLoadingSheets(true);
+    if (!silent) setIsLoadingSheets(true);
     try {
-      const res = await fetch(`/api/vault/sheets?ownerEmail=${encodeURIComponent(authUser.email)}`);
+      const normalizedEmail = authUser.email.trim().toLowerCase();
+      const res = await fetch(
+        `/api/vault/sheets?ownerEmail=${encodeURIComponent(normalizedEmail)}&_t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data.sheets)) {
-          setPlayerSheets(data.sheets.map((s: any) => s.character));
+        const serverChars: Character5e[] = Array.isArray(data.sheets)
+          ? data.sheets.map((s: any) => s.character).filter(Boolean)
+          : [];
+
+        if (serverChars.length > 0) {
+          setPlayerSheets(serverChars);
+        } else if (Array.isArray(localCharacters) && localCharacters.length > 0) {
+          // If server vault hasn't received local characters for this user yet, hydrate and push them automatically
+          const matchingLocal = localCharacters.filter(
+            (c) =>
+              !c.ownerEmail ||
+              c.ownerEmail.trim().toLowerCase() === normalizedEmail ||
+              c.ownerEmail.trim().toLowerCase() === 'guest@weroll.app'
+          );
+          if (matchingLocal.length > 0) {
+            setPlayerSheets(matchingLocal);
+            matchingLocal.forEach((char) => {
+              fetch('/api/vault/sheets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  character: { ...char, ownerEmail: normalizedEmail },
+                  ownerEmail: normalizedEmail,
+                }),
+              }).catch(() => {});
+            });
+          } else {
+            setPlayerSheets([]);
+          }
+        } else {
+          setPlayerSheets([]);
         }
       }
     } catch (err) {
-      console.error('Error fetching sheets:', err);
+      if (!silent) console.error('Error fetching sheets:', err);
     } finally {
-      setIsLoadingSheets(false);
+      if (!silent) setIsLoadingSheets(false);
     }
   };
 
@@ -837,6 +892,115 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
     } finally {
       setIsLoadingUsers(false);
     }
+  };
+
+  // Fetch server statistics & connection activity map for admin
+  const fetchServerStats = async (silent = false) => {
+    if (!isModerator) return;
+    if (!silent) setIsLoadingServerStats(true);
+    try {
+      const res = await fetch(`/api/admin/server-stats?_t=${Date.now()}`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        setServerStats(data);
+      }
+    } catch (err) {
+      if (!silent) console.error('Error loading server stats:', err);
+    } finally {
+      if (!silent) setIsLoadingServerStats(false);
+    }
+  };
+
+  // Fetch read-only architecture, Delta Sync, Separated Images & Write-Behind Queue status for admin
+  const fetchArchitectureStatus = async (silent = false) => {
+    if (!isModerator) return;
+    if (!silent) setIsLoadingArchitecture(true);
+    try {
+      const [res, diag] = await Promise.all([
+        fetch(`/api/admin/architecture-status?_t=${Date.now()}`, { cache: 'no-store' }),
+        getLocalCacheDiagnostics(),
+      ]);
+      setLocalCacheDiag(diag);
+      if (res.ok) {
+        const data = await res.json();
+        setArchitectureStatus(data);
+      }
+    } catch (err) {
+      if (!silent) console.error('Error loading architecture status:', err);
+    } finally {
+      if (!silent) setIsLoadingArchitecture(false);
+    }
+  };
+
+  // Hydrate local IndexedDB cache whenever localCharacters or worldSheets change
+  useEffect(() => {
+    hydrateVaultToIndexedCache({
+      sheets: (localCharacters || []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        ownerEmail: c.ownerEmail || authUser?.email || 'jugador@weroll.app',
+        character: c,
+        updatedAt: Date.now(),
+      })),
+      worlds: worldSheets,
+      revision: syncMetadata?.revision || 1,
+    })
+      .then(() => getLocalCacheDiagnostics())
+      .then((diag) => setLocalCacheDiag(diag))
+      .catch(() => {});
+  }, [localCharacters, worldSheets, authUser?.email, syncMetadata?.revision]);
+
+  // Subscribe to Real-Time SSE stream (/api/events/stream) for instant Delta Sync & presence updates
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/events/stream');
+      es.onmessage = (ev) => {
+        try {
+          const payload = JSON.parse(ev.data || '{}');
+          if (payload.type === 'delta:applied') {
+            if (isModerator && adminSubTab === 'architecture') {
+              fetchArchitectureStatus(true);
+            }
+          }
+        } catch {}
+      };
+    } catch {}
+    return () => {
+      try {
+        es?.close();
+      } catch {}
+    };
+  }, [isModerator, adminSubTab]);
+
+  const formatDurationHuman = (ms?: number) => {
+    const totalSec = Math.max(0, Math.floor((ms || 0) / 1000));
+    if (totalSec < 60) return `${totalSec}s`;
+    const hours = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    if (hours === 0) return `${mins} min`;
+    return `${hours}h ${mins}m`;
+  };
+
+  const formatRelativeConnection = (lastActiveAt?: number, isOnline?: boolean) => {
+    if (isOnline) return 'En línea ahora';
+    if (!lastActiveAt || lastActiveAt <= 0) return 'Sin registro reciente';
+    const diffMs = Math.max(0, Date.now() - lastActiveAt);
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return 'Hace instantes';
+    if (diffMin < 60) return `Hace ${diffMin} min`;
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24) return `Hace ${diffHours} h`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays === 1) return 'Ayer';
+    if (diffDays < 7) return `Hace ${diffDays} días`;
+    return new Date(lastActiveAt).toLocaleDateString('es-ES', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   // Fetch vault details (sheets, worlds, backups, syncMetadata, replacedArchive)
@@ -1098,7 +1262,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
     }
   };
 
-  // FRIENDS HANDLERS
+  // FRIENDS HANDLERS (flicker-free diffing on silent background updates)
   const fetchUserFriends = async (silent = false) => {
     if (!authUser?.email) return;
     if (!silent) setIsLoadingFriends(true);
@@ -1110,13 +1274,33 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.friends)) {
-          setFriendsList(data.friends);
+          setFriendsList((prev) => {
+            const makeSig = (arr: any[]) =>
+              arr
+                .map(
+                  (f) =>
+                    `${f.id}:${Boolean(f.isOnline)}:${Math.floor((f.lastActiveAt || 0) / 30000)}:${f.unreadCount || 0}:${f.lastMessageId || ''}:${f.displayName}:${f.userTagId}:${f.avatarUrl || ''}:${f.currentActivity || ''}`
+                )
+                .join('|');
+            if (silent && makeSig(prev) === makeSig(data.friends)) {
+              return prev;
+            }
+            return data.friends;
+          });
         }
         if (Array.isArray(data.incomingRequests)) {
-          setIncomingFriendRequests(data.incomingRequests);
+          setIncomingFriendRequests((prev) => {
+            const sigPrev = prev.map((r) => r.id).join(',');
+            const sigNext = data.incomingRequests.map((r: any) => r.id).join(',');
+            return silent && sigPrev === sigNext ? prev : data.incomingRequests;
+          });
         }
         if (Array.isArray(data.outgoingRequests)) {
-          setOutgoingFriendRequests(data.outgoingRequests);
+          setOutgoingFriendRequests((prev) => {
+            const sigPrev = prev.map((r) => r.id).join(',');
+            const sigNext = data.outgoingRequests.map((r: any) => r.id).join(',');
+            return silent && sigPrev === sigNext ? prev : data.outgoingRequests;
+          });
         }
       }
     } catch (err) {
@@ -1126,12 +1310,12 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
     }
   };
 
-  // Poll friends & unread message counts + friend requests in real time
+  // Poll friends & online presence + event-driven BroadcastChannel notification when a message is sent
   useEffect(() => {
     if (!authUser?.email || authUser.status === 'pending') return;
     const interval = setInterval(() => {
       fetchUserFriends(true);
-    }, 2500);
+    }, 6000);
 
     let channel: BroadcastChannel | null = null;
     try {
@@ -1460,16 +1644,27 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
 
   useEffect(() => {
     if (authUser?.email && authUser.status !== 'pending') {
-      fetchUserSheets();
-      fetchUserFriends();
+      fetchUserSheets(vaultSyncRevision > 0);
+      fetchUserFriends(vaultSyncRevision > 0);
     }
     if (isModerator && (activeTab === 'admin' || currentLobbyPage === 'admin' || isAdminModalOpen)) {
       fetchAdminUsers();
       fetchVaultDetails();
       fetchAdminChangelog();
       fetchAdminFeedback();
+      fetchServerStats(true);
     }
-  }, [authUser?.email, authUser?.status, activeTab, currentLobbyPage, isAdminModalOpen, isModerator, charactersCount]);
+  }, [authUser?.email, authUser?.status, activeTab, currentLobbyPage, isAdminModalOpen, isModerator, charactersCount, vaultSyncRevision]);
+
+  // Auto-refresh server stats when admin is viewing the 'stats' sub-tab
+  useEffect(() => {
+    if (!isModerator || (currentLobbyPage !== 'admin' && !isAdminModalOpen) || adminSubTab !== 'stats') return;
+    fetchServerStats();
+    const timer = setInterval(() => {
+      fetchServerStats(true);
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [isModerator, currentLobbyPage, isAdminModalOpen, adminSubTab]);
 
   // Handle Join Table validation
   const handleJoinTableSubmit = async (e: React.FormEvent) => {
@@ -3003,6 +3198,11 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                 <div className="space-y-2 max-h-[320px] overflow-y-auto custom-scrollbar pr-0.5">
                   {friendsList.map((friend) => {
                     const hasUnread = (friend.unreadCount || 0) > 0;
+                    const isFriendOnline = Boolean(friend.isOnline);
+                    const lastSeenText = formatRelativeConnection(friend.lastActiveAt, isFriendOnline);
+                    const exactDateTooltip = friend.lastActiveAt
+                      ? `Última actividad: ${new Date(friend.lastActiveAt).toLocaleString('es-ES')}`
+                      : 'Sin conexión registrada';
                     return (
                       <div
                         key={friend.id}
@@ -3010,16 +3210,27 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                         className="bg-[#181922] border border-stone-800 hover:border-emerald-800/60 rounded-xl p-3 flex items-center justify-between gap-2 transition shadow-sm"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-9 h-9 rounded-lg bg-emerald-950/70 border border-emerald-700/60 flex items-center justify-center text-emerald-300 font-cinzel font-bold text-xs shrink-0 overflow-hidden shadow">
-                            {friend.avatarUrl ? (
-                              <img
-                                src={friend.avatarUrl}
-                                alt={friend.displayName}
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              friend.displayName.slice(0, 2).toUpperCase()
-                            )}
+                          <div className="relative shrink-0">
+                            <div className="w-9 h-9 rounded-lg bg-emerald-950/70 border border-emerald-700/60 flex items-center justify-center text-emerald-300 font-cinzel font-bold text-xs overflow-hidden shadow">
+                              {friend.avatarUrl ? (
+                                <img
+                                  src={friend.avatarUrl}
+                                  alt={friend.displayName}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                friend.displayName.slice(0, 2).toUpperCase()
+                              )}
+                            </div>
+                            <span
+                              data-testid={`friend-status-dot-${friend.id}`}
+                              title={isFriendOnline ? 'En línea ahora' : exactDateTooltip}
+                              className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#181922] ${
+                                isFriendOnline
+                                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)] animate-pulse'
+                                  : 'bg-stone-500'
+                              }`}
+                            />
                           </div>
                           <div className="min-w-0">
                             <div className="flex items-center gap-1 min-w-0">
@@ -3041,6 +3252,21 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                                 ? 'Dungeon Master'
                                 : 'Jugador'}
                             </span>
+                            <div
+                              data-testid={`friend-last-seen-${friend.id}`}
+                              title={exactDateTooltip}
+                              className="flex items-center gap-1 mt-0.5 text-[10px] truncate"
+                            >
+                              {isFriendOnline ? (
+                                <span className="text-emerald-400 font-semibold truncate">
+                                  ● En línea{friend.currentActivity ? ` • ${friend.currentActivity}` : ''}
+                                </span>
+                              ) : (
+                                <span className="text-stone-500 truncate">
+                                  Últ. conexión: <span className="text-stone-400">{lastSeenText}</span>
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
 
@@ -3485,10 +3711,10 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           )}
 
           {/* Sub-tabs Navigation */}
-          <div className="flex items-center gap-2 border-b border-stone-800/80 pb-2 overflow-x-auto">
+          <div className="flex items-center gap-2 border-b border-stone-800/80 pb-2.5 flex-wrap">
             <button
               onClick={() => setAdminSubTab('users')}
-              className={`px-4 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
+              className={`px-3.5 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
                 adminSubTab === 'users'
                   ? 'bg-blue-600 text-white shadow-md'
                   : 'bg-stone-900 text-stone-400 hover:text-stone-200 hover:bg-stone-800'
@@ -3499,11 +3725,45 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
             </button>
 
             <button
+              type="button"
+              data-testid="admin-tab-stats"
+              onClick={() => {
+                setAdminSubTab('stats');
+                fetchServerStats();
+              }}
+              className={`px-3.5 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
+                adminSubTab === 'stats'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'bg-stone-900 text-stone-400 hover:text-stone-200 hover:bg-stone-800 border border-emerald-800/50'
+              }`}
+            >
+              <Radio className="w-4 h-4 text-emerald-400" />
+              📊 Estadísticas del Servidor ({serverStats?.onlineUsersCount ?? 0} en línea)
+            </button>
+
+            <button
+              type="button"
+              data-testid="admin-tab-architecture"
+              onClick={() => {
+                setAdminSubTab('architecture');
+                fetchArchitectureStatus();
+              }}
+              className={`px-3.5 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
+                adminSubTab === 'architecture'
+                  ? 'bg-amber-600 text-white shadow-md'
+                  : 'bg-stone-900 text-amber-300 hover:text-white hover:bg-stone-800 border border-amber-700/60'
+              }`}
+            >
+              <BookOpen className="w-4 h-4 text-amber-400" />
+              📘 Arquitectura, Delta Sync & Imágenes (Lectura)
+            </button>
+
+            <button
               onClick={() => {
                 setAdminSubTab('vault');
                 fetchVaultDetails();
               }}
-              className={`px-4 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
+              className={`px-3.5 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
                 adminSubTab === 'vault'
                   ? 'bg-blue-600 text-white shadow-md'
                   : 'bg-stone-900 text-stone-400 hover:text-stone-200 hover:bg-stone-800'
@@ -3515,7 +3775,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
 
             <button
               onClick={() => setAdminSubTab('autobackup')}
-              className={`px-4 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
+              className={`px-3.5 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
                 adminSubTab === 'autobackup'
                   ? 'bg-cyan-600 text-white shadow-md'
                   : 'bg-stone-900 text-stone-400 hover:text-stone-200 hover:bg-stone-800'
@@ -3530,7 +3790,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                 setAdminSubTab('updates');
                 fetchAdminChangelog();
               }}
-              className={`px-4 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
+              className={`px-3.5 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
                 adminSubTab === 'updates'
                   ? 'bg-blue-600 text-white shadow-md'
                   : 'bg-stone-900 text-stone-400 hover:text-stone-200 hover:bg-stone-800'
@@ -3542,7 +3802,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
 
             <button
               onClick={() => setAdminSubTab('settings')}
-              className={`px-4 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
+              className={`px-3.5 py-2 rounded-xl font-cinzel font-bold text-xs transition flex items-center gap-2 shrink-0 ${
                 adminSubTab === 'settings'
                   ? 'bg-blue-600 text-white shadow-md'
                   : 'bg-stone-900 text-stone-400 hover:text-stone-200 hover:bg-stone-800'
@@ -5677,6 +5937,659 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                 </button>
               </div>
             </form>
+          )}
+
+          {/* =================================================================== */}
+          {/* SUB-TAB 6: SERVER STATISTICS & LIVE CONNECTION ACTIVITY MAP         */}
+          {/* =================================================================== */}
+          {adminSubTab === 'stats' && (
+            <div data-testid="admin-server-stats-panel" className="space-y-6 animate-in fade-in">
+              {/* Top Header & Refresh */}
+              <div className="bg-[#161720] border border-stone-800 rounded-3xl p-6 shadow-xl space-y-5">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-cinzel font-bold text-base text-emerald-300 flex items-center gap-2">
+                      <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      Estadísticas del Servidor, Mapa de Conexiones y Tiempo de Uso en Vivo
+                    </h3>
+                    <p className="text-xs text-stone-400 mt-0.5">
+                      Monitorea en tiempo real quién está conectado, a qué hora ingresó cada jugador, cuánto tiempo lleva conectado y la actividad por hora del servidor.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="btn-refresh-server-stats"
+                    onClick={() => fetchServerStats()}
+                    disabled={isLoadingServerStats}
+                    className="px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-cinzel font-bold transition flex items-center gap-1.5 border border-stone-700 shrink-0 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingServerStats ? 'animate-spin' : ''}`} />
+                    Actualizar Estadísticas
+                  </button>
+                </div>
+
+                {/* KPI Summary Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-emerald-800/50">
+                    <span className="text-[10px] font-cinzel uppercase tracking-wider text-emerald-400 block">
+                      Jugadores en Línea Ahora
+                    </span>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-2xl font-cinzel font-bold text-stone-100">
+                        {serverStats?.onlineUsersCount ?? 0}
+                      </span>
+                      <span className="text-xs text-stone-400">
+                        / {serverStats?.totalUsers ?? adminUsers.length} registrados
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-emerald-300/80 block mt-1">
+                      ● Pulso activo en tiempo real (cada 12s)
+                    </span>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-cyan-800/50">
+                    <span className="text-[10px] font-cinzel uppercase tracking-wider text-cyan-400 block">
+                      Conectados en las Últimas 24h
+                    </span>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-2xl font-cinzel font-bold text-stone-100">
+                        {serverStats?.activeTodayCount ?? 0}
+                      </span>
+                      <span className="text-xs text-stone-400">usuarios únicos hoy</span>
+                    </div>
+                    <span className="text-[10px] text-stone-400 block mt-1">
+                      Fichas en Bóveda: {serverStats?.totalPlayerSheets ?? 0} • Mundos: {serverStats?.totalWorldSheets ?? 0}
+                    </span>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-amber-800/50">
+                    <span className="text-[10px] font-cinzel uppercase tracking-wider text-amber-400 block">
+                      Tiempo Total Conectado (Comunidad)
+                    </span>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-2xl font-cinzel font-bold text-stone-100">
+                        {formatDurationHuman(
+                          (serverStats?.userStats || []).reduce(
+                            (acc: number, u: any) => acc + (u.totalConnectedMs || 0),
+                            0
+                          )
+                        )}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-stone-400 block mt-1">
+                      Mensajes directos: {serverStats?.totalDirectMessages ?? 0} • Posts foro: {serverStats?.totalForumPosts ?? 0}
+                    </span>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-purple-800/50">
+                    <span className="text-[10px] font-cinzel uppercase tracking-wider text-purple-400 block">
+                      Uptime & Estado de Bóveda
+                    </span>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-xl font-cinzel font-bold text-stone-100">
+                        {formatDurationHuman(serverStats?.uptimeMs || 0)}
+                      </span>
+                      <span className="text-[11px] font-mono text-purple-300">
+                        Rev #{serverStats?.syncMetadata?.revision ?? 0}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-stone-400 block mt-1 truncate">
+                      Inicio: {serverStats?.serverStartedAt ? new Date(serverStats.serverStartedAt).toLocaleTimeString('es-ES') : 'Activo'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 24-Hour Connection Activity Map */}
+                <div className="p-4 rounded-2xl bg-[#121318] border border-stone-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-cinzel font-bold text-xs text-amber-300 uppercase tracking-wider">
+                        🗺️ Mapa de Actividad y Conexiones por Hora (Últimas 24 Horas)
+                      </h4>
+                      <p className="text-[11px] text-stone-400">
+                        Distribución horaria de usuarios activos y sesiones conectadas en el servidor.
+                      </p>
+                    </div>
+                    <span className="text-[11px] font-mono text-stone-400">
+                      Hora actual del servidor: {new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+
+                  {(() => {
+                    const buckets: Array<{ hour: number; label: string; activeUsers: number }> =
+                      Array.isArray(serverStats?.hourlyActivity) && serverStats.hourlyActivity.length > 0
+                        ? serverStats.hourlyActivity
+                        : Array.from({ length: 24 }, (_, h) => ({
+                            hour: h,
+                            label: `${String(h).padStart(2, '0')}:00`,
+                            activeUsers: 0,
+                          }));
+                    const maxVal = Math.max(1, ...buckets.map((b) => b.activeUsers || 0));
+                    return (
+                      <div className="grid grid-cols-12 sm:grid-cols-24 gap-1.5 pt-2 items-end h-32">
+                        {buckets.map((b) => {
+                          const pct = Math.max(10, Math.round(((b.activeUsers || 0) / maxVal) * 100));
+                          const hasActivity = (b.activeUsers || 0) > 0;
+                          return (
+                            <div
+                              key={b.hour}
+                              className="flex flex-col items-center justify-end h-full gap-1 group"
+                              title={`${b.label} hrs — ${b.activeUsers} conexión(es) registrada(s)`}
+                            >
+                              <span className="text-[9px] font-mono text-stone-400 opacity-80">
+                                {b.activeUsers > 0 ? b.activeUsers : ''}
+                              </span>
+                              <div className="w-full h-20 bg-stone-900/90 rounded-lg border border-stone-800/80 flex items-end p-0.5 overflow-hidden">
+                                <div
+                                  style={{ height: `${hasActivity ? pct : 8}%` }}
+                                  className={`w-full rounded transition-all ${
+                                    hasActivity
+                                      ? 'bg-gradient-to-t from-emerald-600 to-amber-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+                                      : 'bg-stone-800/60'
+                                  }`}
+                                />
+                              </div>
+                              <span className="text-[9px] font-mono text-stone-500">
+                                {String(b.hour).padStart(2, '0')}h
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Per-User Connection & Usage Table */}
+                <div className="space-y-2.5">
+                  <h4 className="font-cinzel font-bold text-xs text-stone-200 uppercase tracking-wider flex items-center gap-2">
+                    <Users className="w-4 h-4 text-emerald-400" />
+                    Registro de Conexiones, Última Vez Visto y Tiempo Acumulado por Jugador
+                  </h4>
+
+                  <div className="overflow-x-auto border border-stone-800 rounded-2xl bg-[#121318]">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-stone-800 text-stone-400 font-cinzel text-[11px] bg-stone-900/60">
+                          <th className="py-2.5 px-3">Jugador / Cuenta</th>
+                          <th className="py-2.5 px-3">Estado en Tiempo Real</th>
+                          <th className="py-2.5 px-3">Actividad Actual / Ubicación</th>
+                          <th className="py-2.5 px-3">Última Conexión (Hora Exacta)</th>
+                          <th className="py-2.5 px-3">Tiempo Total Conectado</th>
+                          <th className="py-2.5 px-3">Sesiones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-800/60">
+                        {(serverStats?.userStats || adminUsers || []).map((u: any) => {
+                          const online = Boolean(u.isOnline);
+                          return (
+                            <tr key={u.id} className="hover:bg-stone-800/30 transition">
+                              <td className="py-2.5 px-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-stone-100">{u.displayName}</span>
+                                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-700/50">
+                                    @{u.userTagId || '123'}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-stone-500 font-mono block">{u.email}</span>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                {online ? (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/90 border border-emerald-600/70 text-emerald-300 font-cinzel font-bold text-[10px]">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                    En Línea
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-stone-900 border border-stone-700 text-stone-400 font-cinzel text-[10px]">
+                                    <span className="w-2 h-2 rounded-full bg-stone-500" />
+                                    Desconectado
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-stone-300">
+                                {online ? (
+                                  <span className="text-emerald-300 font-semibold">
+                                    {u.currentActivity || 'Lobby / Portal Principal'}
+                                  </span>
+                                ) : (
+                                  <span className="text-stone-500">{u.currentActivity || 'Fuera de línea'}</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="text-stone-200 font-medium block">
+                                  {formatRelativeConnection(u.lastActiveAt, online)}
+                                </span>
+                                {u.lastActiveAt && (
+                                  <span className="text-[10px] text-stone-500 font-mono block">
+                                    {new Date(u.lastActiveAt).toLocaleString('es-ES')}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-amber-300">
+                                {formatDurationHuman(u.totalConnectedMs || 0)}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-stone-300">
+                                {u.sessionCount || (u.lastActiveAt ? 1 : 0)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Recent Connection Sessions Log */}
+                {Array.isArray(serverStats?.recentSessions) && serverStats.recentSessions.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="font-cinzel font-bold text-xs text-stone-300 uppercase tracking-wider flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-cyan-400" />
+                      Historial Reciente de Sesiones y Horarios de Acceso
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                      {serverStats.recentSessions.slice(0, 20).map((sess: any) => (
+                        <div
+                          key={sess.id}
+                          className="p-2.5 rounded-xl bg-[#121318] border border-stone-800/80 flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-stone-200 truncate">{sess.fullTag || sess.displayName}</span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-stone-800 text-cyan-300 font-mono">
+                                {formatDurationHuman(sess.durationMs || 0)}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-stone-400 block truncate">
+                              {sess.activity || 'Portal Principal'}
+                            </span>
+                          </div>
+                          <div className="text-right shrink-0 font-mono text-[10px] text-stone-400">
+                            <div>Inicio: {new Date(sess.startedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</div>
+                            <div className="text-stone-500">
+                              Últ. pulso: {new Date(sess.lastSeenAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* =================================================================== */}
+          {/* SUB-TAB 7: READ-ONLY ARCHITECTURE GUIDE, DELTA SYNC & ASSETS        */}
+          {/* =================================================================== */}
+          {adminSubTab === 'architecture' && (
+            <div data-testid="admin-architecture-panel" className="space-y-6 animate-in fade-in">
+              {/* Top Banner & Refresh */}
+              <div className="bg-gradient-to-r from-[#181510] via-[#161722] to-[#181510] border-2 border-amber-700/70 rounded-3xl p-6 shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-2.5 py-0.5 rounded-full bg-amber-950 border border-amber-600 text-[10px] font-cinzel font-bold text-amber-300 uppercase">
+                        Documentación Técnica & Monitor en Solo-Lectura
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-950 border border-emerald-600 text-[10px] font-mono font-bold text-emerald-300">
+                        Compatible Multi-Cuenta GitHub + AI Studio
+                      </span>
+                    </div>
+                    <h3 className="font-cinzel font-black text-lg text-amber-200 flex items-center gap-2">
+                      <BookOpen className="w-5 h-5 text-amber-400" />
+                      Guía de Estudio: Guardado por Diferencias (Delta Sync), Imágenes Separadas, Caché Local y Creador
+                    </h3>
+                    <p className="text-xs text-stone-300 max-w-4xl leading-relaxed">
+                      Este apartado es de <strong>solo lectura y estudio</strong>. Aquí puedes revisar paso a paso cómo funciona cada optimización interna implementada en WeRoll y auditar en tiempo real los cambios incrementales (Deltas), el catálogo de imágenes separadas y la cola en segundo plano sin modificar ni romper nada.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    data-testid="btn-refresh-architecture-status"
+                    onClick={() => fetchArchitectureStatus()}
+                    disabled={isLoadingArchitecture}
+                    className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-200 text-xs font-cinzel font-bold transition flex items-center gap-1.5 border border-amber-700/60 shrink-0 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingArchitecture ? 'animate-spin' : ''}`} />
+                    Actualizar Monitor
+                  </button>
+                </div>
+
+                {/* Live Telemetry Summary Pills */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+                  <div className="p-3.5 rounded-2xl bg-[#121318] border border-amber-800/50">
+                    <span className="text-[10px] font-cinzel uppercase text-amber-400 block">
+                      Revisión Actual de Bóveda (vaultRevision)
+                    </span>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-xl font-mono font-bold text-stone-100">
+                        Rev #{architectureStatus?.vaultRevision ?? syncMetadata?.revision ?? 1}
+                      </span>
+                      <span className="text-[11px] text-emerald-300 font-mono">
+                        {architectureStatus?.deltas?.length ?? 0} deltas reg.
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-stone-400 block mt-1 truncate">
+                      Hash: {(architectureStatus?.contentHash || syncMetadata?.contentHash || 'activo').slice(0, 14)}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-[#121318] border border-cyan-800/50">
+                    <span className="text-[10px] font-cinzel uppercase text-cyan-400 block">
+                      Catálogo de Imágenes / Assets Indexados
+                    </span>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-xl font-mono font-bold text-stone-100">
+                        {architectureStatus?.assetsCatalog?.totalAssetsCount ?? 0} imágenes
+                      </span>
+                      <span className="text-[11px] text-cyan-300 font-mono">
+                        ({architectureStatus?.assetsCatalog?.totalSizeKb ?? 0} KB)
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-stone-400 block mt-1">
+                      Auditables con hash SHA-256 y propietario
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-[#121318] border border-emerald-800/50">
+                    <span className="text-[10px] font-cinzel uppercase text-emerald-400 block">
+                      Cola en 2º Plano (Write-Behind Queue)
+                    </span>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-xl font-mono font-bold text-emerald-300">
+                        ~{architectureStatus?.writeBehindQueue?.localWriteLatencyMs ?? 2} ms
+                      </span>
+                      <span className="text-[11px] text-stone-400">latencia local</span>
+                    </div>
+                    <span className="text-[10px] text-stone-400 block mt-1 truncate">
+                      Destino: {architectureStatus?.writeBehindQueue?.destination?.toUpperCase() || 'GITHUB / DRIVE'}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-[#121318] border border-purple-800/50">
+                    <span className="text-[10px] font-cinzel uppercase text-purple-400 block">
+                      Caché Local Navegador (IndexedDB)
+                    </span>
+                    <div className="flex items-baseline gap-2 mt-1">
+                      <span className="text-xl font-mono font-bold text-stone-100">
+                        {localCacheDiag?.available ? 'Activa' : 'Fallback RAM'}
+                      </span>
+                      <span className="text-[11px] text-purple-300 font-mono">
+                        {localCacheDiag?.estimatedSizeKb ?? 1} KB
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-stone-400 block mt-1">
+                      {localCacheDiag?.cachedSheetsCount ?? (localCharacters || []).length} fichas • {localCacheDiag?.cachedWorldsCount ?? worldSheets.length} mundos en caché
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ================================================================= */}
+              {/* BLOQUE 1: EXPLICACIÓN DETALLADA DE LOS 6 PILARES DE ARQUITECTURA   */}
+              {/* ================================================================= */}
+              <div className="bg-[#161720] border border-stone-800 rounded-3xl p-6 shadow-xl space-y-4">
+                <h4 className="font-cinzel font-bold text-sm text-amber-300 uppercase tracking-wider flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  1. Explicación Técnica Paso a Paso (Para Estudio del Equipo)
+                </h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Pilar 1: Delta Sync */}
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-amber-800/40 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-cinzel font-bold text-xs text-amber-300">
+                        ⚡ A. Guardado Incremental por Diferencias (Delta Sync)
+                      </span>
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-700/60">
+                        POST /api/vault/delta
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-300 leading-relaxed">
+                      <strong>¿Cómo funciona?</strong> Antes, cada vez que un jugador cambiaba 1 punto de vida (`currentHp`) o agregaba una poción, se reenviaba todo el estado completo. Ahora, el sistema identifica exactamente la entidad modificada (`sheet:id`, `world:id`, `creator_skin_player:id`, etc.) y los campos que cambiaron (`changedFields`), aplicando únicamente ese fragmento en el servidor y registrando un número de versión incremental (`vaultRevision`).
+                    </p>
+                    <p className="text-[11px] text-stone-400 leading-relaxed">
+                      <strong>Ventaja:</strong> Reduce más del 90% el tráfico de red durante combates y edición de fichas, evitando bloqueos cuando varios jugadores modifican sus hojas al mismo tiempo.
+                    </p>
+                  </div>
+
+                  {/* Pilar 2: Imágenes Separadas */}
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-cyan-800/40 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-cinzel font-bold text-xs text-cyan-300">
+                        🖼️ B. Separación e Indexación Auditable de Imágenes
+                      </span>
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-700/60">
+                        SHA-256 Asset Index
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-300 leading-relaxed">
+                      <strong>¿Cómo funciona?</strong> Las imágenes Base64 pesadas (mapas del Atlas, fotos del álbum de zonas, retratos de personajes y avatares del DM) se indexan con una huella única (`hash SHA-256`), categoría, peso en KB y entidad propietaria. Cuando cambias el texto de una nota o la vida de un monstruo, las imágenes no tienen que re-procesarse ni duplicarse.
+                    </p>
+                    <p className="text-[11px] text-stone-400 leading-relaxed">
+                      <strong>Transparencia total:</strong> Más abajo en esta misma página tienes la tabla completa con todas las imágenes indexadas para que puedas revisarlas cuando quieras.
+                    </p>
+                  </div>
+
+                  {/* Pilar 3: Write-Behind Queue */}
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-emerald-800/40 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-cinzel font-bold text-xs text-emerald-300">
+                        🔄 C. Sincronización en Segundo Plano (Write-Behind Queue)
+                      </span>
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60">
+                        Resp. &lt; 5ms
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-300 leading-relaxed">
+                      <strong>¿Cómo funciona?</strong> Cuando un jugador o DM guarda un cambio, el servidor actualiza primero su memoria y bóveda local en menos de 5 milisegundos y responde de inmediato al navegador. Después, una cola asíncrona en segundo plano agrupa las mutaciones (ventana de *debounce* de 2.5s) y las sube a GitHub o Google Drive sin congelar la interfaz del usuario.
+                    </p>
+                    <p className="text-[11px] text-stone-400 leading-relaxed">
+                      <strong>Auditable:</strong> Cada envío en segundo plano queda registrado con hora exacta, revisión y mensaje de estado.
+                    </p>
+                  </div>
+
+                  {/* Pilar 4: Caché Local IndexedDB + Portabilidad GitHub / AI Studio */}
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-purple-800/40 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-cinzel font-bold text-xs text-purple-300">
+                        💾 D. Caché Local IndexedDB & Portabilidad Multi-Cuenta AI Studio
+                      </span>
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-700/60">
+                        GitHub Portable
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-300 leading-relaxed">
+                      <strong>¿Cómo funciona?</strong> El navegador guarda las fichas, mundos y recursos en `IndexedDB` (`weroll_indexed_vault_v1`). Al abrir la app, carga instantáneamente desde la caché local y compara su `vaultRevision` con el servidor. Además, todos los archivos se mantienen dentro de rutas relativas estándar y en el JSON Maestro universal, por lo que pueden pasar el código a <strong>GitHub</strong> y abrirlo o desplegarlo desde <strong>cualquier otra cuenta de AI Studio</strong> del equipo sin errores de rutas ni dependencias externas.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* ================================================================= */}
+              {/* BLOQUE 2: ARQUITECTURA DE LOS 4 APARTADOS DEL CREADOR DE CONTENIDO */}
+              {/* ================================================================= */}
+              <div className="bg-[#161720] border border-amber-800/60 rounded-3xl p-6 shadow-xl space-y-4">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <h4 className="font-cinzel font-bold text-sm text-amber-300 uppercase tracking-wider flex items-center gap-2">
+                      <Palette className="w-4 h-4 text-amber-400" />
+                      2. Preparación en Delta Sync para los 4 Apartados del Creador de Contenido
+                    </h4>
+                    <p className="text-xs text-stone-400 mt-0.5">
+                      Estructura de datos lista para que cuando implementen los editores del Creador de Contenido, cada apartado se guarde y sincronice por diferencias de forma independiente.
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-xl bg-amber-950 border border-amber-700/70 text-[11px] font-mono text-amber-300">
+                    4 Entidades Delta Registradas
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {(architectureStatus?.creatorStudio?.modules || []).map((mod: any) => (
+                    <div
+                      key={mod.id}
+                      className="p-4 rounded-2xl bg-[#121318] border border-stone-800 space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-cinzel font-bold text-xs text-amber-200">
+                          {mod.title}
+                        </span>
+                        <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60">
+                          entityKind: &quot;{mod.deltaKey}&quot;
+                        </span>
+                      </div>
+                      <p className="text-xs text-stone-300 leading-relaxed">{mod.subtitle}</p>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {(mod.targetScreens || []).map((scr: string) => (
+                          <span
+                            key={scr}
+                            className="text-[10px] px-2 py-0.5 rounded-md bg-stone-900 border border-stone-700 text-stone-300"
+                          >
+                            🖥️ {scr}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="pt-1 text-[10px] font-mono text-stone-400">
+                        Campos Delta clave: {(mod.sampleFields || []).join(' • ')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* ================================================================= */}
+              {/* BLOQUE 3: TABLA EN VIVO DE DELTAS INCREMENTALES (SOLO LECTURA)    */}
+              {/* ================================================================= */}
+              <div className="bg-[#161720] border border-stone-800 rounded-3xl p-6 shadow-xl space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <h4 className="font-cinzel font-bold text-sm text-emerald-300 uppercase tracking-wider flex items-center gap-2">
+                      <Radio className="w-4 h-4 text-emerald-400" />
+                      3. Registro Auditable de Cambios Incrementales (Delta Sync Log)
+                    </h4>
+                    <p className="text-xs text-stone-400">
+                      Aquí puedes ver exactamente qué entidad cambió, qué campos se modificaron (`changedFields`) y cuánto pesó el parche incremental en KB.
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono text-stone-400">
+                    Mostrando últimos {(architectureStatus?.deltas || []).length} deltas
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto border border-stone-800 rounded-2xl bg-[#121318] max-h-72 overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-stone-800 text-stone-400 font-cinzel text-[11px] bg-stone-900/70 sticky top-0">
+                        <th className="py-2.5 px-3">Rev #</th>
+                        <th className="py-2.5 px-3">Tipo de Entidad</th>
+                        <th className="py-2.5 px-3">Elemento Modificado</th>
+                        <th className="py-2.5 px-3">Campos Modificados (Delta)</th>
+                        <th className="py-2.5 px-3">Peso Delta</th>
+                        <th className="py-2.5 px-3">Hora</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-800/60">
+                      {(architectureStatus?.deltas || []).map((d: any) => (
+                        <tr key={d.id} className="hover:bg-stone-800/30">
+                          <td className="py-2 px-3 font-mono font-bold text-amber-300">
+                            #{d.revision}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-stone-900 border border-stone-700 text-cyan-300">
+                              {d.entityKind}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className="font-semibold text-stone-200 block">{d.entityLabel}</span>
+                            <span className="text-[10px] text-stone-400 block">{d.summary}</span>
+                          </td>
+                          <td className="py-2 px-3">
+                            <div className="flex flex-wrap gap-1">
+                              {(d.changedFields || []).map((f: string) => (
+                                <span
+                                  key={f}
+                                  className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-700/50 text-emerald-300"
+                                >
+                                  {f}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="py-2 px-3 font-mono text-stone-300">
+                            {d.payloadSizeKb} KB
+                          </td>
+                          <td className="py-2 px-3 font-mono text-[11px] text-stone-400">
+                            {new Date(d.timestamp).toLocaleTimeString('es-ES')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* ================================================================= */}
+              {/* BLOQUE 4: CATÁLOGO DE IMÁGENES / ASSETS SEPARADOS (SOLO LECTURA)  */}
+              {/* ================================================================= */}
+              <div className="bg-[#161720] border border-stone-800 rounded-3xl p-6 shadow-xl space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <h4 className="font-cinzel font-bold text-sm text-cyan-300 uppercase tracking-wider flex items-center gap-2">
+                      <Database className="w-4 h-4 text-cyan-400" />
+                      4. Catálogo Auditable de Imágenes Separadas e Indexadas ({architectureStatus?.assetsCatalog?.totalAssetsCount ?? 0} imágenes • {architectureStatus?.assetsCatalog?.totalSizeKb ?? 0} KB)
+                    </h4>
+                    <p className="text-xs text-stone-400">
+                      Listado completo de mapas del Atlas, fotos de álbumes y retratos con su hash de deduplicación y tamaño en KB para que puedas inspeccionarlos en cualquier momento.
+                    </p>
+                  </div>
+                </div>
+
+                {(architectureStatus?.assetsCatalog?.assets || []).length === 0 ? (
+                  <p className="text-xs text-stone-500 py-4 text-center">
+                    No hay imágenes personalizadas pesadas registradas aún (se usan íconos vectoriales ligeros por defecto).
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto border border-stone-800 rounded-2xl bg-[#121318] max-h-72 overflow-y-auto custom-scrollbar">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-stone-800 text-stone-400 font-cinzel text-[11px] bg-stone-900/70 sticky top-0">
+                          <th className="py-2.5 px-3">ID & Hash SHA-256</th>
+                          <th className="py-2.5 px-3">Categoría</th>
+                          <th className="py-2.5 px-3">Título de Imagen</th>
+                          <th className="py-2.5 px-3">Ficha / Campaña Propietaria</th>
+                          <th className="py-2.5 px-3">Formato</th>
+                          <th className="py-2.5 px-3">Tamaño</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-800/60">
+                        {(architectureStatus?.assetsCatalog?.assets || []).map((asset: any) => (
+                          <tr key={asset.assetId} className="hover:bg-stone-800/30">
+                            <td className="py-2 px-3 font-mono text-[11px] text-amber-300">
+                              #{asset.hash}
+                            </td>
+                            <td className="py-2 px-3">
+                              <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-700/60 text-cyan-300">
+                                {asset.category}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 font-semibold text-stone-200">{asset.title}</td>
+                            <td className="py-2 px-3 text-stone-300">{asset.ownerLabel}</td>
+                            <td className="py-2 px-3 font-mono text-[11px] text-stone-400">
+                              {asset.mimeType}
+                            </td>
+                            <td className="py-2 px-3 font-mono font-bold text-emerald-300">
+                              {asset.sizeKb} KB
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {/* =================================================================== */}

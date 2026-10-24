@@ -653,12 +653,13 @@ export function stepInitiativeTurn(
 export interface AtlasBreadcrumbSegment {
   label: string;
   folderPath: string;
+  fullPath: string;
   depth: number;
 }
 
 export function buildAtlasBreadcrumbs(selectedFolder: string): AtlasBreadcrumbSegment[] {
   const crumbs: AtlasBreadcrumbSegment[] = [
-    { label: 'Mundo', folderPath: 'all', depth: 0 },
+    { label: 'Mundo', folderPath: 'all', fullPath: 'all', depth: 0 },
   ];
 
   const clean = String(selectedFolder || '').trim();
@@ -677,11 +678,146 @@ export function buildAtlasBreadcrumbs(selectedFolder: string): AtlasBreadcrumbSe
     crumbs.push({
       label: part,
       folderPath: cumulative,
+      fullPath: cumulative,
       depth: idx + 1,
     });
   });
 
   return crumbs;
+}
+
+export function getParentAtlasFolder(selectedFolder: string): string {
+  const crumbs = buildAtlasBreadcrumbs(selectedFolder);
+  if (crumbs.length <= 1) return 'all';
+  return crumbs[crumbs.length - 2].folderPath || 'all';
+}
+
+export function getParentPlaceDisplayName(selectedFolder: string, worldName?: string): string {
+  const crumbs = buildAtlasBreadcrumbs(selectedFolder);
+  if (crumbs.length <= 1) {
+    return worldName?.trim() || 'Mundo';
+  }
+  const parentCrumb = crumbs[crumbs.length - 2];
+  if (!parentCrumb || parentCrumb.folderPath === 'all') {
+    return worldName?.trim() || 'Mundo';
+  }
+  return parentCrumb.label || 'Mundo';
+}
+
+export function getReturnToParentButtonLabel(selectedFolder: string, worldName?: string): string {
+  const parentName = getParentPlaceDisplayName(selectedFolder, worldName);
+  return `Regresar a ${parentName}`;
+}
+
+export interface VisualQueueItemPure {
+  queueId: string;
+  id: string;
+  sourceId?: string;
+  kind: 'map' | 'album' | 'tactical';
+  title: string;
+  imageUrl: string;
+  folder: string;
+  addedAt: number;
+}
+
+export function enqueueVisualItem(
+  queue: VisualQueueItemPure[] | undefined | null,
+  item: {
+    queueId?: string;
+    id?: string;
+    sourceId?: string;
+    kind: 'map' | 'album' | 'tactical';
+    title: string;
+    imageUrl?: string;
+    folder?: string;
+    addedAt?: number;
+  }
+): VisualQueueItemPure[] {
+  const safeQueue = Array.isArray(queue) ? [...queue] : [];
+  const cleanId = String(item.id || item.sourceId || `vis-${Date.now()}`).trim();
+  const cleanTitle = String(item.title || 'Visual').trim();
+  const cleanFolder = String(item.folder || 'all').trim() || 'all';
+  const cleanUrl = String(item.imageUrl || '').trim();
+
+  // Avoid duplicate if exact same id + kind is already in the queue
+  const existingIdx = safeQueue.findIndex(
+    (q) => (q.id === cleanId || q.sourceId === cleanId) && q.kind === item.kind
+  );
+  if (existingIdx !== -1) {
+    const updated = [...safeQueue];
+    updated[existingIdx] = {
+      ...updated[existingIdx],
+      title: cleanTitle,
+      imageUrl: cleanUrl,
+      folder: cleanFolder,
+    };
+    return updated;
+  }
+
+  const nextItem: VisualQueueItemPure = {
+    queueId: item.queueId || `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: cleanId,
+    sourceId: cleanId,
+    kind: item.kind,
+    title: cleanTitle,
+    imageUrl: cleanUrl,
+    folder: cleanFolder,
+    addedAt: item.addedAt || Date.now(),
+  };
+
+  return [...safeQueue, nextItem];
+}
+
+export function removeVisualFromQueue(
+  queue: VisualQueueItemPure[] | undefined | null,
+  queueIdOrItemId: string
+): VisualQueueItemPure[] {
+  const safeQueue = Array.isArray(queue) ? queue : [];
+  const target = String(queueIdOrItemId || '').trim();
+  if (!target) return safeQueue;
+  return safeQueue.filter(
+    (q) => q.queueId !== target && q.id !== target && q.sourceId !== target
+  );
+}
+
+export interface TacticalTokenPure {
+  id: string;
+  label: string;
+  kind: 'player' | 'monster' | 'npc' | 'enemy';
+  x?: number;
+  y?: number;
+  col?: number;
+  row?: number;
+  color?: string;
+  avatarUrl?: string;
+  linkedId?: string;
+}
+
+export function moveTacticalTokenOnGrid(
+  tokens: TacticalTokenPure[] | undefined | null,
+  tokenId: string,
+  targetX: number,
+  targetY: number,
+  gridCols: number = 10,
+  gridRows: number = 8
+): TacticalTokenPure[] {
+  const safeTokens = Array.isArray(tokens) ? tokens : [];
+  const safeCols = Math.max(2, Math.min(30, Number(gridCols) || 10));
+  const safeRows = Math.max(2, Math.min(30, Number(gridRows) || 8));
+  const clampedX = Math.max(0, Math.min(safeCols - 1, Math.round(Number(targetX) || 0)));
+  const clampedY = Math.max(0, Math.min(safeRows - 1, Math.round(Number(targetY) || 0)));
+
+  return safeTokens.map((t) =>
+    t.id === tokenId
+      ? {
+          ...t,
+          x: clampedX,
+          y: clampedY,
+          col: clampedX,
+          row: clampedY,
+        }
+      : t
+  );
 }
 
 export function ensureCompleteFolderHierarchy(rawFolders: string[]): string[] {
@@ -869,16 +1005,19 @@ export function canAddEnemyToEncounter(
 
 export interface LiveProjectionWorkspaceInput {
   activeAtlasFolder?: string;
+  autoSyncLiveOnZoneChange?: boolean;
   atlasMaps?: Record<string, string>;
+  tacticalTokensByMapId?: Record<string, TacticalTokenPure[]>;
   activeLiveVisual?: {
     kind: 'map' | 'album' | 'photo' | 'tactical';
     id: string;
     title: string;
-    imageUrl: string;
+    imageUrl?: string;
     folder?: string;
   } | null;
   activeSessionVisual?: {
     kind?: 'map' | 'album' | 'photo' | 'tactical';
+    id?: string;
     title?: string;
     imageUrl?: string;
   } | null;
@@ -887,6 +1026,9 @@ export interface LiveProjectionWorkspaceInput {
     name?: string;
     folder?: string;
     mapImageUrl?: string;
+    gridCols?: number;
+    gridRows?: number;
+    tacticalTokens?: TacticalTokenPure[];
   }[];
   placeAlbumPhotos?: {
     id: string;
@@ -903,13 +1045,21 @@ export function buildLiveProjectionFromWorkspace(
 ): {
   locationName: string;
   locationFolder: string;
+  visualId?: string;
   visualKind: 'map' | 'photo' | 'tactical';
   visualTitle: string;
   visualImageUrl: string;
+  gridCols?: number;
+  gridRows?: number;
+  tacticalTokens?: TacticalTokenPure[];
   galleryPhotos: { id: string; title: string; imageUrl: string; placePath?: string }[];
 } {
+  const preferLiveVisualFolder =
+    !targetWs?.autoSyncLiveOnZoneChange && Boolean(targetWs?.activeLiveVisual?.folder);
   const rawFolder = String(
-    targetWs?.activeAtlasFolder || targetWs?.activeLiveVisual?.folder || 'all'
+    (preferLiveVisualFolder
+      ? targetWs?.activeLiveVisual?.folder
+      : targetWs?.activeAtlasFolder || targetWs?.activeLiveVisual?.folder) || 'all'
   ).trim();
   const activeFolder = !rawFolder || rawFolder === 'Todos' ? 'all' : rawFolder;
 
@@ -952,6 +1102,7 @@ export function buildLiveProjectionFromWorkspace(
   let visualKind: 'map' | 'photo' | 'tactical' = 'map';
   let visualTitle = locationName;
   let visualImageUrl = '';
+  let visualId = activeVisual?.id || `map-${activeFolder}`;
 
   if (activeVisual && activeVisual.imageUrl) {
     visualKind = normalizedKind(activeVisual.kind);
@@ -965,18 +1116,31 @@ export function buildLiveProjectionFromWorkspace(
     visualKind = 'photo';
     visualTitle = galleryPhotos[0].title || locationName;
     visualImageUrl = galleryPhotos[0].imageUrl;
+    visualId = galleryPhotos[0].id;
   } else if (activeVisual) {
     visualKind = normalizedKind(activeVisual.kind);
     visualTitle = activeVisual.title || locationName;
     visualImageUrl = '';
   }
 
+  const matchedTacticalLoc = (targetWs?.locations || []).find(
+    (l) => l.id === visualId || l.name === visualTitle
+  );
+  const resolvedTokens =
+    targetWs?.tacticalTokensByMapId?.[visualId] ||
+    matchedTacticalLoc?.tacticalTokens ||
+    [];
+
   return {
     locationName,
     locationFolder: activeFolder,
+    visualId,
     visualKind,
     visualTitle,
     visualImageUrl,
+    gridCols: matchedTacticalLoc?.gridCols || 10,
+    gridRows: matchedTacticalLoc?.gridRows || 8,
+    tacticalTokens: resolvedTokens,
     galleryPhotos: galleryPhotos.slice(0, 12).map((p) => ({
       id: p.id,
       title: p.title,

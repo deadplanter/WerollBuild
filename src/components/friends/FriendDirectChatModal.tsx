@@ -34,47 +34,78 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
   const [isSending, setIsSending] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const lastMsgIdRef = useRef<string>('');
-
-  const fetchMessages = useCallback(async (silent = false) => {
-    if (!currentUser?.id || !friend?.id) return;
-    if (!silent) setIsLoading(true);
-    try {
-      const res = await fetch(
-        `/api/friends/messages?userId=${encodeURIComponent(currentUser.id)}&friendId=${encodeURIComponent(friend.id)}&_t=${Date.now()}`,
-        { cache: 'no-store' }
-      );
-      const data = await res.json();
-      if (res.ok && Array.isArray(data.messages)) {
-        setMessages((prev) => {
-          const prevLast = prev[prev.length - 1]?.id || '';
-          const nextLast = data.messages[data.messages.length - 1]?.id || '';
-          if (prev.length === data.messages.length && prevLast === nextLast) {
-            return prev;
-          }
-          return data.messages;
-        });
-        if (onMessagesUpdated) {
-          onMessagesUpdated();
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      if (!silent) setIsLoading(false);
-    }
-  }, [currentUser?.id, friend?.id, onMessagesUpdated]);
+  const loadedFriendIdRef = useRef<string>('');
+  const onMessagesUpdatedRef = useRef<(() => void) | undefined>(onMessagesUpdated);
 
   useEffect(() => {
-    if (!isOpen || !friend) return;
-    lastMsgIdRef.current = '';
-    fetchMessages(false);
+    onMessagesUpdatedRef.current = onMessagesUpdated;
+  }, [onMessagesUpdated]);
 
-    // Poll every 1.5 seconds for live real-time conversation updates
-    const timer = setInterval(() => {
+  const fetchMessages = useCallback(
+    async (silent = false) => {
+      if (!currentUser?.id || !friend?.id) return;
+      const isFirstLoadForFriend = loadedFriendIdRef.current !== friend.id;
+      if (!silent && isFirstLoadForFriend) {
+        setIsLoading(true);
+      }
+      try {
+        const res = await fetch(
+          `/api/friends/messages?userId=${encodeURIComponent(currentUser.id)}&friendId=${encodeURIComponent(friend.id)}&_t=${Date.now()}`,
+          { cache: 'no-store' }
+        );
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.messages)) {
+          loadedFriendIdRef.current = friend.id;
+          let listChanged = false;
+          setMessages((prev) => {
+            const prevLast = prev[prev.length - 1]?.id || '';
+            const nextLast = data.messages[data.messages.length - 1]?.id || '';
+            if (prev.length === data.messages.length && prevLast === nextLast) {
+              return prev;
+            }
+            listChanged = true;
+            return data.messages;
+          });
+          if ((listChanged || data.markedRead) && onMessagesUpdatedRef.current) {
+            onMessagesUpdatedRef.current();
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [currentUser?.id, friend?.id]
+  );
+
+  useEffect(() => {
+    if (!isOpen || !friend?.id || !currentUser?.id) return;
+    if (loadedFriendIdRef.current !== friend.id) {
+      lastMsgIdRef.current = '';
+      fetchMessages(false);
+    } else {
       fetchMessages(true);
-    }, 1500);
+    }
 
-    // Listen to BroadcastChannel for instant updates across browser tabs/windows
+    // Event-driven signal check: only fetch full messages when the sender triggers a new message signal
+    const checkNewMessageSignal = async () => {
+      try {
+        const res = await fetch(
+          `/api/friends/messages/signal?userId=${encodeURIComponent(currentUser.id)}&friendId=${encodeURIComponent(friend.id)}`,
+          { cache: 'no-store' }
+        );
+        if (!res.ok) return;
+        const sig = await res.json();
+        if (sig && sig.lastMessageId && sig.lastMessageId !== lastMsgIdRef.current) {
+          fetchMessages(true);
+        }
+      } catch {}
+    };
+
+    const signalTimer = setInterval(checkNewMessageSignal, 2500);
+
+    // Listen to BroadcastChannel for instant push activation when a message is sent
     let channel: BroadcastChannel | null = null;
     try {
       if (typeof BroadcastChannel !== 'undefined') {
@@ -93,7 +124,7 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
     } catch {}
 
     return () => {
-      clearInterval(timer);
+      clearInterval(signalTimer);
       if (channel) {
         try {
           channel.close();
@@ -132,6 +163,7 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.message) {
+        lastMsgIdRef.current = data.message.id;
         setMessages((prev) => {
           if (prev.some((m) => m.id === data.message.id)) return prev;
           return [...prev, data.message];
@@ -144,12 +176,13 @@ export const FriendDirectChatModal: React.FC<FriendDirectChatModalProps> = ({
               fromUserId: currentUser.id,
               toUserId: friend.id,
               messageId: data.message.id,
+              timestamp: Date.now(),
             });
             ch.close();
           }
         } catch {}
-        if (onMessagesUpdated) {
-          onMessagesUpdated();
+        if (onMessagesUpdatedRef.current) {
+          onMessagesUpdatedRef.current();
         }
       }
     } catch (e) {

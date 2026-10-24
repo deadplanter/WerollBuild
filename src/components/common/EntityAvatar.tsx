@@ -29,10 +29,11 @@ export interface EntityAvatarProps {
   customUrl?: string;
   avatarCustomUrl?: string;
   legacyAvatarUrl?: string;
+  legacyUrl?: string;
   iconId?: string;
   avatarIcon?: string;
   name?: string;
-  category?: 'npc' | 'monster' | 'location' | 'character';
+  category?: 'npc' | 'monster' | 'location' | 'character' | 'player';
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   className?: string;
   iconClassName?: string;
@@ -45,6 +46,7 @@ export const EntityAvatar: React.FC<EntityAvatarProps> = ({
   customUrl,
   avatarCustomUrl,
   legacyAvatarUrl,
+  legacyUrl,
   iconId,
   avatarIcon,
   category,
@@ -54,7 +56,7 @@ export const EntityAvatar: React.FC<EntityAvatarProps> = ({
   onClick,
   title,
 }) => {
-  const resolvedUrl = customUrl || avatarCustomUrl || legacyAvatarUrl;
+  const resolvedUrl = customUrl || avatarCustomUrl || legacyAvatarUrl || legacyUrl;
   const resolvedIcon =
     iconId ||
     avatarIcon ||

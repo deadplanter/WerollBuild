@@ -9,6 +9,7 @@ import {
   Plus,
   Trash2,
   Folder,
+  FolderOpen,
   Radio,
   Eye,
   EyeOff,
@@ -38,6 +39,10 @@ import {
   Camera,
   Move,
   Scroll,
+  Settings,
+  ListPlus,
+  Sliders,
+  Crosshair,
 } from 'lucide-react';
 import { EntityAvatar } from '../common/EntityAvatar';
 import { AvatarCustomizerModal } from '../common/AvatarCustomizerModal';
@@ -56,6 +61,8 @@ import {
   PartyMemberLive,
   PlayerMessageToDM,
   PlaceAlbumPhoto,
+  ZoneMapRecord,
+  VisualQueueItem,
 } from '../../types/dnd';
 import {
   rollDiceExpression,
@@ -67,6 +74,10 @@ import {
   filterAlbumPhotosByPlace,
   MAX_ENCOUNTER_ENEMIES,
   canAddEnemyToEncounter,
+  getParentAtlasFolder,
+  getReturnToParentButtonLabel,
+  enqueueVisualItem,
+  removeVisualFromQueue,
 } from '../../utils/dnd-math';
 import { soundFx } from '../../utils/audio';
 import { FolderManagerModal } from './FolderManagerModal';
@@ -87,6 +98,13 @@ interface DMScreenViewProps {
   onSaveToCloud?: () => void;
   worldName?: string;
   roomCode?: string;
+  roomPassword?: string;
+  onUpdateTableSettings?: (updates: {
+    name: string;
+    roomCode: string;
+    roomPassword?: string;
+    roomMode?: 'online' | 'offline';
+  }) => Promise<void> | void;
   partyMembers?: PartyMemberLive[];
   playerMessages?: PlayerMessageToDM[];
   onDeletePlayerMessage?: (messageId: string) => void;
@@ -95,6 +113,8 @@ interface DMScreenViewProps {
   recentRollsCount?: number;
   isOfflineMode?: boolean;
   onToggleOfflineMode?: (offline: boolean) => void;
+  isOnlineSession?: boolean;
+  onToggleOnlineSession?: () => void;
   onOpenTableMapView?: () => void;
   onDmAdjustPlayer?: (
     characterId: string,
@@ -114,6 +134,8 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   onSaveToCloud,
   worldName,
   roomCode,
+  roomPassword,
+  onUpdateTableSettings,
   partyMembers = [],
   playerMessages,
   onDeletePlayerMessage,
@@ -122,9 +144,15 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   recentRollsCount = 0,
   isOfflineMode = false,
   onToggleOfflineMode,
+  isOnlineSession: isOnlineSessionProp,
+  onToggleOnlineSession: onToggleOnlineSessionProp,
   onOpenTableMapView,
   onDmAdjustPlayer,
 }) => {
+  const isOnlineSession = isOnlineSessionProp !== undefined ? isOnlineSessionProp : !isOfflineMode;
+  const onToggleOnlineSession =
+    onToggleOnlineSessionProp ||
+    (onToggleOfflineMode ? () => onToggleOfflineMode(!isOfflineMode) : undefined);
   // Active Deck in "BARAJAS EN: <Lugar>" & Horizontal Card Carousel Index
   const [activeDeck, setActiveDeck] = useState<'npcs' | 'monsters' | 'items'>('npcs');
   const [dmDeckScrollIndex, setDmDeckScrollIndex] = useState<number>(0);
@@ -132,20 +160,21 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
     () => workspace.activeAtlasFolder || 'all'
   );
   const setSelectedFolder = (folder: string) => {
-    setSelectedFolderState(folder);
+    const cleanFolder = String(folder || 'all').trim() || 'all';
+    setSelectedFolderState(cleanFolder);
     const shortName =
-      folder === 'all'
+      cleanFolder === 'all'
         ? worldName || 'Mundo Completo'
-        : folder.split('/').map((s) => s.trim()).filter(Boolean).pop() || folder;
-    const mapForPlace = workspace.atlasMaps?.[folder] || '';
-    const photosForPlace = filterAlbumPhotosByPlace(workspace.placeAlbumPhotos || [], folder);
+        : cleanFolder.split('/').map((s) => s.trim()).filter(Boolean).pop() || cleanFolder;
+    const mapForPlace = workspace.atlasMaps?.[cleanFolder] || '';
+    const photosForPlace = filterAlbumPhotosByPlace(workspace.placeAlbumPhotos || [], cleanFolder);
     const nextVisual = mapForPlace
       ? {
           kind: 'map' as const,
-          id: `map-${folder}`,
+          id: `map-${cleanFolder}`,
           title: `Mapa: ${shortName}`,
           imageUrl: mapForPlace,
-          folder,
+          folder: cleanFolder,
         }
       : photosForPlace[0]
       ? {
@@ -153,23 +182,52 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
           id: photosForPlace[0].id,
           title: photosForPlace[0].title,
           imageUrl: photosForPlace[0].imageUrl,
-          folder,
+          folder: cleanFolder,
         }
       : {
           kind: 'map' as const,
-          id: `map-${folder}`,
+          id: `map-${cleanFolder}`,
           title: shortName,
           imageUrl: '',
-          folder,
+          folder: cleanFolder,
         };
     onUpdateWorkspace({
       ...workspace,
-      activeAtlasFolder: folder,
-      activeLiveVisual: nextVisual,
+      activeAtlasFolder: cleanFolder,
+      dmPreviewVisual: nextVisual,
+      activeLiveVisual:
+        workspace.autoSyncLiveOnZoneChange || !workspace.activeLiveVisual
+          ? nextVisual
+          : workspace.activeLiveVisual,
     });
   };
   const [isFolderManagerOpen, setIsFolderManagerOpen] = useState<boolean>(false);
-  const [isSkinsModalOpen, setIsSkinsModalOpen] = useState<boolean>(false);
+  const [isDmTableSettingsModalOpen, setIsDmTableSettingsModalOpen] = useState<boolean>(false);
+  const [settingsNameDraft, setSettingsNameDraft] = useState<string>(worldName || 'Campaña');
+  const [settingsCodeDraft, setSettingsCodeDraft] = useState<string>(roomCode || 'MESA-1');
+  const [settingsPasswordDraft, setSettingsPasswordDraft] = useState<string>(roomPassword || '');
+
+  const openDmTableSettingsModal = () => {
+    setSettingsNameDraft(worldName || 'Campaña');
+    setSettingsCodeDraft(roomCode || 'MESA-1');
+    setSettingsPasswordDraft(roomPassword || '');
+    setIsDmTableSettingsModalOpen(true);
+  };
+
+  const handleSaveDmTableSettings = async () => {
+    if (onUpdateTableSettings) {
+      await onUpdateTableSettings({
+        name: settingsNameDraft.trim() || worldName || 'Campaña',
+        roomCode: settingsCodeDraft.trim().toUpperCase() || roomCode || 'MESA-1',
+        roomPassword: settingsPasswordDraft.trim(),
+        roomMode: isOnlineSession ? 'online' : 'offline',
+      });
+    }
+    setIsDmTableSettingsModalOpen(false);
+    setLiveMapToast('⚙️ Ajustes de la mesa guardados');
+    setTimeout(() => setLiveMapToast(''), 2500);
+  };
+
   const [inspectedPartyMemberId, setInspectedPartyMemberId] = useState<string | null>(null);
   const inspectedPartyMember =
     partyMembers.find((pm) => pm.characterId === inspectedPartyMemberId) || null;
@@ -209,20 +267,51 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   const [isInitiativeDetailModalOpen, setIsInitiativeDetailModalOpen] = useState<boolean>(false);
   const [selectedWarSummary, setSelectedWarSummary] = useState<CombatSummary | null>(null);
 
-  // Square Map Editor & Pin Mover Modal State (1:1 Square Map per Place)
+  // Square Map Editor & Multiple Zone Maps Modal State (1:1 Square Map + ZoneMaps per Place)
   const [isAtlasMapModalOpen, setIsAtlasMapModalOpen] = useState<boolean>(false);
   const [selectedPinToMove, setSelectedPinToMove] = useState<string | null>(null);
   const [mapCustomUrlInput, setMapCustomUrlInput] = useState<string>('');
+  const [mapCustomTitleInput, setMapCustomTitleInput] = useState<string>('');
   const [newQuickSubPlaceName, setNewQuickSubPlaceName] = useState<string>('');
+  const [zoneMapTitleInput, setZoneMapTitleInput] = useState<string>('');
+  const [zoneMapUrlInput, setZoneMapUrlInput] = useState<string>('');
+  const [zoneMapUploadDraftUrl, setZoneMapUploadDraftUrl] = useState<string>('');
+  const [editingZoneMapId, setEditingZoneMapId] = useState<string | null>(null);
+  const [editZoneMapDraft, setEditZoneMapDraft] = useState<{
+    title: string;
+    imageUrl: string;
+    folder: string;
+  }>({ title: '', imageUrl: '', folder: 'General' });
 
-  // Place Photo Album & Tactical Maps Tab State
-  const [atlasBottomTab, setAtlasBottomTab] = useState<'album' | 'tactical'>('album');
+  // Place Photo Album & Tactical Maps Modal State
   const [isAlbumModalOpen, setIsAlbumModalOpen] = useState<boolean>(false);
+  const [isTacticalMapsModalOpen, setIsTacticalMapsModalOpen] = useState<boolean>(false);
   const [isLivePreviewModalOpen, setIsLivePreviewModalOpen] = useState<boolean>(false);
   const [albumTitleInput, setAlbumTitleInput] = useState<string>('');
   const [albumDescInput, setAlbumDescInput] = useState<string>('');
   const [albumUrlInput, setAlbumUrlInput] = useState<string>('');
   const [albumUploadDraftUrl, setAlbumUploadDraftUrl] = useState<string>('');
+  const [editingAlbumPhotoId, setEditingAlbumPhotoId] = useState<string | null>(null);
+  const [editAlbumDraft, setEditAlbumDraft] = useState<{
+    title: string;
+    imageUrl: string;
+    folder: string;
+  }>({ title: '', imageUrl: '', folder: 'General' });
+
+  // Tactical Map Create / Edit State inside Tactical Maps Modal
+  const [tacticalTitleInput, setTacticalTitleInput] = useState<string>('');
+  const [tacticalUrlInput, setTacticalUrlInput] = useState<string>('');
+  const [tacticalUploadDraftUrl, setTacticalUploadDraftUrl] = useState<string>('');
+  const [tacticalColsInput, setTacticalColsInput] = useState<number>(10);
+  const [tacticalRowsInput, setTacticalRowsInput] = useState<number>(8);
+  const [editingTacticalMapId, setEditingTacticalMapId] = useState<string | null>(null);
+  const [editTacticalDraft, setEditTacticalDraft] = useState<{
+    name: string;
+    mapImageUrl: string;
+    folder?: string;
+    gridCols: number;
+    gridRows: number;
+  }>({ name: '', mapImageUrl: '', folder: 'General', gridCols: 10, gridRows: 10 });
 
   // Moving Entity Folder Modal state
   const [movingEntity, setMovingEntity] = useState<{
@@ -417,17 +506,40 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   );
 
   // Custom map image uploaded specifically for the current place (or 'all' for Mundo)
+  const currentPlaceMapKey = selectedFolder;
   const currentPlaceMapUrl = useMemo(() => {
     const customMap = workspace.atlasMaps?.[selectedFolder];
     if (customMap && customMap.trim()) return customMap;
     return '';
   }, [workspace.atlasMaps, selectedFolder]);
 
-  // Filtered Album Photos by selected place (cumulative: Mundo shows all, Taberna shows Taberna & its sub-places)
+  // Filtered Album Photos, Zone Maps & Tactical Maps by selected place
   const filteredAlbumPhotos = useMemo(
     () => filterAlbumPhotosByPlace(workspace.placeAlbumPhotos || [], selectedFolder),
     [workspace.placeAlbumPhotos, selectedFolder]
   );
+
+  const filteredZoneMaps = useMemo(
+    () => filterAlbumPhotosByPlace(workspace.zoneMaps || [], selectedFolder),
+    [workspace.zoneMaps, selectedFolder]
+  );
+
+  const filteredTacticalMaps = useMemo(
+    () =>
+      filterAlbumPhotosByPlace(
+        (workspace.locations || []).filter(
+          (l) =>
+            Boolean(l.mapImageUrl) ||
+            l.type === 'Zona Táctica' ||
+            l.type === 'Mapa Táctico' ||
+            Boolean(l.gridCols)
+        ),
+        selectedFolder
+      ),
+    [workspace.locations, selectedFolder]
+  );
+
+  const visualQueue = useMemo(() => workspace.visualQueue || [], [workspace.visualQueue]);
 
   const activeProjectedLocation = useMemo(() => {
     return (
@@ -460,33 +572,118 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
     };
   }, [workspace.activeLiveVisual, filteredAlbumPhotos, activeProjectedLocation, currentPlaceShortName, currentPlaceMapUrl, selectedFolder]);
 
-  // ==================== ATLAS MAP, PIN POSITION & ALBUM ACTIONS ====================
+  // ==================== ATLAS MAP, PIN POSITION, TACTICAL MAPS, ALBUM & QUEUE ACTIONS ====================
+
+  const handleAddVisualToQueue = (item: {
+    id?: string;
+    sourceId?: string;
+    kind: 'map' | 'album' | 'tactical';
+    title: string;
+    imageUrl?: string;
+    folder?: string;
+  }) => {
+    const nextQueue = enqueueVisualItem(workspace.visualQueue, {
+      id: item.id || item.sourceId || `vis-${Date.now()}`,
+      sourceId: item.sourceId || item.id,
+      kind: item.kind,
+      title: item.title,
+      imageUrl: item.imageUrl || '',
+      folder: item.folder || selectedFolder,
+    });
+    onUpdateWorkspace({
+      ...workspace,
+      visualQueue: nextQueue,
+    });
+    setLiveMapToast(`📋 Añadido a la Cola (${nextQueue.length}): ${item.title}`);
+    setTimeout(() => setLiveMapToast(''), 2500);
+  };
+
+  const handleAddToVisualQueue = handleAddVisualToQueue;
+
+  const handleRemoveVisualItemFromQueue = (queueIdOrId: string) => {
+    const nextQueue = removeVisualFromQueue(workspace.visualQueue, queueIdOrId);
+    onUpdateWorkspace({
+      ...workspace,
+      visualQueue: nextQueue,
+    });
+  };
 
   const handleUploadAtlasMapFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const dataUrl = await compressImageFileToDataUrl(file, 900, 0.86);
+      const baseTitle =
+        mapCustomTitleInput.trim() ||
+        file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ') ||
+        `Mapa: ${currentPlaceShortName}`;
+      const newMapRec: ZoneMapRecord = {
+        id: `zmap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title: baseTitle,
+        imageUrl: dataUrl,
+        folder: selectedFolder,
+        isCover: true,
+        createdAt: Date.now(),
+      };
       onUpdateWorkspace({
         ...workspace,
         atlasMaps: {
           ...(workspace.atlasMaps || {}),
           [selectedFolder]: dataUrl,
         },
-        activeLiveVisual: {
+        zoneMaps: [newMapRec, ...(workspace.zoneMaps || [])],
+        dmPreviewVisual: {
           kind: 'map',
-          id: `map-${selectedFolder}`,
-          title: `Mapa: ${currentPlaceShortName}`,
+          id: newMapRec.id,
+          title: newMapRec.title,
           imageUrl: dataUrl,
           folder: selectedFolder,
         },
       });
-      setLiveMapToast(`Mapa de "${currentPlaceShortName}" actualizado y proyectado en vivo`);
+      setMapCustomTitleInput('');
+      setLiveMapToast(`🗺️ Mapa "${baseTitle}" guardado en ${currentPlaceShortName}`);
       setTimeout(() => setLiveMapToast(''), 2500);
     } catch {
       // Ignore invalid image
     }
     e.target.value = '';
+  };
+
+  const handleUploadZoneMapFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file, 900, 0.86);
+      setZoneMapUploadDraftUrl(dataUrl);
+      setZoneMapUrlInput(dataUrl);
+      if (!zoneMapTitleInput.trim()) {
+        const baseName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+        setZoneMapTitleInput(baseName || `Mapa de ${currentPlaceShortName}`);
+      }
+    } catch {}
+    e.target.value = '';
+  };
+
+  const handleSaveNewZoneMap = () => {
+    const finalUrl = (zoneMapUploadDraftUrl || zoneMapUrlInput).trim();
+    if (!finalUrl) return;
+    const finalTitle = zoneMapTitleInput.trim() || `Mapa de ${currentPlaceShortName}`;
+    const newMapRec: ZoneMapRecord = {
+      id: `zmap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title: finalTitle,
+      imageUrl: finalUrl,
+      folder: selectedFolder === 'all' ? 'General' : selectedFolder,
+      createdAt: Date.now(),
+    };
+    onUpdateWorkspace({
+      ...workspace,
+      zoneMaps: [newMapRec, ...(workspace.zoneMaps || [])],
+    });
+    setZoneMapTitleInput('');
+    setZoneMapUrlInput('');
+    setZoneMapUploadDraftUrl('');
+    setLiveMapToast(`🗺️ Mapa "${finalTitle}" añadido a ${currentPlaceShortName}`);
+    setTimeout(() => setLiveMapToast(''), 2500);
   };
 
   const handleSetAtlasMapUrl = (url: string) => {
@@ -497,16 +694,66 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
     } else {
       delete nextMaps[selectedFolder];
     }
+    const baseTitle = mapCustomTitleInput.trim() || `Mapa: ${currentPlaceShortName}`;
+    const nextZoneMaps = clean
+      ? [
+          {
+            id: `zmap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            title: baseTitle,
+            imageUrl: clean,
+            folder: selectedFolder,
+            isCover: true,
+            createdAt: Date.now(),
+          },
+          ...(workspace.zoneMaps || []),
+        ]
+      : workspace.zoneMaps || [];
+
     onUpdateWorkspace({
       ...workspace,
       atlasMaps: nextMaps,
-      activeLiveVisual: {
+      zoneMaps: nextZoneMaps,
+      dmPreviewVisual: {
         kind: 'map',
         id: `map-${selectedFolder}`,
-        title: `Mapa: ${currentPlaceShortName}`,
+        title: baseTitle,
         imageUrl: clean,
         folder: selectedFolder,
       },
+    });
+    setMapCustomTitleInput('');
+    setMapCustomUrlInput('');
+    setLiveMapToast(
+      clean
+        ? `🗺️ Mapa "${baseTitle}" guardado en ${currentPlaceShortName}`
+        : `Mapa de ${currentPlaceShortName} restaurado`
+    );
+    setTimeout(() => setLiveMapToast(''), 2500);
+  };
+
+  const handleSaveEditedZoneMap = () => {
+    if (!editingZoneMapId) return;
+    const cleanTitle = editZoneMapDraft.title.trim() || `Mapa: ${currentPlaceShortName}`;
+    const cleanUrl = editZoneMapDraft.imageUrl.trim();
+    const cleanFolder = editZoneMapDraft.folder || selectedFolder;
+    const nextZoneMaps = (workspace.zoneMaps || []).map((zm) =>
+      zm.id === editingZoneMapId
+        ? { ...zm, title: cleanTitle, imageUrl: cleanUrl, folder: cleanFolder }
+        : zm
+    );
+    onUpdateWorkspace({
+      ...workspace,
+      zoneMaps: nextZoneMaps,
+    });
+    setEditingZoneMapId(null);
+    setLiveMapToast(`✎ Mapa "${cleanTitle}" actualizado`);
+    setTimeout(() => setLiveMapToast(''), 2500);
+  };
+
+  const handleDeleteZoneMap = (mapId: string) => {
+    onUpdateWorkspace({
+      ...workspace,
+      zoneMaps: (workspace.zoneMaps || []).filter((zm) => zm.id !== mapId),
     });
   };
 
@@ -566,7 +813,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
     e.target.value = '';
   };
 
-  const handleSaveNewAlbumPhoto = (e?: React.FormEvent) => {
+  const handleSaveNewAlbumPhoto = (e?: React.FormEvent, projectImmediately: boolean = false) => {
     if (e) e.preventDefault();
     const finalUrl = (albumUploadDraftUrl || albumUrlInput).trim();
     if (!finalUrl) return;
@@ -575,27 +822,51 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
       id: `alb-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       title: finalTitle,
       imageUrl: finalUrl,
-      folder: selectedFolder,
+      folder: selectedFolder === 'all' ? 'General' : selectedFolder,
       description: albumDescInput.trim(),
       createdAt: Date.now(),
     };
     const nextPhotos = [newPhoto, ...(workspace.placeAlbumPhotos || [])];
+    const visualObj = {
+      kind: 'album' as const,
+      id: newPhoto.id,
+      title: newPhoto.title,
+      imageUrl: newPhoto.imageUrl,
+      folder: newPhoto.folder,
+    };
     onUpdateWorkspace({
       ...workspace,
       placeAlbumPhotos: nextPhotos,
-      activeLiveVisual: {
-        kind: 'album',
-        id: newPhoto.id,
-        title: newPhoto.title,
-        imageUrl: newPhoto.imageUrl,
-        folder: newPhoto.folder,
-      },
+      dmPreviewVisual: visualObj,
+      activeLiveVisual: projectImmediately ? visualObj : workspace.activeLiveVisual,
     });
     setAlbumTitleInput('');
     setAlbumDescInput('');
     setAlbumUrlInput('');
     setAlbumUploadDraftUrl('');
-    setLiveMapToast(`Foto "${newPhoto.title}" añadida al álbum y proyectada en vivo`);
+    setLiveMapToast(
+      projectImmediately
+        ? `🟢 Foto "${newPhoto.title}" guardada y proyectada en vivo`
+        : `🖼️ Foto "${newPhoto.title}" guardada en el álbum de ${currentPlaceShortName}`
+    );
+    setTimeout(() => setLiveMapToast(''), 2500);
+  };
+
+  const handleSaveEditedAlbumPhoto = () => {
+    if (!editingAlbumPhotoId) return;
+    const cleanTitle = editAlbumDraft.title.trim() || 'Imagen';
+    const cleanUrl = editAlbumDraft.imageUrl.trim();
+    const cleanFolder = editAlbumDraft.folder || selectedFolder;
+    onUpdateWorkspace({
+      ...workspace,
+      placeAlbumPhotos: (workspace.placeAlbumPhotos || []).map((p) =>
+        p.id === editingAlbumPhotoId
+          ? { ...p, title: cleanTitle, imageUrl: cleanUrl, folder: cleanFolder }
+          : p
+      ),
+    });
+    setEditingAlbumPhotoId(null);
+    setLiveMapToast(`✎ Foto "${cleanTitle}" actualizada`);
     setTimeout(() => setLiveMapToast(''), 2500);
   };
 
@@ -610,7 +881,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
         folder: photo.folder,
       },
     });
-    setLiveMapToast(`🟢 Mostrando en vivo: ${photo.title}`);
+    setLiveMapToast(`🟢 Proyectando a los jugadores: ${photo.title}`);
     setTimeout(() => setLiveMapToast(''), 2500);
   };
 
@@ -620,6 +891,106 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
       ...workspace,
       placeAlbumPhotos: nextPhotos,
     });
+  };
+
+  const handleUploadTacticalMapFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file, 950, 0.86);
+      setTacticalUploadDraftUrl(dataUrl);
+      setTacticalUrlInput(dataUrl);
+      if (!tacticalTitleInput.trim()) {
+        const baseName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+        setTacticalTitleInput(baseName || `Mapa Táctico de ${currentPlaceShortName}`);
+      }
+    } catch {}
+    e.target.value = '';
+  };
+
+  const handleSaveNewTacticalMap = () => {
+    const finalUrl = (tacticalUploadDraftUrl || tacticalUrlInput).trim();
+    if (!finalUrl) return;
+    const cleanTitle = tacticalTitleInput.trim() || `Mapa Táctico: ${currentPlaceShortName}`;
+    const newLoc: LocationRecord = {
+      id: `loc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: cleanTitle,
+      region: currentPlaceShortName,
+      type: 'Zona Táctica',
+      description: `Cuadrícula táctica (${tacticalColsInput}x${tacticalRowsInput})`,
+      secretsForDm: '',
+      pointsOfInterest: [],
+      mapImageUrl: finalUrl,
+      folder: selectedFolder === 'all' ? 'General' : selectedFolder,
+      gridCols: tacticalColsInput || 10,
+      gridRows: tacticalRowsInput || 8,
+      tacticalTokens: [],
+      tokens: [],
+    };
+    onUpdateWorkspace({
+      ...workspace,
+      locations: [newLoc, ...(workspace.locations || [])],
+      dmPreviewVisual: {
+        kind: 'tactical',
+        id: newLoc.id,
+        title: newLoc.name,
+        imageUrl: newLoc.mapImageUrl,
+        folder: selectedFolder,
+      },
+    });
+    setTacticalTitleInput('');
+    setTacticalUrlInput('');
+    setTacticalUploadDraftUrl('');
+    setLiveMapToast(`⚔️ Mapa Táctico "${newLoc.name}" creado`);
+    setTimeout(() => setLiveMapToast(''), 2500);
+  };
+
+  const handleSaveEditedTacticalMap = () => {
+    if (!editingTacticalMapId) return;
+    const cleanName = editTacticalDraft.name.trim() || 'Mapa Táctico';
+    onUpdateWorkspace({
+      ...workspace,
+      locations: (workspace.locations || []).map((l) =>
+        l.id === editingTacticalMapId
+          ? {
+              ...l,
+              name: cleanName,
+              mapImageUrl: editTacticalDraft.mapImageUrl || '',
+              folder: editTacticalDraft.folder || 'General',
+              gridCols: editTacticalDraft.gridCols || 10,
+              gridRows: editTacticalDraft.gridRows || 10,
+            }
+          : l
+      ),
+    });
+    setEditingTacticalMapId(null);
+    setLiveMapToast(`✎ Mapa Táctico "${cleanName}" actualizado`);
+    setTimeout(() => setLiveMapToast(''), 2500);
+  };
+
+  const handleDeleteTacticalMap = (tMapId: string) => {
+    onUpdateWorkspace({
+      ...workspace,
+      locations: (workspace.locations || []).filter((l) => l.id !== tMapId),
+    });
+  };
+
+  const handleProjectTacticalMap = (loc: LocationRecord) => {
+    onUpdateWorkspace({
+      ...workspace,
+      activeLiveVisual: {
+        kind: 'tactical',
+        id: loc.id,
+        title: loc.name,
+        imageUrl: loc.mapImageUrl || '',
+        folder: loc.folder || selectedFolder,
+        gridCols: loc.gridCols || 10,
+        gridRows: loc.gridRows || 10,
+        tacticalTokens: loc.tacticalTokens || loc.tokens || [],
+      },
+    });
+    setLiveMapToast(`🟢 Proyectando Mapa Táctico a jugadores: ${loc.name}`);
+    setTimeout(() => setLiveMapToast(''), 2500);
   };
 
   // ==================== COMBAT & TURN ACTIONS ====================
@@ -1267,11 +1638,11 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
         {/* LEFT 8 COLUMNS: ATLAS DEL MUNDO + BARAJAS & MUNDO/TRAMA         */}
         {/* =============================================================== */}
         <div className="lg:col-span-8 flex flex-col gap-2.5 justify-between">
-          {/* 1. ATLAS DEL MUNDO (Replaces plain folders with visual map & sub-places) */}
+          {/* 1. ATLAS DEL MUNDO (Clean header, 3 top buttons: Álbum, Mapas Tácticos, Mapas, & Bottom Cola de Visuales) */}
           <div className="relative rounded-2xl bg-[#14161f] border-2 border-[#c8a45c]/70 p-3 shadow-[0_0_30px_rgba(0,0,0,0.85)]">
             {/* Header & Breadcrumbs */}
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="font-cinzel font-black text-sm sm:text-base text-[#f5e4be] tracking-wider uppercase">
                     ATLAS DEL MUNDO
@@ -1284,50 +1655,43 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                       Nivel {currentPlaceDepth}/4
                     </span>
                   )}
-                  {roomCode && (
-                    <span
-                      className={`px-2 py-0.5 rounded-md border text-[10px] font-mono flex items-center gap-1 ${
-                        isOfflineMode
-                          ? 'bg-stone-900 border-stone-700 text-stone-400'
-                          : 'bg-[#1c1f2e] border-[#c8a45c]/40 text-emerald-300'
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          isOfflineMode ? 'bg-stone-500' : 'bg-emerald-400 animate-pulse'
-                        }`}
-                      />
-                      Sala: {roomCode} ({isOfflineMode ? 'MODO OFFLINE' : 'ONLINE'})
-                    </span>
-                  )}
-                  {onToggleOfflineMode && (
-                    <button
-                      type="button"
-                      data-testid="btn-dm-toggle-room-mode"
-                      onClick={() => onToggleOfflineMode(!isOfflineMode)}
-                      className={`px-2 py-0.5 rounded-md border text-[10px] font-cinzel font-bold transition cursor-pointer ${
-                        isOfflineMode
-                          ? 'bg-emerald-950/70 hover:bg-emerald-900 border-emerald-600/70 text-emerald-200'
-                          : 'bg-stone-800 hover:bg-stone-700 border-stone-600 text-stone-300'
-                      }`}
-                      title={
-                        isOfflineMode
-                          ? 'Cambiar a Modo Online (abrir mesa para que los jugadores se unan)'
-                          : 'Cambiar a Modo Offline (editar World Sheet en solitario sin abrir la mesa)'
-                      }
-                    >
-                      {isOfflineMode ? 'Abrir Online' : 'Pasar a Offline'}
-                    </button>
-                  )}
                 </div>
 
-                {/* Interactive 4-Level Hierarchical Breadcrumb Bar */}
+                {/* Interactive 4-Level Hierarchical Breadcrumb Bar + Selector de Zona + Botón Mundo (Carpetas) */}
                 <div
                   data-testid="atlas-breadcrumbs"
-                  className="flex items-center gap-1 flex-wrap text-xs"
+                  className="flex items-center gap-1.5 flex-wrap text-xs"
                 >
+                  <select
+                    data-testid="dm-atlas-zone-selector"
+                    value={selectedFolder}
+                    onChange={(e) => setSelectedFolder(e.target.value)}
+                    className="bg-[#181b26] border border-[#c8a45c]/60 rounded-md px-2 py-0.5 text-[11px] font-cinzel font-bold text-amber-200 outline-none focus:border-amber-400 cursor-pointer max-w-[200px] truncate"
+                    title="Cambiar directamente a cualquier zona del Atlas"
+                  >
+                    <option value="all">🌍 Mundo Completo</option>
+                    {allHierarchyFolders.map((f) => (
+                      <option key={f} value={f}>
+                        📍 {f}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Botón Mundo (Explorador Masivo de Carpetas) al lado de Mundo Completo */}
+                  <button
+                    type="button"
+                    data-testid="btn-open-world-folder-explorer"
+                    onClick={() => setIsFolderManagerOpen(true)}
+                    className="px-2.5 py-0.5 rounded-md bg-amber-950/85 hover:bg-amber-900 border border-[#c8a45c]/80 text-[#f5e4be] font-cinzel font-bold text-[11px] flex items-center gap-1 transition shadow cursor-pointer"
+                    title="Abrir el Explorador de Carpetas del Mundo para editar masivamente lugares, sub-lugares, mapas e imágenes"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 text-[#e2c275]" />
+                    <span>Mundo</span>
+                  </button>
+
                   {breadcrumbs.map((crumb, idx) => {
                     const isLast = idx === breadcrumbs.length - 1;
+                    const targetPath = crumb.folderPath || crumb.fullPath || 'all';
                     const icon =
                       crumb.depth === 0
                         ? '🌍'
@@ -1339,11 +1703,11 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                         ? '🍺'
                         : '🚪';
                     return (
-                      <React.Fragment key={crumb.folderPath}>
+                      <React.Fragment key={targetPath}>
                         {idx > 0 && <ChevronRight className="w-3.5 h-3.5 text-stone-500" />}
                         <button
                           type="button"
-                          onClick={() => setSelectedFolder(crumb.folderPath)}
+                          onClick={() => setSelectedFolder(targetPath)}
                           className={`px-2 py-0.5 rounded-md transition flex items-center gap-1 cursor-pointer ${
                             isLast
                               ? 'bg-amber-950/70 border border-[#c8a45c]/70 text-[#f5e4be] font-semibold'
@@ -1359,61 +1723,49 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                 </div>
               </div>
 
-              {/* Right Map Action Buttons */}
+              {/* Top-Right 3 Visual Buttons: Álbum | Mapas Tácticos | Mapas */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 <button
                   type="button"
-                  data-testid="btn-dm-skins"
-                  onClick={() => setIsSkinsModalOpen(true)}
-                  className="px-2.5 py-1.5 rounded-lg bg-purple-950/70 hover:bg-purple-900/80 border border-purple-500/60 text-purple-200 text-xs font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
-                  title="Personalizar Skins y apariencia visual de la pantalla del DM (Próximamente)"
+                  data-testid="btn-open-place-album"
+                  onClick={() => setIsAlbumModalOpen(true)}
+                  className="px-3 py-1.5 rounded-lg bg-amber-950/75 hover:bg-amber-900/90 border border-[#c8a45c]/75 text-[#f5e4be] text-xs font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
+                  title="Ver, editar o poner en cola fotos e ilustraciones del Álbum de esta zona"
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-purple-300" />
-                  <span>🎨 Skins</span>
+                  <Camera className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Álbum ({filteredAlbumPhotos.length})</span>
                 </button>
 
                 <button
                   type="button"
-                  data-testid="btn-atlas-expand-square"
+                  data-testid="btn-open-tactical-maps"
+                  onClick={() => setIsTacticalMapsModalOpen(true)}
+                  className="px-3 py-1.5 rounded-lg bg-[#181b26] hover:bg-[#232738] border border-[#c8a45c]/65 text-[#f5e4be] text-xs font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
+                  title="Ver, crear, editar o poner en cola Mapas Tácticos con cuadrícula para esta zona"
+                >
+                  <Layers className="w-3.5 h-3.5 text-[#e2c275]" />
+                  <span>Mapas Tácticos ({filteredLocations.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="btn-open-atlas-map-editor"
                   onClick={() => {
                     setSelectedPinToMove(childFolders[0] || null);
                     setIsAtlasMapModalOpen(true);
                   }}
-                  className="px-2.5 py-1.5 rounded-lg bg-[#181b26] hover:bg-[#232738] border border-[#c8a45c]/50 text-[#e8d8b9] text-xs font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
-                  title="Expandir el mapa cuadrado (1:1) de este lugar"
+                  className="px-3 py-1.5 rounded-lg bg-[#1d202d] hover:bg-[#262a3b] border border-[#c8a45c]/75 text-[#f5e4be] text-xs font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
+                  title="Gestionar los Mapas de esta zona (carátula y mapas adicionales), editar o poner en cola y ubicar sub-lugares"
                 >
-                  <Maximize2 className="w-3.5 h-3.5 text-[#e2c275]" />
-                  <span>Expandir 1:1</span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="btn-atlas-edit-map"
-                  onClick={() => {
-                    setSelectedPinToMove(childFolders[0] || null);
-                    setIsAtlasMapModalOpen(true);
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg bg-[#1d202d] hover:bg-[#262a3b] border border-[#c8a45c]/65 text-[#f5e4be] text-xs font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
-                  title="Subir imagen PNG/JPG para el mapa de este lugar y mover puntos de sub-lugares"
-                >
-                  <ImageIcon className="w-3.5 h-3.5 text-[#e2c275]" />
-                  <span>Editar Mapa</span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="btn-atlas-add-subplace"
-                  onClick={() => setIsFolderManagerOpen(true)}
-                  className="px-2.5 py-1.5 rounded-lg bg-amber-950/70 hover:bg-amber-900/80 border border-[#c8a45c]/70 text-[#f5e4be] text-xs font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
-                  title="Crear o gestionar lugares y sub-lugares del Atlas (hasta 4 niveles)"
-                >
-                  <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                  <span>+ Sub-Lugar</span>
+                  <Compass className="w-3.5 h-3.5 text-[#e2c275]" />
+                  <span>
+                    Mapas ({(currentPlaceMapUrl ? 1 : 0) + filteredZoneMaps.length})
+                  </span>
                 </button>
               </div>
             </div>
 
-            {/* Interactive Parchment / Custom PNG-JPG Cartography Map Canvas (Expanded height) */}
+            {/* Interactive Parchment / Custom PNG-JPG Cartography Map Canvas */}
             <div
               data-testid="atlas-map-strip"
               className="relative h-[245px] sm:h-[280px] w-full rounded-xl overflow-hidden border border-[#c8a45c]/60 bg-gradient-to-br from-[#2d2418] via-[#211b13] to-[#171410] shadow-inner group"
@@ -1506,34 +1858,36 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
               {/* Subtle vignette gradient */}
               <div className="absolute inset-0 bg-gradient-to-t from-[#12131a]/80 via-transparent to-[#12131a]/35 pointer-events-none" />
 
-              {/* Top-left parent back button if inside a sub-folder */}
+              {/* Top-left Return to Parent Place Button inside Map Canvas */}
               {selectedFolder !== 'all' && (
                 <button
                   type="button"
                   data-testid="btn-atlas-up-level"
                   onClick={() => {
-                    const parentCrumb = breadcrumbs[breadcrumbs.length - 2];
-                    setSelectedFolder(parentCrumb ? parentCrumb.folderPath : 'all');
+                    const parent = getParentAtlasFolder(selectedFolder);
+                    setSelectedFolder(parent || 'all');
                   }}
-                  className="absolute top-2.5 left-2.5 z-20 px-2.5 py-1 rounded-lg bg-[#14161f]/90 hover:bg-[#1f2230] border border-[#c8a45c]/60 text-[#f5e4be] text-[11px] font-cinzel font-bold flex items-center gap-1 shadow-lg cursor-pointer"
+                  className="absolute top-2.5 left-2.5 z-20 px-3 py-1.5 rounded-xl bg-[#14161f]/95 hover:bg-amber-950/95 border-2 border-[#c8a45c] text-[#f5e4be] text-xs font-cinzel font-bold flex items-center gap-1.5 shadow-xl transition cursor-pointer"
+                  title="Regresar al lugar anterior en el Atlas"
                 >
-                  <ArrowLeft className="w-3 h-3 text-amber-400" />
-                  <span>Subir Nivel</span>
+                  <ArrowLeft className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{getReturnToParentButtonLabel(selectedFolder, worldName)}</span>
                 </button>
               )}
 
-              {/* Bottom-right subtle button to expand 1:1 square map */}
+              {/* Bottom-right button inside the map drawing to expand 1:1 square map */}
               <button
                 type="button"
+                data-testid="btn-atlas-expand-square"
                 onClick={() => {
                   setSelectedPinToMove(childFolders[0] || null);
                   setIsAtlasMapModalOpen(true);
                 }}
-                className="absolute bottom-2 right-2.5 z-20 px-2 py-0.5 rounded bg-[#14161f]/85 hover:bg-[#1e2230] border border-[#c8a45c]/50 text-[10px] font-cinzel text-[#e2c275] flex items-center gap-1 shadow cursor-pointer"
-                title="Ver mapa cuadrado 1:1 completo y mover pines"
+                className="absolute bottom-2 right-2.5 z-20 px-2.5 py-1 rounded-lg bg-[#14161f]/90 hover:bg-[#1e2230] border border-[#c8a45c]/60 text-[10px] font-cinzel font-bold text-[#e2c275] flex items-center gap-1 shadow cursor-pointer"
+                title="Expandir mapa cuadrado 1:1 y mover puntos de sub-lugares"
               >
                 <Maximize2 className="w-3 h-3" />
-                <span>Mapa 1:1</span>
+                <span>Expandir 1:1</span>
               </button>
 
               {/* Strictly Direct Child Sub-Place Pins Positioned by Coordinates (x%, y%) */}
@@ -1589,7 +1943,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                       </button>
                     ) : (
                       <span className="text-[10px] text-stone-400 mt-0.5">
-                        Nivel máximo alcanzado (4/4) • Puedes subir su mapa 1:1 o fotos al Álbum
+                        Nivel máximo alcanzado (4/4) • Puedes subir mapas o fotos arriba
                       </span>
                     )}
                   </div>
@@ -1597,116 +1951,110 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
               </div>
             </div>
 
-            {/* Bottom Projection Strip: ÁLBUM DEL LUGAR & MAPAS TÁCTICOS */}
-            <div className="pt-2 flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center gap-1.5 text-xs font-cinzel font-bold text-[#e8d8b9] flex-wrap">
-                <span className="text-[11px] text-stone-300">VISUALES:</span>
-                <button
-                  type="button"
-                  data-testid="btn-open-place-album"
-                  onClick={() => setIsAlbumModalOpen(true)}
-                  className="px-2.5 py-1 rounded-lg bg-amber-950/70 hover:bg-amber-900/80 border border-[#c8a45c]/75 text-[#f5e4be] flex items-center gap-1.5 shadow transition cursor-pointer"
-                >
-                  <Camera className="w-3.5 h-3.5 text-amber-300" />
-                  <span>Álbum ({filteredAlbumPhotos.length})</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="btn-tactical-maps-soon"
-                  onClick={() => {
-                    setLiveMapToast('🗺️ Mapas Tácticos interactivos con cuadrícula: ¡Próximamente!');
-                    setTimeout(() => setLiveMapToast(''), 3000);
-                  }}
-                  className="px-2 py-1 rounded-lg bg-[#181a24] hover:bg-[#222534] border border-stone-700/80 text-stone-400 flex items-center gap-1.5 transition cursor-pointer"
-                  title="Los Mapas Tácticos estarán disponibles próximamente"
-                >
-                  <Layers className="w-3.5 h-3.5 text-stone-500" />
-                  <span>Mapas Tácticos</span>
-                  <span className="px-1.5 py-0.2 rounded bg-stone-800 text-[9px] text-amber-300/90 uppercase">
-                    Próximamente
+            {/* Bottom Strip: COLA DE VISUALES (Ordered Storytelling Queue for the DM) */}
+            <div
+              data-testid="atlas-visual-queue-strip"
+              className="pt-2.5 flex items-center justify-between gap-2 flex-wrap"
+            >
+              <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
+                <span className="text-[11px] font-cinzel font-black text-amber-300 uppercase flex items-center gap-1 shrink-0">
+                  <ListPlus className="w-3.5 h-3.5 text-[#e2c275]" />
+                  <span>COLA EN VISUALES ({visualQueue.length}):</span>
+                </span>
+
+                {visualQueue.length > 0 ? (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {visualQueue.map((item, idx) => {
+                      const isLive =
+                        workspace.activeLiveVisual?.id === item.id &&
+                        workspace.activeLiveVisual?.kind === item.kind;
+                      const kindIcon =
+                        item.kind === 'map' ? '🗺️' : item.kind === 'tactical' ? '⚔️' : '🖼️';
+                      return (
+                        <div
+                          key={item.queueId}
+                          data-testid={`queue-chip-${item.id}`}
+                          className={`inline-flex items-center rounded-lg border text-[11px] font-cinzel font-bold overflow-hidden transition ${
+                            isLive
+                              ? 'bg-emerald-950/90 border-emerald-400 text-emerald-100 shadow-[0_0_10px_rgba(16,185,129,0.25)]'
+                              : 'bg-[#181a24] border-[#c8a45c]/60 text-[#f5e4be]'
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onUpdateWorkspace({
+                                ...workspace,
+                                dmPreviewVisual: {
+                                  kind: item.kind,
+                                  id: item.id,
+                                  title: item.title,
+                                  imageUrl: item.imageUrl,
+                                  folder: item.folder,
+                                },
+                                activeLiveVisual: {
+                                  kind: item.kind,
+                                  id: item.id,
+                                  title: item.title,
+                                  imageUrl: item.imageUrl,
+                                  folder: item.folder,
+                                },
+                              });
+                              setLiveMapToast(`🟢 Proyectando desde la Cola: ${item.title}`);
+                              setTimeout(() => setLiveMapToast(''), 2500);
+                            }}
+                            className="px-2 py-1 hover:bg-amber-900/40 flex items-center gap-1 cursor-pointer"
+                            title={`Clic para mostrar "${item.title}" a los jugadores`}
+                          >
+                            <span className="text-[10px] font-mono text-amber-300">
+                              {idx + 1}.
+                            </span>
+                            <span>{kindIcon}</span>
+                            <span className="truncate max-w-[115px]">{item.title}</span>
+                            {isLive && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`btn-remove-queue-${item.queueId}`}
+                            onClick={() => handleRemoveVisualItemFromQueue(item.queueId)}
+                            className="px-1.5 py-1 bg-black/40 hover:bg-red-900/80 text-stone-400 hover:text-white border-l border-stone-700/70 transition cursor-pointer"
+                            title="Tachar / Quitar de la cola"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <span className="text-[11px] text-stone-400 italic">
+                    Cola vacía. Usa el botón "+ Poner en Cola" dentro de Álbum, Mapas Tácticos o Mapas para preparar el orden de tu historia.
                   </span>
-                </button>
+                )}
               </div>
 
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {currentPlaceMapUrl && (
-                  <button
-                    type="button"
-                    data-testid="btn-project-place-map"
-                    onClick={() => {
-                      onUpdateWorkspace({
-                        ...workspace,
-                        activeLiveVisual: {
-                          kind: 'map',
-                          id: `map-${selectedFolder}`,
-                          title: `Mapa: ${currentPlaceShortName}`,
-                          imageUrl: currentPlaceMapUrl,
-                          folder: selectedFolder,
-                        },
-                      });
-                      setLiveMapToast(`🟢 Mostrando en vivo: Mapa de ${currentPlaceShortName}`);
-                      setTimeout(() => setLiveMapToast(''), 2500);
-                    }}
-                    className={`px-2 py-1 rounded-lg text-[11px] font-cinzel font-bold flex items-center gap-1 transition cursor-pointer border ${
-                      workspace.activeLiveVisual?.kind === 'map' || !workspace.activeLiveVisual
-                        ? 'bg-[#1c2421] border-[#c8a45c] text-[#f5e4be] shadow'
-                        : 'bg-[#181a24] hover:bg-[#222533] border-stone-700/80 text-stone-300'
-                    }`}
-                    title="Proyectar el mapa de este lugar a los jugadores"
-                  >
-                    <Compass className="w-3 h-3 text-[#e2c275]" />
-                    <span className="truncate max-w-[95px]">Mapa: {currentPlaceShortName}</span>
-                    {workspace.activeLiveVisual?.kind === 'map' || !workspace.activeLiveVisual ? (
-                      <span className="text-[9px] text-emerald-400 font-bold flex items-center gap-1">
-                        (<span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> EN VIVO)
-                      </span>
-                    ) : (
-                      <span className="text-[9px] text-stone-400">(Mostrar)</span>
-                    )}
-                  </button>
-                )}
-
-                {filteredAlbumPhotos.slice(0, 2).map((photo) => {
-                  const isLive =
-                    workspace.activeLiveVisual?.kind === 'album' &&
-                    workspace.activeLiveVisual?.id === photo.id;
-                  return (
-                    <button
-                      key={photo.id}
-                      type="button"
-                      data-testid={`btn-project-photo-${photo.id}`}
-                      onClick={() => handleSetLiveAlbumPhoto(photo)}
-                      className={`px-2 py-1 rounded-lg text-[11px] font-cinzel font-bold flex items-center gap-1 transition cursor-pointer border ${
-                        isLive
-                          ? 'bg-[#1c2421] border-[#c8a45c] text-[#f5e4be] shadow'
-                          : 'bg-[#181a24] hover:bg-[#222533] border-stone-700/80 text-stone-300'
-                      }`}
-                      title="Clic para proyectar esta foto del álbum en el Mapa en Vivo"
-                    >
-                      <ImageIcon className="w-3 h-3 text-[#e2c275]" />
-                      <span className="truncate max-w-[105px]">{photo.title}</span>
-                      {isLive ? (
-                        <span className="text-[9px] text-emerald-400 font-bold flex items-center gap-1">
-                          (<span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> EN VIVO)
-                        </span>
-                      ) : (
-                        <span className="text-[9px] text-stone-400">(Mostrar)</span>
-                      )}
-                    </button>
-                  );
-                })}
-
+              {currentPlaceMapUrl && (
                 <button
                   type="button"
-                  data-testid="btn-quick-upload-album"
-                  onClick={() => setIsAlbumModalOpen(true)}
-                  className="px-2.5 py-1 rounded-lg bg-[#181a24] hover:bg-[#242838] border border-[#c8a45c]/50 text-[#f5e4be] text-[11px] font-cinzel font-bold flex items-center gap-1 transition cursor-pointer"
-                  title="Subir foto al álbum de este lugar"
+                  data-testid="btn-enqueue-current-map"
+                  onClick={() =>
+                    handleAddVisualToQueue({
+                      id: `map-${selectedFolder}`,
+                      kind: 'map',
+                      title: `Mapa: ${currentPlaceShortName}`,
+                      imageUrl: currentPlaceMapUrl,
+                      folder: selectedFolder,
+                    })
+                  }
+                  className="px-2.5 py-1 rounded-lg bg-[#181a24] hover:bg-[#242838] border border-[#c8a45c]/50 text-[#e2c275] text-[10px] font-cinzel font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
+                  title="Poner el mapa actual en la cola de proyección"
                 >
-                  <Plus className="w-3 h-3 text-[#e2c275]" />
-                  <span>Subir Foto</span>
+                  <ListPlus className="w-3 h-3" />
+                  <span>+ Mapa Actual a Cola</span>
                 </button>
-              </div>
+              )}
             </div>
           </div>
 
@@ -2761,15 +3109,29 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
             <span>GUARDAR Y REGRESAR AL LOBBY</span>
           </button>
 
-          <button
-            type="button"
-            data-testid="btn-dm-save-cloud"
-            onClick={onSaveToCloud}
-            className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-950 via-emerald-900/90 to-emerald-950 hover:from-emerald-900 hover:to-emerald-800 border border-emerald-400/75 text-emerald-100 font-cinzel font-bold text-xs flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.25)] transition cursor-pointer"
-          >
-            <Upload className="w-3.5 h-3.5 text-emerald-300" />
-            <span>GUARDAR EN LA NUBE</span>
-          </button>
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              data-testid="btn-dm-save-cloud"
+              onClick={onSaveToCloud}
+              className="w-full py-2 px-2.5 rounded-xl bg-gradient-to-r from-emerald-950 via-emerald-900/90 to-emerald-950 hover:from-emerald-900 hover:to-emerald-800 border border-emerald-400/75 text-emerald-100 font-cinzel font-bold text-xs flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.25)] transition cursor-pointer"
+              title="Guardar en la Nube"
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+              <span>GUARDAR</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="btn-dm-table-settings"
+              onClick={openDmTableSettingsModal}
+              className="w-full py-2 px-2.5 rounded-xl bg-[#191c28] hover:bg-[#232738] border border-[#c8a45c]/75 text-[#f5e4be] font-cinzel font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg transition cursor-pointer"
+              title="Ajustes de la Mesa (Nombre, Contraseña, Online/Offline y Auto-Sync)"
+            >
+              <Sliders className="w-3.5 h-3.5 text-[#e2c275] shrink-0" />
+              <span>AJUSTES</span>
+            </button>
+          </div>
         </div>
 
         {/* Center: MENSAJE EN VIVO Banner (with Clickable DM Portrait Medallion) */}
@@ -4847,19 +5209,19 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
 
               {/* Right 5 Cols: Upload PNG/JPG Map + Sub-place Pin Coordinates */}
               <div className="md:col-span-5 space-y-4">
-                {/* 1. Subir Mapa PNG/JPG para este lugar */}
+                {/* 1. Subir Mapa PNG/JPG para este lugar y poner en cola */}
                 <div className="p-3.5 rounded-xl bg-[#191c28] border border-[#c8a45c]/50 space-y-2.5">
                   <div className="font-cinzel font-bold text-xs text-[#f5e4be] uppercase flex items-center justify-between">
-                    <span>1. Imagen del Mapa ({currentPlaceShortName})</span>
+                    <span>1. Carátula de Mapa Principal ({currentPlaceShortName})</span>
                     <span className="text-[10px] text-amber-400">Cuadrado 1:1</span>
                   </div>
                   <p className="text-[11px] text-stone-400">
-                    Sube un archivo PNG o JPG desde tu dispositivo para usar tu propio mapa prediseñado en este lugar.
+                    Sube un archivo PNG o JPG para la carátula principal de este lugar o agrega mapas adicionales a esta carpeta más abajo.
                   </p>
 
                   <label className="w-full py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-cinzel font-black text-xs flex items-center justify-center gap-2 shadow cursor-pointer transition">
                     <Upload className="w-4 h-4" />
-                    <span>Subir Mapa PNG / JPG</span>
+                    <span>Subir Mapa Principal PNG / JPG</span>
                     <input
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
@@ -4886,13 +5248,204 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                   </div>
 
                   {currentPlaceMapUrl && (
-                    <button
-                      type="button"
-                      onClick={() => handleSetAtlasMapUrl('')}
-                      className="w-full py-1 rounded-lg bg-red-950/50 hover:bg-red-900/60 border border-red-800/60 text-[11px] text-red-300 cursor-pointer"
-                    >
-                      Restaurar Mapa Cartográfico Base
-                    </button>
+                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        data-testid="btn-enqueue-primary-zone-map"
+                        onClick={() =>
+                          handleAddToVisualQueue({
+                            kind: 'map',
+                            sourceId: `primary-map-${currentPlaceMapKey}`,
+                            title: `Mapa de ${currentPlaceShortName}`,
+                            imageUrl: currentPlaceMapUrl,
+                            folder: currentPlaceMapKey,
+                          })
+                        }
+                        className="py-1.5 px-2 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-500/60 text-[11px] font-cinzel font-bold text-amber-200 cursor-pointer"
+                      >
+                        + Poner en Cola
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSetAtlasMapUrl('')}
+                        className="py-1.5 px-2 rounded-lg bg-red-950/50 hover:bg-red-900/60 border border-red-800/60 text-[11px] text-red-300 cursor-pointer"
+                      >
+                        Quitar Carátula
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* 1B. Mapas Adicionales de esta Carpeta (Varios Mapas por Lugar) */}
+                <div className="p-3.5 rounded-xl bg-[#191c28] border border-[#c8a45c]/50 space-y-2.5">
+                  <div className="font-cinzel font-bold text-xs text-[#f5e4be] uppercase flex items-center justify-between">
+                    <span>Mapas de {currentPlaceShortName} ({filteredZoneMaps.length})</span>
+                    <span className="text-[10px] text-amber-300">Múltiples Carátulas</span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <input
+                      type="text"
+                      data-testid="input-zone-map-title"
+                      value={zoneMapTitleInput}
+                      onChange={(e) => setZoneMapTitleInput(e.target.value)}
+                      placeholder="Nombre del mapa (ej. Mapa de Noche, Nivel Subterráneo...)"
+                      className="w-full bg-[#11131a] border border-stone-700 rounded-lg px-2.5 py-1.5 text-xs text-stone-200"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        data-testid="input-zone-map-url"
+                        value={zoneMapUrlInput}
+                        onChange={(e) => setZoneMapUrlInput(e.target.value)}
+                        placeholder="URL del mapa o sube archivo →"
+                        className="flex-1 bg-[#11131a] border border-stone-700 rounded-lg px-2.5 py-1.5 text-xs text-stone-200"
+                      />
+                      <label className="px-2.5 py-1.5 rounded-lg bg-[#242838] hover:bg-[#2f344a] border border-[#c8a45c]/50 text-[#e2c275] text-[11px] font-cinzel font-bold cursor-pointer shrink-0">
+                        Subir
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          onChange={handleUploadZoneMapFile}
+                          className="hidden"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        data-testid="btn-save-extra-zone-map"
+                        onClick={handleSaveNewZoneMap}
+                        disabled={!zoneMapUrlInput.trim() && !zoneMapUploadDraftUrl.trim()}
+                        className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-stone-950 font-cinzel font-bold text-[11px] cursor-pointer shrink-0"
+                      >
+                        + Mapa
+                      </button>
+                    </div>
+                  </div>
+
+                  {filteredZoneMaps.length > 0 && (
+                    <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1 pt-1">
+                      {filteredZoneMaps.map((zMap) => {
+                        const isEditingThisMap = editingZoneMapId === zMap.id;
+                        return (
+                          <div
+                            key={zMap.id}
+                            className="p-2 rounded-lg bg-[#12141c] border border-stone-800 space-y-1.5"
+                          >
+                            {isEditingThisMap ? (
+                              <div className="space-y-1.5">
+                                <input
+                                  type="text"
+                                  value={editZoneMapDraft.title}
+                                  onChange={(e) =>
+                                    setEditZoneMapDraft((p) => ({ ...p, title: e.target.value }))
+                                  }
+                                  placeholder="Título del mapa"
+                                  className="w-full bg-stone-950 border border-amber-500/60 rounded px-2 py-1 text-xs text-stone-100"
+                                />
+                                <input
+                                  type="text"
+                                  value={editZoneMapDraft.imageUrl}
+                                  onChange={(e) =>
+                                    setEditZoneMapDraft((p) => ({ ...p, imageUrl: e.target.value }))
+                                  }
+                                  placeholder="URL de imagen"
+                                  className="w-full bg-stone-950 border border-stone-700 rounded px-2 py-1 text-[11px] text-stone-200"
+                                />
+                                <input
+                                  type="text"
+                                  value={editZoneMapDraft.folder}
+                                  onChange={(e) =>
+                                    setEditZoneMapDraft((p) => ({ ...p, folder: e.target.value }))
+                                  }
+                                  placeholder="Carpeta / Lugar"
+                                  className="w-full bg-stone-950 border border-stone-700 rounded px-2 py-1 text-[11px] text-amber-200"
+                                />
+                                <div className="flex justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingZoneMapId(null)}
+                                    className="px-2 py-1 rounded bg-stone-800 text-[10px] text-stone-300 cursor-pointer"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveEditedZoneMap}
+                                    className="px-2.5 py-1 rounded bg-emerald-600 text-stone-950 font-bold text-[10px] cursor-pointer"
+                                  >
+                                    Guardar
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <img
+                                  src={zMap.imageUrl}
+                                  alt={zMap.title}
+                                  className="w-11 h-11 rounded object-cover border border-stone-700 shrink-0"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-xs font-cinzel font-bold text-[#f5e4be] truncate">
+                                    {zMap.title}
+                                  </div>
+                                  <div className="text-[10px] text-stone-400 truncate">
+                                    📍 {zMap.folder === 'General' ? 'Mundo' : zMap.folder}
+                                  </div>
+                                  <div className="flex items-center gap-1 mt-1 flex-wrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetAtlasMapUrl(zMap.imageUrl)}
+                                      className="px-1.5 py-0.5 rounded bg-stone-800 hover:bg-stone-700 text-[10px] text-amber-200 cursor-pointer"
+                                    >
+                                      Usar en Atlas
+                                    </button>
+                                    <button
+                                      type="button"
+                                      data-testid={`btn-edit-zone-map-${zMap.id}`}
+                                      onClick={() => {
+                                        setEditingZoneMapId(zMap.id);
+                                        setEditZoneMapDraft({
+                                          title: zMap.title,
+                                          imageUrl: zMap.imageUrl,
+                                          folder: zMap.folder,
+                                        });
+                                      }}
+                                      className="px-1.5 py-0.5 rounded bg-stone-800 hover:bg-stone-700 text-[10px] text-stone-200 cursor-pointer"
+                                    >
+                                      Editar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      data-testid={`btn-queue-zone-map-${zMap.id}`}
+                                      onClick={() =>
+                                        handleAddToVisualQueue({
+                                          kind: 'map',
+                                          sourceId: zMap.id,
+                                          title: zMap.title,
+                                          imageUrl: zMap.imageUrl,
+                                          folder: zMap.folder,
+                                        })
+                                      }
+                                      className="px-1.5 py-0.5 rounded bg-amber-950/80 hover:bg-amber-900 border border-amber-500/50 text-[10px] text-amber-200 font-bold cursor-pointer"
+                                    >
+                                      + Poner en Cola
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteZoneMap(zMap.id)}
+                                      className="p-0.5 rounded bg-red-950/60 hover:bg-red-900 text-red-300 cursor-pointer ml-auto"
+                                      title="Eliminar mapa"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
 
@@ -5015,7 +5568,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
       )}
 
       {/* =================================================================== */}
-      {/* MODAL: ÁLBUM DE FOTOS DEL LUGAR & PROYECCIÓN EN VIVO                */}
+      {/* MODAL: ÁLBUM DE FOTOS DEL LUGAR, EDICIÓN Y PONER EN COLA            */}
       {/* =================================================================== */}
       {isAlbumModalOpen && (
         <div
@@ -5035,7 +5588,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                 </h3>
                 <p className="text-xs text-stone-400">
                   {selectedFolder === 'all'
-                    ? 'Mostrando todas las fotos del Mundo. Filtra entrando a una región, ciudad o taberna.'
+                    ? 'Mostrando todas las fotos del Mundo. Puedes editarlas, ponerlas en cola o mostrarlas en vivo.'
                     : `Mostrando las fotos guardadas en "${selectedFolder}" y sus sub-lugares.`}
                 </p>
               </div>
@@ -5094,7 +5647,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                   className="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-stone-950 font-cinzel font-black text-xs flex items-center gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Guardar en el Álbum y Mostrar</span>
+                  <span>Guardar en el Álbum</span>
                 </button>
               </div>
             </div>
@@ -5106,6 +5659,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                   const isLive =
                     workspace.activeLiveVisual?.kind === 'album' &&
                     workspace.activeLiveVisual?.id === photo.id;
+                  const isEditingThis = editingAlbumPhotoId === photo.id;
                   return (
                     <div
                       key={photo.id}
@@ -5134,26 +5688,112 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      <div className="p-2.5 flex flex-col gap-1.5">
-                        <div className="font-cinzel font-bold text-xs text-[#f5e4be] truncate">
-                          {photo.title}
+
+                      {isEditingThis ? (
+                        <div className="p-2.5 space-y-1.5 bg-[#12141c]">
+                          <input
+                            type="text"
+                            data-testid={`input-edit-album-title-${photo.id}`}
+                            value={editAlbumDraft.title}
+                            onChange={(e) =>
+                              setEditAlbumDraft((p) => ({ ...p, title: e.target.value }))
+                            }
+                            placeholder="Nombre de la foto"
+                            className="w-full bg-stone-950 border border-amber-500/60 rounded px-2 py-1 text-xs text-stone-100"
+                          />
+                          <input
+                            type="text"
+                            value={editAlbumDraft.imageUrl}
+                            onChange={(e) =>
+                              setEditAlbumDraft((p) => ({ ...p, imageUrl: e.target.value }))
+                            }
+                            placeholder="URL de la imagen"
+                            className="w-full bg-stone-950 border border-stone-700 rounded px-2 py-1 text-[11px] text-stone-200"
+                          />
+                          <input
+                            type="text"
+                            value={editAlbumDraft.folder}
+                            onChange={(e) =>
+                              setEditAlbumDraft((p) => ({ ...p, folder: e.target.value }))
+                            }
+                            placeholder="Lugar / Carpeta"
+                            className="w-full bg-stone-950 border border-stone-700 rounded px-2 py-1 text-[11px] text-amber-200"
+                          />
+                          <div className="flex justify-end gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setEditingAlbumPhotoId(null)}
+                              className="px-2 py-1 rounded bg-stone-800 text-[10px] text-stone-300 cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`btn-save-edit-album-${photo.id}`}
+                              onClick={handleSaveEditedAlbumPhoto}
+                              className="px-2.5 py-1 rounded bg-emerald-600 text-stone-950 font-bold text-[10px] cursor-pointer"
+                            >
+                              Guardar
+                            </button>
+                          </div>
                         </div>
-                        <div className="text-[10px] text-amber-300/80 truncate">
-                          📍 {photo.folder === 'General' ? 'Mundo' : photo.folder}
+                      ) : (
+                        <div className="p-2.5 flex flex-col gap-1.5">
+                          <div className="font-cinzel font-bold text-xs text-[#f5e4be] truncate">
+                            {photo.title}
+                          </div>
+                          <div className="text-[10px] text-amber-300/80 truncate">
+                            📍 {photo.folder === 'General' ? 'Mundo' : photo.folder}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-1.5 mt-0.5">
+                            <button
+                              type="button"
+                              data-testid={`btn-edit-album-photo-${photo.id}`}
+                              onClick={() => {
+                                setEditingAlbumPhotoId(photo.id);
+                                setEditAlbumDraft({
+                                  title: photo.title,
+                                  imageUrl: photo.imageUrl,
+                                  folder: photo.folder,
+                                });
+                              }}
+                              className="py-1 px-2 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-600 text-stone-200 font-cinzel font-bold text-[10px] cursor-pointer"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`btn-queue-album-photo-${photo.id}`}
+                              onClick={() =>
+                                handleAddToVisualQueue({
+                                  kind: 'album',
+                                  sourceId: photo.id,
+                                  title: photo.title,
+                                  imageUrl: photo.imageUrl,
+                                  folder: photo.folder,
+                                })
+                              }
+                              className="py-1 px-2 rounded-lg bg-amber-950/80 hover:bg-amber-900 border border-amber-500/60 text-amber-200 font-cinzel font-bold text-[10px] cursor-pointer"
+                            >
+                              + Poner en Cola
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleSetLiveAlbumPhoto(photo)}
+                            className={`w-full py-1.5 rounded-lg font-cinzel font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                              isLive
+                                ? 'bg-emerald-900/60 border border-emerald-400 text-emerald-200'
+                                : 'bg-amber-600 hover:bg-amber-500 text-stone-950'
+                            }`}
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>{isLive ? 'Proyectando en Vivo' : 'Mostrar en Vivo'}</span>
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleSetLiveAlbumPhoto(photo)}
-                          className={`mt-1 w-full py-1.5 rounded-lg font-cinzel font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition ${
-                            isLive
-                              ? 'bg-emerald-900/60 border border-emerald-400 text-emerald-200'
-                              : 'bg-amber-600 hover:bg-amber-500 text-stone-950'
-                          }`}
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>{isLive ? 'Proyectando en Vivo' : 'Mostrar en Vivo'}</span>
-                        </button>
-                      </div>
+                      )}
                     </div>
                   );
                 })}
@@ -5161,6 +5801,302 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
             ) : (
               <div className="p-8 text-center rounded-xl bg-[#11131a] border border-stone-800 text-stone-400 text-xs">
                 No hay fotos en el álbum de <strong>{currentPlaceShortName}</strong> todavía. ¡Sube la primera arriba!
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* MODAL: MAPAS TÁCTICOS (CUADRÍCULA, EDICIÓN Y PONER EN COLA)         */}
+      {/* =================================================================== */}
+      {isTacticalMapsModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in"
+          onClick={() => setIsTacticalMapsModalOpen(false)}
+        >
+          <div
+            data-testid="modal-tactical-maps"
+            className="w-full max-w-3xl rounded-2xl bg-[#14161f] border-2 border-[#c8a45c] p-5 shadow-2xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#c8a45c]/30">
+              <div>
+                <h3 className="font-cinzel font-black text-base sm:text-lg text-[#f5e4be] uppercase flex items-center gap-2">
+                  <Crosshair className="w-5 h-5 text-red-400" />
+                  <span>MAPAS TÁCTICOS: {currentPlaceShortName}</span>
+                </h3>
+                <p className="text-xs text-stone-400">
+                  Prepara tableros tácticos con cuadrícula para mover fichas de personajes y monstruos en vivo, edítalos o ponlos en cola.
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="btn-close-tactical-maps-modal"
+                onClick={() => setIsTacticalMapsModalOpen(false)}
+                className="p-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Crear nuevo Mapa Táctico */}
+            <div className="p-3.5 rounded-xl bg-[#191c28] border border-[#c8a45c]/50 mb-4 space-y-2.5">
+              <div className="font-cinzel font-bold text-xs text-[#f5e4be] uppercase flex items-center justify-between">
+                <span>Subir Nuevo Mapa Táctico a: 📍 {currentPlaceShortName}</span>
+                <span className="text-[10px] text-red-300">Tablero con Cuadrícula</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                <input
+                  type="text"
+                  data-testid="input-tactical-map-title"
+                  value={tacticalTitleInput}
+                  onChange={(e) => setTacticalTitleInput(e.target.value)}
+                  placeholder="Nombre del Mapa Táctico (ej. Emboscada en el Puente, Sala del Trono...)"
+                  className="sm:col-span-5 bg-[#11131a] border border-stone-700 rounded-lg px-3 py-1.5 text-xs text-stone-100"
+                />
+                <input
+                  type="text"
+                  data-testid="input-tactical-map-url"
+                  value={tacticalUrlInput}
+                  onChange={(e) => setTacticalUrlInput(e.target.value)}
+                  placeholder="URL de imagen o sube archivo →"
+                  className="sm:col-span-4 bg-[#11131a] border border-stone-700 rounded-lg px-3 py-1.5 text-xs text-stone-100"
+                />
+                <label className="sm:col-span-3 py-1.5 px-2.5 rounded-lg bg-[#242838] hover:bg-[#2f344a] border border-[#c8a45c]/50 text-[#e2c275] text-xs font-cinzel font-bold flex items-center justify-center gap-1.5 cursor-pointer">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Archivo PNG/JPG</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={handleUploadTacticalMapFile}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
+                <div className="flex items-center gap-3 text-xs text-stone-300">
+                  <label className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-stone-400">Columnas:</span>
+                    <input
+                      type="number"
+                      min={4}
+                      max={24}
+                      value={tacticalColsInput}
+                      onChange={(e) => setTacticalColsInput(Number(e.target.value) || 10)}
+                      className="w-14 bg-[#11131a] border border-stone-700 rounded px-2 py-1 text-xs text-amber-200"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-stone-400">Filas:</span>
+                    <input
+                      type="number"
+                      min={4}
+                      max={24}
+                      value={tacticalRowsInput}
+                      onChange={(e) => setTacticalRowsInput(Number(e.target.value) || 10)}
+                      className="w-14 bg-[#11131a] border border-stone-700 rounded px-2 py-1 text-xs text-amber-200"
+                    />
+                  </label>
+                </div>
+
+                <button
+                  type="button"
+                  data-testid="btn-save-tactical-map"
+                  onClick={handleSaveNewTacticalMap}
+                  disabled={!tacticalUrlInput.trim() && !tacticalUploadDraftUrl.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-cinzel font-black text-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Guardar Mapa Táctico</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Lista de Mapas Tácticos */}
+            {filteredTacticalMaps.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {filteredTacticalMaps.map((tMap) => {
+                  const isLive =
+                    workspace.activeLiveVisual?.kind === 'tactical' &&
+                    workspace.activeLiveVisual?.id === tMap.id;
+                  const isEditingThis = editingTacticalMapId === tMap.id;
+                  return (
+                    <div
+                      key={tMap.id}
+                      className={`rounded-xl overflow-hidden border transition flex flex-col justify-between bg-[#181a24] ${
+                        isLive ? 'border-emerald-400 ring-2 ring-emerald-400/40' : 'border-red-500/40'
+                      }`}
+                    >
+                      <div className="relative h-36 w-full bg-stone-950">
+                        <img
+                          src={tMap.mapImageUrl}
+                          alt={tMap.name}
+                          className="w-full h-full object-cover"
+                        />
+                        <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/80 border border-red-500/50 text-[9px] font-mono text-red-200">
+                          {tMap.gridCols || 10}x{tMap.gridRows || 10}
+                        </span>
+                        {isLive && (
+                          <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-emerald-950/90 border border-emerald-400 text-[10px] font-bold text-emerald-300 flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                            EN VIVO
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTacticalMap(tMap.id)}
+                          className="absolute top-2 right-2 p-1 rounded bg-black/70 hover:bg-red-900/80 text-stone-300 hover:text-white cursor-pointer"
+                          title="Eliminar mapa táctico"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {isEditingThis ? (
+                        <div className="p-2.5 space-y-1.5 bg-[#12141c]">
+                          <input
+                            type="text"
+                            data-testid={`input-edit-tactical-title-${tMap.id}`}
+                            value={editTacticalDraft.name}
+                            onChange={(e) =>
+                              setEditTacticalDraft((p) => ({ ...p, name: e.target.value }))
+                            }
+                            placeholder="Nombre del mapa táctico"
+                            className="w-full bg-stone-950 border border-amber-500/60 rounded px-2 py-1 text-xs text-stone-100"
+                          />
+                          <input
+                            type="text"
+                            value={editTacticalDraft.mapImageUrl}
+                            onChange={(e) =>
+                              setEditTacticalDraft((p) => ({ ...p, mapImageUrl: e.target.value }))
+                            }
+                            placeholder="URL de imagen"
+                            className="w-full bg-stone-950 border border-stone-700 rounded px-2 py-1 text-[11px] text-stone-200"
+                          />
+                          <input
+                            type="text"
+                            value={editTacticalDraft.folder}
+                            onChange={(e) =>
+                              setEditTacticalDraft((p) => ({ ...p, folder: e.target.value }))
+                            }
+                            placeholder="Carpeta / Lugar"
+                            className="w-full bg-stone-950 border border-stone-700 rounded px-2 py-1 text-[11px] text-amber-200"
+                          />
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <input
+                              type="number"
+                              min={4}
+                              max={24}
+                              value={editTacticalDraft.gridCols}
+                              onChange={(e) =>
+                                setEditTacticalDraft((p) => ({
+                                  ...p,
+                                  gridCols: Number(e.target.value) || 10,
+                                }))
+                              }
+                              className="bg-stone-950 border border-stone-700 rounded px-2 py-1 text-[11px] text-stone-200"
+                            />
+                            <input
+                              type="number"
+                              min={4}
+                              max={24}
+                              value={editTacticalDraft.gridRows}
+                              onChange={(e) =>
+                                setEditTacticalDraft((p) => ({
+                                  ...p,
+                                  gridRows: Number(e.target.value) || 10,
+                                }))
+                              }
+                              className="bg-stone-950 border border-stone-700 rounded px-2 py-1 text-[11px] text-stone-200"
+                            />
+                          </div>
+                          <div className="flex justify-end gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setEditingTacticalMapId(null)}
+                              className="px-2 py-1 rounded bg-stone-800 text-[10px] text-stone-300 cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`btn-save-edit-tactical-${tMap.id}`}
+                              onClick={handleSaveEditedTacticalMap}
+                              className="px-2.5 py-1 rounded bg-emerald-600 text-stone-950 font-bold text-[10px] cursor-pointer"
+                            >
+                              Guardar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-2.5 flex flex-col gap-1.5">
+                          <div className="font-cinzel font-bold text-xs text-[#f5e4be] truncate">
+                            {tMap.name}
+                          </div>
+                          <div className="text-[10px] text-amber-300/80 truncate">
+                            📍 {tMap.folder === 'General' ? 'Mundo' : tMap.folder}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-1.5 mt-0.5">
+                            <button
+                              type="button"
+                              data-testid={`btn-edit-tactical-map-${tMap.id}`}
+                              onClick={() => {
+                                setEditingTacticalMapId(tMap.id);
+                                setEditTacticalDraft({
+                                  name: tMap.name,
+                                  mapImageUrl: tMap.mapImageUrl || '',
+                                  folder: tMap.folder,
+                                  gridCols: tMap.gridCols || 10,
+                                  gridRows: tMap.gridRows || 10,
+                                });
+                              }}
+                              className="py-1 px-2 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-600 text-stone-200 font-cinzel font-bold text-[10px] cursor-pointer"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`btn-queue-tactical-map-${tMap.id}`}
+                              onClick={() =>
+                                handleAddToVisualQueue({
+                                  kind: 'tactical',
+                                  sourceId: tMap.id,
+                                  title: tMap.name,
+                                  imageUrl: tMap.mapImageUrl || '',
+                                  folder: tMap.folder,
+                                })
+                              }
+                              className="py-1 px-2 rounded-lg bg-amber-950/80 hover:bg-amber-900 border border-amber-500/60 text-amber-200 font-cinzel font-bold text-[10px] cursor-pointer"
+                            >
+                              + Poner en Cola
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleProjectTacticalMap(tMap)}
+                            className={`w-full py-1.5 rounded-lg font-cinzel font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition ${
+                              isLive
+                                ? 'bg-emerald-900/60 border border-emerald-400 text-emerald-200'
+                                : 'bg-red-700 hover:bg-red-600 text-white'
+                            }`}
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>{isLive ? 'Proyectando en Vivo' : 'Mostrar en Vivo'}</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-8 text-center rounded-xl bg-[#11131a] border border-stone-800 text-stone-400 text-xs">
+                No hay mapas tácticos en <strong>{currentPlaceShortName}</strong> todavía. ¡Sube el primero arriba!
               </div>
             )}
           </div>
@@ -5231,7 +6167,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
         </div>
       )}
 
-      {/* FOLDER MANAGER MODAL (Sub-lugares del Atlas hasta 4 niveles) */}
+      {/* FOLDER MANAGER MODAL (Explorador Masivo de Carpetas del Mundo) */}
       <FolderManagerModal
         isOpen={isFolderManagerOpen}
         onClose={() => setIsFolderManagerOpen(false)}
@@ -5254,37 +6190,158 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
         />
       )}
 
-      {/* SKINS CUSTOMIZATION MODAL (PRÓXIMAMENTE EN DESARROLLO) */}
-      {isSkinsModalOpen && (
+      {/* =================================================================== */}
+      {/* MODAL: AJUSTES DE LA MESA DEL DM (NOMBRE, CONTRASEÑA, ONLINE/OFFLINE)*/}
+      {/* =================================================================== */}
+      {isDmTableSettingsModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in"
-          onClick={() => setIsSkinsModalOpen(false)}
+          onClick={() => setIsDmTableSettingsModalOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-3xl bg-[#14161f] border-2 border-[#c8a45c] p-6 shadow-2xl text-center space-y-4"
+            data-testid="modal-dm-table-settings"
+            className="w-full max-w-lg rounded-2xl bg-[#14161f] border-2 border-[#c8a45c] p-5 shadow-2xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-14 h-14 rounded-2xl bg-purple-950/80 border border-purple-500 flex items-center justify-center text-purple-300 mx-auto shadow-lg">
-              <Sparkles className="w-7 h-7 animate-pulse" />
-            </div>
-            <div>
-              <span className="px-3 py-1 rounded-full bg-amber-950 border border-amber-600 text-[10px] font-cinzel font-bold uppercase tracking-wider text-amber-300">
-                Próximamente en Desarrollo
-              </span>
-              <h3 className="font-cinzel font-black text-lg text-[#f5e4be] mt-3">
-                🎨 Skins de Pantalla del DM & Jugador
-              </h3>
-              <p className="text-xs text-stone-300 mt-2 leading-relaxed">
-                Muy pronto podrás personalizar la estética completa de tu pantalla de Dungeon Master y las hojas de personaje con temas creados por <strong className="text-amber-300">Creadores de Contenido</strong> (marcos góticos, pergamino real, grimorio arcano, taberna rústica y más).
-              </p>
-            </div>
-            <div className="pt-2">
+            <div className="flex items-center justify-between pb-3 border-b border-[#c8a45c]/30">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-5 h-5 text-[#e2c275]" />
+                <div>
+                  <h3 className="font-cinzel font-black text-base text-[#f5e4be] uppercase">
+                    AJUSTES DE LA MESA DEL DM
+                  </h3>
+                  <p className="text-[11px] text-stone-400">
+                    Configura el nombre de la mesa, código de sala, contraseña y sincronización en vivo.
+                  </p>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => setIsSkinsModalOpen(false)}
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 font-cinzel font-bold text-xs shadow-lg transition cursor-pointer"
+                data-testid="btn-close-dm-table-settings"
+                onClick={() => setIsDmTableSettingsModalOpen(false)}
+                className="p-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 cursor-pointer"
               >
-                Entendido
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {/* Estado Online / Offline */}
+              <div className="p-3 rounded-xl bg-[#191c28] border border-stone-800 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-cinzel font-bold text-[#f5e4be] flex items-center gap-1.5">
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full ${
+                        isOnlineSession ? 'bg-emerald-400 animate-pulse' : 'bg-stone-500'
+                      }`}
+                    />
+                    <span>Estado de Conexión: {isOnlineSession ? 'MESA ONLINE' : 'MODO OFFLINE'}</span>
+                  </div>
+                  <p className="text-[11px] text-stone-400 mt-0.5">
+                    Activa el modo Online para compartir código de sala y proyectar mapas en vivo a tus jugadores.
+                  </p>
+                </div>
+                {onToggleOnlineSession && (
+                  <button
+                    type="button"
+                    data-testid="btn-settings-toggle-online"
+                    onClick={onToggleOnlineSession}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-cinzel font-bold border transition cursor-pointer shrink-0 ${
+                      isOnlineSession
+                        ? 'bg-emerald-950/90 border-emerald-500/70 text-emerald-300 hover:bg-emerald-900'
+                        : 'bg-stone-900 border-stone-700 text-stone-300 hover:border-amber-500/60 hover:text-amber-200'
+                    }`}
+                  >
+                    {isOnlineSession ? 'Pasar a Offline' : 'Activar Online'}
+                  </button>
+                )}
+              </div>
+
+              {/* Editar Nombre de la Mesa */}
+              <div>
+                <label className="block text-[11px] font-cinzel font-bold text-[#e2c275] uppercase mb-1">
+                  Nombre de la Mesa / Mundo
+                </label>
+                <input
+                  type="text"
+                  data-testid="input-settings-world-name"
+                  value={settingsNameDraft}
+                  onChange={(e) => setSettingsNameDraft(e.target.value)}
+                  placeholder="Ej. Crónicas de Phandalin"
+                  className="w-full bg-[#11131a] border border-stone-700 focus:border-amber-500 rounded-xl px-3 py-2 text-xs text-stone-100 outline-none"
+                />
+              </div>
+
+              {/* Editar Código y Contraseña */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-cinzel font-bold text-[#e2c275] uppercase mb-1">
+                    Código de Sala
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="input-settings-room-code"
+                    value={settingsCodeDraft}
+                    onChange={(e) => setSettingsCodeDraft(e.target.value.toUpperCase())}
+                    placeholder="Ej. MESA-2025"
+                    className="w-full bg-[#11131a] border border-stone-700 focus:border-amber-500 rounded-xl px-3 py-2 text-xs font-mono text-amber-200 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-cinzel font-bold text-[#e2c275] uppercase mb-1">
+                    Contraseña de la Mesa
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="input-settings-room-password"
+                    value={settingsPasswordDraft}
+                    onChange={(e) => setSettingsPasswordDraft(e.target.value)}
+                    placeholder="Opcional (dejar vacío = sin clave)"
+                    className="w-full bg-[#11131a] border border-stone-700 focus:border-amber-500 rounded-xl px-3 py-2 text-xs text-stone-100 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Auto-Sync al cambiar de zona */}
+              <label className="p-3 rounded-xl bg-[#191c28] border border-stone-800 flex items-center justify-between gap-3 cursor-pointer">
+                <div>
+                  <div className="text-xs font-cinzel font-bold text-[#f5e4be]">
+                    Cambiar imagen a jugadores automáticamente al cambiar de zona
+                  </div>
+                  <p className="text-[11px] text-stone-400">
+                    Si está desactivado, podrás explorar y editar mapas libremente sin cambiar lo que ven los jugadores hasta que presiones Proyectar.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  data-testid="checkbox-settings-auto-sync-zone"
+                  checked={Boolean(workspace.autoSyncLiveMapOnZoneChange)}
+                  onChange={(e) =>
+                    onUpdateWorkspace({
+                      ...workspace,
+                      autoSyncLiveMapOnZoneChange: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 accent-amber-500 shrink-0"
+                />
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
+              <button
+                type="button"
+                onClick={() => setIsDmTableSettingsModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-cinzel font-bold text-xs cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                data-testid="btn-save-dm-table-settings"
+                onClick={handleSaveDmTableSettings}
+                className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-cinzel font-black text-xs shadow-lg cursor-pointer"
+              >
+                Guardar Ajustes
               </button>
             </div>
           </div>

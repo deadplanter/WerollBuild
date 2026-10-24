@@ -20,29 +20,43 @@ export const DEFAULT_HOST_SETTINGS: HostSettings = {
   dmPassword: '',
   moderatorPassword: 'admin',
   headerTitle: 'WeRoll',
-  headerSubtitle: 'Companion & DM Suite v1.1 Beta',
+  headerSubtitle: 'Companion & DM Suite v1.2 Beta',
   headerLogoIcon: 'shield',
   developerNotice: {
     enabled: true,
-    title: 'WeRoll • Novedades v1.1 Beta',
-    content: '¡Versión 1.1 Beta disponible! Modo Mapa en Vivo sincronizado en tiempo real (proyección de mapas y fotos del álbum del DM hacia los jugadores), cartas Tarot compactas 2x2 en mesa, proporción áurea en Mazos de Juego y límite táctico de 8 monstruos.',
-    version: '1.1 Beta',
+    title: 'WeRoll • Novedades v1.2 Beta',
+    content: '¡Versión 1.2 Beta disponible! Atlas del DM rediseñado e intuitivo (botones superiores Álbum, Mapas Tácticos y Mapas, Cola en Visuales, Explorador Masivo de Carpetas en Mundo y botón Ajustes de Mesa), Modo Mapa en Vivo con Vista DM vs Vista en Vivo, cuadrícula táctica interactiva con fichas móviles y Guardado Incremental por Diferencias (Delta Sync).',
+    version: '1.2 Beta',
   },
   developerAnnouncement: {
     enabled: true,
-    title: 'WeRoll • Novedades v1.1 Beta',
-    content: '¡Versión 1.1 Beta disponible! Modo Mapa en Vivo sincronizado en tiempo real (proyección de mapas y fotos del álbum del DM hacia los jugadores), cartas Tarot compactas 2x2 en mesa, proporción áurea en Mazos de Juego y límite táctico de 8 monstruos.',
-    version: '1.1 Beta',
+    title: 'WeRoll • Novedades v1.2 Beta',
+    content: '¡Versión 1.2 Beta disponible! Atlas del DM rediseñado e intuitivo (botones superiores Álbum, Mapas Tácticos y Mapas, Cola en Visuales, Explorador Masivo de Carpetas en Mundo y botón Ajustes de Mesa), Modo Mapa en Vivo con Vista DM vs Vista en Vivo, cuadrícula táctica interactiva con fichas móviles y Guardado Incremental por Diferencias (Delta Sync).',
+    version: '1.2 Beta',
   },
   adminGreeting: {
     enabled: true,
     title: 'Comunicado del Administrador',
-    message: '¡Bienvenido a WeRoll 5E v1.1 Beta! Modo Mapa en Vivo con proyección en tiempo real, cartas Tarot compactas 2x2 y mazos de juego rediseñados.',
+    message: '¡Bienvenido a WeRoll 5E v1.2 Beta! Nuevo Atlas del DM intuitivo con Cola en Visuales, Vista DM vs Vista en Vivo con fichas tácticas móviles y Guardado Incremental Delta Sync.',
     type: 'info',
     updatedAt: Date.now(),
   },
   oracleWelcomeMessage: 'Saludos, viajero. Soy el Sabio Arcano, tu árbitro y custodio de las reglas de 5E. ¿Qué duda deseas resolver hoy?',
   changelog: [
+    {
+      version: '1.2 Beta',
+      date: '2026-10-23',
+      title: 'WeRoll 1.2 Beta • Rediseño Intuitivo del Atlas del DM, Cola de Visuales, Explorador de Carpetas, Vista DM vs Vista en Vivo con Fichas Tácticas y Delta Sync',
+      changes: [
+        'Encabezado Limpio del Atlas y Botón "Ajustes" junto a "Guardar": Reubicación del nombre de la mesa, contraseña, código de sala y modo Online/Offline dentro del nuevo botón Ajustes junto al botón Guardar en la parte inferior de la pantalla del DM.',
+        'Botones Superiores de Visuales (Álbum, Mapas Tácticos y Mapas): Acceso rápido en la esquina superior derecha del Atlas para gestionar fotos del álbum, mapas tácticos y múltiples mapas por carpeta/zona.',
+        'Navegación Jerárquica con Botón "Regresar a [Lugar Anterior]": Botón integrado en la esquina superior izquierda dentro del lienzo del mapa para subir inmediatamente al continente o carpeta padre.',
+        'Cola en Visuales + Edición Individual: Cada imagen, mapa de zona y mapa táctico cuenta con botones para Editar (nombre, imagen y carpeta) y Poner en Cola, mostrando debajo del mapa la lista ordenada lista para proyectar o tachar (✕).',
+        'Explorador Masivo de Carpetas en "Mundo": Al pulsar el botón Mundo se abre un gestor tipo carpetas con todos los lugares, sublugares, mapas, mapas tácticos, fotos del álbum, PNJs y monstruos para edición masiva.',
+        'Modo Mapa del DM (Previsualización antes de Proyectar, Pestaña "Ver Cola" y Vista DM vs Vista en Vivo): El DM puede previsualizar y editar cualquier mapa o mapa táctico sin cambiar la pantalla de los jugadores hasta pulsar Proyectar, alternar entre Vista DM y Vista en Vivo, y mover fichas de personajes y monstruos sobre la cuadrícula táctica.',
+        'Guardado Incremental por Diferencias (Delta Sync) y Caché Local: Sincronización ultraligera por campos modificados, separación de activos pesados y panel de arquitectura técnica en Administración.',
+      ],
+    },
     {
       version: '1.1 Beta',
       date: '2026-10-22',
@@ -183,6 +197,8 @@ export interface AuthSessionUser {
   friends?: string[];
   role: UserRole;
   playerType?: PlayerType;
+  requestedPlayerType?: PlayerType;
+  playerTypeChangeRequested?: boolean;
   appRole?: AppRole;
   canPostInForum?: boolean;
   forumPermissionsRequested?: boolean;
