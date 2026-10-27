@@ -43,6 +43,7 @@ export interface ItemSpecialAction {
   usesMax?: number;
   usesLeft?: number;
   recharge?: string;
+  imageUrl?: string;
 }
 
 export type SkillKey =
@@ -76,6 +77,7 @@ export interface AttackAction {
   damageType: string; // "Cortante", "Perforante", "Contundente", "Fuego", etc.
   range?: string;
   notes?: string;
+  imageUrl?: string;
 }
 
 export interface SpellSlot {
@@ -96,6 +98,7 @@ export interface SpellItem {
   description: string;
   prepared?: boolean;
   damageOrHeal?: string;
+  imageUrl?: string;
   statModifiers?: ItemStatModifier[];
   itemActions?: ItemSpecialAction[];
 }
@@ -111,6 +114,7 @@ export interface WeaponAttack {
   damageType: string; // "Cortante", "Perforante", "Contundente", "Fuego", etc.
   attackType?: 'melee' | 'ranged' | 'spell';
   range?: string;
+  imageUrl?: string;
 }
 
 export interface CustomSkillEntry {
@@ -121,6 +125,7 @@ export interface CustomSkillEntry {
   ability: AbilityKey;
   proficiency: SkillProficiencyLevel;
   description: string;
+  imageUrl?: string;
 }
 
 export interface PlayerJournalEntry {
@@ -146,6 +151,7 @@ export interface InventoryItem {
   itemGroup?: 'weapon' | 'armor' | 'common';
   category: 'Objeto Común' | 'Objeto' | 'Arma' | 'Armadura' | 'Poción' | 'Mágico' | 'Equipo' | 'Herramienta' | 'Munición' | 'Otro';
   rarity?: 'Común' | 'Poco común' | 'Raro' | 'Muy Raro' | 'Legendario' | 'Artefacto';
+  imageUrl?: string;
   weaponAttacks?: WeaponAttack[];
   statModifiers?: ItemStatModifier[];
   itemActions?: ItemSpecialAction[];
@@ -178,6 +184,7 @@ export interface Character5e {
   avatarType?: 'icon' | 'custom';
   avatarCustomUrl?: string;
   avatarIcon?: string;
+  portraitGallery?: string[]; // Up to 4 switchable & downloadable portraits
 
   // Combat Stats
   maxHp: number;
@@ -202,6 +209,8 @@ export interface Character5e {
   // Skills
   skills: Record<SkillKey, SkillProficiencyLevel>;
   customSkills?: CustomSkillEntry[];
+  skillDescriptions?: Partial<Record<SkillKey, string>>;
+  skillImages?: Partial<Record<SkillKey, string>>;
 
   // Proficiencies & Languages
   armorProficiencies: string[];
@@ -260,9 +269,16 @@ export interface NPCRecord {
     notes?: string;
   };
   avatarUrl?: string;
+  imageUrl?: string;
   avatarType?: 'icon' | 'custom';
   avatarCustomUrl?: string;
   avatarIcon?: string;
+  alignment?: string;
+  ideals?: string;
+  bonds?: string;
+  flaws?: string;
+  equipment?: string;
+  dlcSourceId?: string;
 }
 
 export interface MonsterAttack {
@@ -274,6 +290,7 @@ export interface MonsterAttack {
   damageType: string; // e.g. "Cortante"
   description?: string;
   range?: string;
+  imageUrl?: string;
 }
 
 export interface MonsterRecord {
@@ -302,10 +319,12 @@ export interface MonsterRecord {
   legendaryActions?: { name: string; description: string }[];
   folder?: string;
   notes?: string;
+  imageUrl?: string;
   avatarUrl?: string;
   avatarType?: 'icon' | 'custom';
   avatarCustomUrl?: string;
   avatarIcon?: string;
+  dlcSourceId?: string;
 }
 
 export interface TacticalMapToken {
@@ -354,16 +373,28 @@ export interface LocationRecord {
   evolution?: string; // Changes to location over campaign
   pointsOfInterest?: string[];
   mapImageUrl?: string;
+  pinX?: number;
+  pinY?: number;
   folder?: string;
   gridCols?: number;
   gridRows?: number;
+  gridType?: 'square' | 'hex' | 'triangle';
+  blockedCells?: string[];
   tacticalTokens?: TacticalMapToken[];
   tokens?: TacticalMapToken[];
+  suggestedMonsters?: string[];
+  suggestedNpcs?: string[];
+  suggestedItems?: string[];
+  dlcSourceId?: string;
 }
+
+export type CampaignLogEntryType = 'session' | 'chapter' | 'summary' | 'prologue';
+export type ChronicleEntryType = CampaignLogEntryType;
 
 export interface CampaignLogEntry {
   id: string;
   sessionNumber: number;
+  entryType?: CampaignLogEntryType; // 'session' | 'chapter' | 'summary' | 'prologue'
   title: string;
   date: string;
   realDate?: string;
@@ -372,6 +403,7 @@ export interface CampaignLogEntry {
   privateNotes: string; // DM only
   tags: string[];
   folder?: string;
+  dlcSourceId?: string;
 }
 
 export interface Combatant {
@@ -430,6 +462,7 @@ export interface SharedFeatureOrAbility {
   name: string;
   source: 'Raza' | 'Clase' | 'Trasfondo' | 'Dote' | 'Otro';
   description: string;
+  imageUrl?: string;
   ability?: AbilityKey;
   abilityStat?: AbilityKey;
   isSkill?: boolean;
@@ -447,6 +480,7 @@ export interface DMCustomItemOrSpell {
   whoHasIt: string; // Quién lo tenía / portador actual
   whereFound: string; // Dónde se consigue / ubicación o botín
   description: string;
+  imageUrl?: string;
   properties?: string; // Daño, bonificadores, alcance, cargas, componentes...
   dmSecrets?: string; // Notas secretas del DM, maldiciones, efectos ocultos
   folder?: string;
@@ -456,6 +490,7 @@ export interface DMCustomItemOrSpell {
   itemActions?: ItemSpecialAction[];
   skillAbility?: AbilityKey;
   abilityStat?: AbilityKey;
+  dlcSourceId?: string;
 }
 
 export interface PendingDmOffer {
@@ -501,6 +536,7 @@ export interface PlaceAlbumPhoto {
   folder: string;
   description?: string;
   createdAt: number;
+  dlcSourceId?: string;
 }
 
 export interface AtlasPinPosition {
@@ -648,6 +684,8 @@ export interface PartyMemberLive {
     gp: number;
     pp: number;
   };
+  playerSkinId?: string;
+  skinTokens?: AppSkinThemeTokens;
 }
 
 export interface LiveCombatantMini {
@@ -689,6 +727,8 @@ export interface SharedSessionData {
   liveCombatants?: LiveCombatantMini[];
   liveProjection?: LiveRoomProjection;
   playerMessages?: PlayerMessageToDM[];
+  dmSkinId?: string;
+  dmSkinTokens?: AppSkinThemeTokens;
 }
 
 export type UserRole = 'player' | 'dm' | 'both' | 'moderator' | 'creator' | 'admin';
@@ -729,6 +769,8 @@ export interface UserAccountPublic {
   totalConnectedMs?: number;
   sessionCount?: number;
   currentActivity?: string;
+  ownedDlcIds?: string[]; // Cloud-verified DLC entitlements for this user account
+  ownedSkinIds?: string[]; // Cloud-verified Player/DM/App Skin entitlements for this user account
 }
 
 // Forum Data Structures (WeRoll Forum)
@@ -906,7 +948,10 @@ export interface HostSettings {
   liveBroadcastPopup?: LiveBroadcastPopup;
   changelog?: ChangelogEntry[];
   roleSwitchingAllowed?: 'strict' | 'open'; // 'strict' locks player to player and DM to DM; 'open' allows switcher
-  activeAppSkinId?: string; // Optional Creator Studio global app skin ID (e.g. Christmas theme, original theme)
+  activeAppSkinId?: string; // Global Online Lobby/App skin ID
+  activeOnlineLobbySkinId?: string;
+  activeOnlinePlayerSkinId?: string;
+  activeOnlineDmSkinId?: string;
 }
 
 // ==========================================
@@ -919,21 +964,31 @@ export type CreatorModuleKind =
   | 'creator_dlc'
   | 'creator_skin_app';
 
+export type CreatorReviewStatus = 'approved' | 'pending_review' | 'rejected';
+
 export interface CreatorPlayerSkin {
   id: string;
   name: string;
   authorTag: string;
   description: string;
+  seasonTag?: string;
+  claimCode?: string;
+  availableFrom?: string; // ISO date e.g. '2026-12-01'
+  availableUntil?: string; // ISO date e.g. '2026-12-31'
+  isDefault?: boolean;
   sheetTheme: {
     backgroundTextureUrl?: string;
     primaryBorderColor: string;
     accentColor: string;
     cardFrameStyle: string;
+    headerGradient?: string;
+    titleColor?: string;
   };
   tarotCardDesign: {
     frameBorderUrl?: string;
     glowColor: string;
     badgeStyle: string;
+    cardBgGradient?: string;
   };
   updatedAt: number;
 }
@@ -943,10 +998,17 @@ export interface CreatorDmSkin {
   name: string;
   authorTag: string;
   description: string;
+  seasonTag?: string;
+  claimCode?: string;
+  availableFrom?: string;
+  availableUntil?: string;
+  isDefault?: boolean;
   worldSheetTheme: {
     panelBgColor: string;
     borderGoldTone: string;
     mapHudFrameStyle: string;
+    headerGradient?: string;
+    accentColor?: string;
   };
   updatedAt: number;
 }
@@ -957,12 +1019,28 @@ export interface CreatorDlcPackage {
   version: string;
   authorTag: string;
   description: string;
+  seasonTag?: string;
+  claimCode?: string;
+  availableFrom?: string;
+  availableUntil?: string;
+  isOfficialSrd?: boolean;
+  isFreeForAll?: boolean;
   counts: {
     maps: number;
     albums: number;
     monsters: number;
     itemsAndWeapons: number;
     stories: number;
+    npcs?: number;
+  };
+  contentPayload?: {
+    monsters?: MonsterRecord[];
+    npcs?: NPCRecord[];
+    itemsAndSpells?: DMCustomItemOrSpell[];
+    locations?: LocationRecord[];
+    albumPhotos?: PlaceAlbumPhoto[];
+    campaignLogs?: CampaignLogEntry[];
+    folders?: string[];
   };
   updatedAt: number;
 }
@@ -970,16 +1048,27 @@ export interface CreatorDlcPackage {
 export interface CreatorAppSkin {
   id: string;
   name: string;
-  seasonTag: string; // e.g. 'Original', 'Navidad', 'Halloween', 'Aniversario'
+  seasonTag: string; // e.g. 'Original', 'Navidad 2026', 'Halloween', 'Aniversario'
   authorTag: string;
   description: string;
+  claimCode?: string;
+  availableFrom?: string;
+  availableUntil?: string;
   themeTokens: {
     headerBannerBg: string;
+    headerTitleColor?: string;
+    headerTitleScale?: 'sm' | 'md' | 'lg';
+    buttonScale?: 'sm' | 'md' | 'lg';
     lobbyBgAccent: string;
     forumAccentColor: string;
+    forumPanelBg?: string;
+    charactersSectionBg?: string;
+    friendsSectionBg?: string;
     buttonPrimaryGradient: string;
+    borderOrnamentColor?: string;
   };
   isDefault?: boolean;
+  isOnlineActive?: boolean;
   updatedAt: number;
 }
 
@@ -1017,4 +1106,588 @@ export interface SeparatedAssetEntry {
   sizeKb: number;
   updatedAt: number;
 }
+
+export interface AppSkinThemeTokens {
+  // Global / Lobby tokens
+  headerBannerBg?: string;
+  headerBgColor?: string;
+  headerBorderColor?: string;
+  headerTitleColor?: string;
+  headerTitleText?: string;
+  headerTitleScale?: 'sm' | 'md' | 'lg';
+  titleFontScale?: 'sm' | 'md' | 'lg';
+  buttonScale?: 'sm' | 'md' | 'lg';
+  lobbyBgAccent?: string;
+  lobbyBgGradient?: string;
+  forumAccentColor?: string;
+  forumPanelBg?: string;
+  charactersSectionBg?: string;
+  charactersSectionBorder?: string;
+  friendsSectionBg?: string;
+  friendsSectionBorder?: string;
+  forumCardBg?: string;
+  forumBorderColor?: string;
+  buttonPrimaryGradient?: string;
+  primaryButtonBg?: string;
+  primaryButtonText?: string;
+  borderOrnamentColor?: string;
+  appBgGradient?: string;
+  topHeaderBg?: string;
+  topHeaderBorder?: string;
+  headerBrandText?: string;
+  compendiumButtonLabel?: string;
+  manualButtonLabel?: string;
+  oracleButtonLabel?: string;
+  titleColor?: string;
+  cardBg?: string;
+  cardBorder?: string;
+  cardFrameColor?: string;
+  cardBgColor?: string;
+  cardHeaderBg?: string;
+  cardTextColor?: string;
+  cardBadgeColor?: string;
+  accentBadgeBg?: string;
+  accentBadgeText?: string;
+  buttonSize?: 'sm' | 'md' | 'lg';
+
+  // Deep Player Skin Editor Tokens (Player Sheet + Map Mode + Character Tarot Card)
+  sheetIconScale?: 'sm' | 'md' | 'lg';
+  sheetFontFamily?: 'cinzel' | 'sans' | 'serif' | 'mono' | 'custom';
+  customFontUrl?: string;
+  customFontFamilyName?: string;
+  sheetPortraitSize?: 'sm' | 'md' | 'lg';
+  sheetBgColor?: string;
+  sheetBgTextureUrl?: string;
+
+  // Stat Boxes Detailed Customization
+  sheetStatBoxBg?: string;
+  sheetStatBoxBorder?: string;
+  sheetStatBoxStyle?: 'rounded' | 'ornate' | 'sharp' | 'crystal' | 'minimal' | 'parchment' | 'runic' | 'custom_png';
+  sheetStatBoxCustomPngUrl?: string;
+  sheetStatBoxOpacity?: number;
+  sheetStatBoxBorderWidth?: number;
+  sheetStatBoxBorderRadius?: number;
+  sheetStatBoxHideBox?: boolean;
+  sheetStatBoxBlur?: number;
+
+  // HP Bar Detailed Customization
+  sheetHpBarBg?: string;
+  sheetHpBarFill?: string;
+  sheetHpBarStyle?: 'classic' | 'segmented' | 'arcane' | 'dragon' | 'crystal' | 'ember' | 'custom_png';
+  sheetHpBarCustomFramePngUrl?: string;
+  sheetHpBarCustomFillPngUrl?: string;
+  sheetHpBarCustomBgPngUrl?: string;
+  sheetHpBarOpacity?: number;
+  sheetHpBarBorderRadius?: number;
+  sheetHpBarHeight?: number;
+
+  // Custom UI Objects Drawings / PNGs
+  sheetBackpackCustomPngUrl?: string;
+  sheetCoinPouchCustomPngUrl?: string;
+  sheetJournalCustomPngUrl?: string;
+  sheetDeckTarotCustomPngUrl?: string;
+  sheetDiceBoxCustomPngUrl?: string;
+  sheetD20ButtonCustomPngUrl?: string;
+  sheetButtonCustomPngUrl?: string;
+  sheetButtonsOpacity?: number;
+  sheetButtonsBorderRadius?: number;
+
+  deckTarotCardBg?: string;
+  deckTarotCardBorder?: string;
+  deckTarotHeaderBg?: string;
+  adventurerCornerBg?: string;
+  adventurerCornerBorder?: string;
+
+  // Player Map Mode Tokens
+  mapModeFrameBg?: string;
+  mapModeFrameBorder?: string;
+  mapModeCardBg?: string;
+  mapModeButtonBg?: string;
+  mapModeButtonText?: string;
+  mapModeDmHoodBg?: string;
+  mapModeDmHoodBorder?: string;
+  mapModeDmHoodAccent?: string;
+  mapModeD20CustomPngUrl?: string;
+  mapModeDeckFramePngUrl?: string;
+  mapModeHoodCustomPngUrl?: string;
+  mapModePanelsOpacity?: number;
+
+  // Character Tarot Card Tokens (Lobby & Table)
+  tarotGlowColor?: string;
+  tarotBorderColor?: string;
+  tarotHeaderGradient?: string;
+  tarotBadgeBg?: string;
+  tarotBadgeText?: string;
+  tarotCardCustomFramePngUrl?: string;
+  tarotCardCustomOverlayPngUrl?: string;
+  tarotCardArtworkOverlayPngUrl?: string;
+  tarotCardStatPlacement?: 'bottom' | 'side' | 'floating' | 'corners';
+  tarotCardOpacity?: number;
+  tarotCardBorderRadius?: number;
+
+  // Lobby & Header Tokens (Admin)
+  lobbyCustomLogoPngUrl?: string;
+  lobbyCustomTopBarPngUrl?: string;
+  lobbyButtonsOpacity?: number;
+  lobbyButtonsBorderRadius?: number;
+
+  // DM Screen Tokens
+  dmScreenCustomBgTextureUrl?: string;
+  dmScreenDiceBoxCustomPngUrl?: string;
+  dmScreenHoodCustomPngUrl?: string;
+  dmScreenPanelsOpacity?: number;
+
+  // ==========================================
+  // EXTENDED PLAYER LAYERS (J-0 to J-8)
+  // ==========================================
+  // J-0: Base & Fondo
+  sheetBaseFrameBg?: string;
+  sheetBaseFrameBorder?: string;
+  sheetBaseFrameCustomPngUrl?: string;
+  sheetBaseFrameRadius?: number;
+  sheetBaseFrameOpacity?: number;
+  sheetBaseFrameBlur?: number;
+  sheetBaseFramePadding?: number;
+
+  // J-1: Cabecera, Retrato e Identidad
+  sheetPortraitShape?: 'circle' | 'rounded' | 'square' | 'hexagon';
+  sheetPortraitFramePngUrl?: string;
+  sheetNameColor?: string;
+  sheetClassLevelColor?: string;
+  sheetInspirationPngUrl?: string;
+  sheetInspirationScale?: 'sm' | 'md' | 'lg';
+  sheetInspirationGlow?: string;
+
+  // J-2: Cajas de Características (Individuales & Etiquetas)
+  sheetStatLabelColor?: string;
+  sheetStatValueColor?: string;
+  sheetStatIndividualPngs?: Partial<Record<AbilityKey, string>>;
+
+  // J-3: Núcleo de Vida & Animación
+  sheetHpAnimationType?: 'fading' | 'glitch' | 'clockwork' | 'blood_flash';
+  sheetHpBoxBg?: string;
+  sheetHpBoxBorder?: string;
+  sheetHpDamageBtnBg?: string;
+  sheetHpHealBtnBg?: string;
+  sheetDeathSavesStyle?: 'classic' | 'gems' | 'skulls' | 'runes';
+
+  // J-4: Rincón del Aventurero
+  adventurerCornerCustomPngUrl?: string;
+  adventurerCornerTitleText?: string;
+  sheetBackpackLabelText?: string;
+  sheetJournalLabelText?: string;
+
+  // J-5: Mazo de Juego
+  deckSectionTitleText?: string;
+  deckSectionCustomPngUrl?: string;
+  deckCombatTitleText?: string;
+  deckSkillsTitleText?: string;
+  deckSpellsTitleText?: string;
+  deckCardCustomPngUrl?: string;
+  deckIconAlignment?: 'left' | 'center' | 'right';
+  deckDamageBadgePosition?: 'right' | 'bottom' | 'inline';
+
+  // J-6: Carta Tarot 3D (Frente, Reverso, Giro, Partículas)
+  tarotCardBackCustomPngUrl?: string;
+  tarotCardFlipDurationMs?: number;
+  tarotParticleEffect?: 'none' | 'fire' | 'stars' | 'snow' | 'runes';
+
+  // J-7: Modo Mapa del Jugador (7 Sub-capas 7A a 7G)
+  // 7A: Cartas de Aliados
+  mapAlliesPanelPosition?: 'left' | 'right' | 'floating';
+  mapAlliesCardScale?: 'sm' | 'md' | 'lg';
+  mapAlliesCardBorder?: string;
+  mapAlliesSpacing?: number;
+  // 7B: Cartas de Enemigos
+  mapEnemiesCardBg?: string;
+  mapEnemiesCardBorder?: string;
+  mapEnemiesHpBarColor?: string;
+  // 7C: Caja de Dados
+  mapDiceBoxBg?: string;
+  mapDiceBoxBorder?: string;
+  mapDiceBoxCustomPngUrl?: string;
+  mapDiceDisplayStyle?: 'polyhedral_3d' | 'digital_tablet' | 'runic_dial';
+  // 7D: Lienzo del Mapa
+  mapCanvasCustomFramePngUrl?: string;
+  mapZoomControlsBg?: string;
+  // 7G: Navegación Superior y Guardado
+  mapTopNavBg?: string;
+  mapTopNavReturnBtnBg?: string;
+  mapTopNavSaveBtnBg?: string;
+
+  // Audio Profiles por Skin
+  skinAudioDiceRoll?: 'wood_classic' | 'crystal_arcane' | 'tablet_digital' | 'clockwork_gears' | 'runic_stone';
+  skinAudioDamageTaken?: 'sword_slash' | 'cyber_glitch' | 'gear_grind' | 'crimson_pulse';
+  skinAudioHeal?: 'holy_chime' | 'arcane_recharge' | 'alchemical_potion';
+  skinAudioInventoryOpen?: 'leather_bag' | 'metal_chest' | 'holo_screen';
+  skinAudioCardFlip?: 'parchment_whisper' | 'heavy_tome' | 'mystic_hum';
+
+  // ==========================================
+  // EXTENDED DUNGEON MASTER LAYERS (DM-0 to DM-9)
+  // ==========================================
+  // DM-0: Fondo y Plantilla
+  dmScreenBgColor?: string;
+  dmScreenBaseBorder?: string;
+  dmScreenBaseCustomPngUrl?: string;
+  // DM-1: Barra Superior y Estado de Sala
+  dmHeaderBg?: string;
+  dmHeaderTitleColor?: string;
+  dmHeaderBorderColor?: string;
+  dmViewportToggleActiveBg?: string;
+  // DM-2: Estandarte y Capucha Pública del DM
+  dmHoodAvatarFramePngUrl?: string;
+  dmBannerBgGradient?: string;
+  dmBannerAccentColor?: string;
+  // DM-3: Cartas del DM (Monstruos, NPCs, Objetos)
+  dmMonsterCardBg?: string;
+  dmMonsterCardBorder?: string;
+  dmMonsterCardCustomPngUrl?: string;
+  dmNpcCardBg?: string;
+  dmNpcCardBorder?: string;
+  dmNpcCardCustomPngUrl?: string;
+  dmItemCardBg?: string;
+  dmItemCardBorder?: string;
+  // DM-4: Área y Monitor de Combate
+  dmCombatTrackerBg?: string;
+  dmCombatActiveTurnGlow?: string;
+  dmCombatAllyBorder?: string;
+  dmCombatEnemyBorder?: string;
+  // DM-5: Log y Feed de Tiradas de Dados
+  dmRollFeedBg?: string;
+  dmRollFeedBorder?: string;
+  dmRollSecretBadgeBg?: string;
+  // DM-6: Atlas Mundi y Explorador Geográfico
+  dmAtlasFrameBg?: string;
+  dmAtlasFolderTabBg?: string;
+  dmAtlasPinColor?: string;
+  // DM-7: Libro de Crónicas del DM
+  dmChroniclesPageBg?: string;
+  dmChroniclesPublicTextColor?: string;
+  dmChroniclesSecretBoxBg?: string;
+  dmChroniclesSecretBorder?: string;
+  // DM-8: Modo Mapa del DM
+  dmMapCanvasBorder?: string;
+  dmMapQueuePanelBg?: string;
+  dmMapLiveBadgeColor?: string;
+
+  // ==========================================
+  // EXTENDED APP LAYERS (App-0 to App-8) & VISUAL PAGE BUILDER
+  // ==========================================
+  appGlobalWallpaperUrl?: string;
+  appCustomOverlayEffectUrl?: string;
+  appCustomOverlayOpacity?: number;
+  friendsBoxCustomPngUrl?: string;
+  friendsPanelWidth?: string;
+  friendsOnlineDotColor?: string;
+  friendsActionBtnBg?: string;
+  storePanelBg?: string;
+  storeCardBg?: string;
+  storeCardBorder?: string;
+  storeClaimBtnBg?: string;
+  storeSeasonBadgeBg?: string;
+  adminHarmonizedInherit?: boolean;
+
+  // Spatial Page Builder for App / Lobby Skin (Shopify-style full block & button customization)
+  lobbyPageLayout?: LobbyPageLayoutConfig;
+
+  // ==========================================
+  // POP-UPS & MODALS SKINNING + EXTENSIBLE LAYERS
+  // ==========================================
+  popupConfigs?: Record<string, PopupSkinConfig>;
+  customLayers?: CustomLayerToken[];
+  extensibleTokens?: Record<string, any>;
+}
+
+export type LobbyBlockId =
+  | 'top_header'
+  | 'admin_greeting'
+  | 'welcome_banner'
+  | 'characters_box'
+  | 'friends_box'
+  | 'forum_box'
+  | 'store_box';
+
+export interface LobbyInnerButtonConfig {
+  id: string;
+  label?: string;
+  visible?: boolean;
+  opacity?: number; // 0 to 1
+  x?: number; // px offset
+  y?: number; // px offset
+  widthPx?: number; // 0 = auto
+  heightPx?: number; // 0 = auto
+  paddingXPx?: number;
+  paddingYPx?: number;
+  fontSizePx?: number;
+  iconSizePx?: number;
+  borderRadiusPx?: number;
+  borderWidthPx?: number;
+  bgColor?: string;
+  bgOpacity?: number; // 0 to 1 (0 = transparent button frame)
+  textColor?: string;
+  borderColor?: string;
+  bgImageUrl?: string;
+  customIconUrl?: string;
+}
+
+export interface LobbyBlockLayoutConfig {
+  id: LobbyBlockId;
+  name: string;
+  visible: boolean;
+  order: number;
+  zIndex: number;
+  // Spatial coordinates & dimensions in pixels
+  x: number; // Horizontal offset in px from default slot (or canvas X)
+  y: number; // Vertical offset in px from default slot (or canvas Y)
+  widthPx: number; // 0 = default responsive width, >0 = explicit width in px
+  heightPx: number; // 0 = auto height, >0 = explicit min/fixed height in px
+  scale: number; // 0.5 to 1.5
+  paddingPx: number;
+  // Opacity & Frame visibility
+  opacity: number; // 0 to 1 (entire block opacity; 0 = completely invisible)
+  boxBgOpacity: number; // 0 to 1 (container background/frame opacity; 0 = invisible box frame)
+  hideBorder: boolean;
+  // Visual styling & Custom Images
+  bgColor: string;
+  borderColor: string;
+  borderWidthPx: number;
+  borderRadiusPx: number;
+  backdropBlurPx: number;
+  boxShadow: string;
+  bgImageUrl: string;
+  bgImageFit: 'cover' | 'contain' | 'stretch';
+  // Typography & Content inside the block
+  titleText?: string;
+  subtitleText?: string;
+  fontFamily?: string;
+  titleFontSizePx?: number;
+  bodyFontSizePx?: number;
+  titleColor?: string;
+  textColor?: string;
+  accentColor?: string;
+  iconSizePx?: number;
+  // Block-specific extra settings (e.g. avatar size, tarot card size, input colors)
+  avatarSizePx?: number;
+  avatarShape?: 'circle' | 'rounded' | 'square' | 'hexagon';
+  customAvatarFrameUrl?: string;
+  showRoleBadges?: boolean;
+  showEmailTag?: boolean;
+  cardWidthPx?: number;
+  cardHeightPx?: number;
+  innerInputBgColor?: string;
+  innerInputBorderColor?: string;
+  innerCardBgColor?: string;
+  innerCardBorderColor?: string;
+  // Inner Buttons Order & Individual Button Customization
+  innerButtonsOrder: string[];
+  innerButtonsConfig: Record<string, LobbyInnerButtonConfig>;
+}
+
+export interface LobbyPageLayoutConfig {
+  version: number;
+  canvasWidthPx: number;
+  wallpaperUrl?: string;
+  wallpaperOpacity?: number;
+  customOverlayUrl?: string; // Custom GIF/WebM/PNG overlay instead of hardcoded effects
+  customOverlayOpacity?: number;
+  blocksOrder: LobbyBlockId[];
+  blocks: Record<LobbyBlockId, LobbyBlockLayoutConfig>;
+}
+
+export interface PopupSkinConfig {
+  popupId: string;
+  label?: string;
+  geometry?: {
+    maxWidth?: string;
+    borderRadius?: number;
+    backdropBlur?: number;
+    opacity?: number;
+    animationType?: 'fade' | 'zoom' | 'slide_down' | 'unfold';
+    animationDurationMs?: number;
+  };
+  visuals?: {
+    bgColor?: string;
+    bgTextureUrl?: string;
+    customFramePngUrl?: string;
+    borderColor?: string;
+    borderWidth?: number;
+    boxShadow?: string;
+    headerBgColor?: string;
+    headerBorderColor?: string;
+  };
+  typography?: {
+    titleFontFamily?: string;
+    titleColor?: string;
+    bodyFontFamily?: string;
+    bodyColor?: string;
+  };
+  innerElements?: {
+    categoryTabsBg?: string;
+    categoryTabsActiveBg?: string;
+    coinsDisplayBg?: string;
+    subItemCardBg?: string;
+    subItemCardBorder?: string;
+    closeButtonPngUrl?: string;
+  };
+}
+
+export interface CustomLayerToken {
+  layerId: string;
+  name: string;
+  targetScope: 'player' | 'dm' | 'app';
+  visible: boolean;
+  orderIndex: number;
+  geometry?: {
+    width?: string;
+    height?: string;
+    position?: 'static' | 'absolute' | 'fixed';
+    top?: string;
+    left?: string;
+    borderRadius?: number;
+    opacity?: number;
+  };
+  visuals?: {
+    bgColor?: string;
+    bgImageUrl?: string;
+    borderWidth?: number;
+    borderColor?: string;
+    boxShadow?: string;
+  };
+  typography?: {
+    fontFamily?: string;
+    fontSize?: string;
+    color?: string;
+  };
+  audioFx?: {
+    clickSound?: string;
+    hoverSound?: string;
+  };
+}
+
+export interface AppSkinRecord {
+  id: string;
+  name: string;
+  seasonTag?: string;
+  authorTag?: string;
+  authorName?: string;
+  authorEmail?: string;
+  description: string;
+  target?: 'app' | 'player' | 'dm';
+  scope?: 'app' | 'player' | 'dm';
+  isDefault?: boolean;
+  isOfficialDefault?: boolean;
+  isOnlineDefault?: boolean;
+  isOnlineActive?: boolean;
+  isAcquirable?: boolean;
+  isLimitedTime?: boolean;
+  isSeasonal?: boolean;
+  seasonLabel?: string;
+  priceLabel?: string;
+  claimCode?: string;
+  acquisitionCode?: string;
+  availableFrom?: string;
+  availableUntil?: string;
+  // Creator Credit & Attribution fields
+  createdByAdmin?: boolean;
+  hideCreatorCredit?: boolean;
+  editorCreditName?: string;
+  customCreditDescription?: string;
+  // Review & Approval Workflow fields
+  reviewStatus?: CreatorReviewStatus;
+  reviewNotes?: string;
+  submittedByEmail?: string;
+  submittedByName?: string;
+  submittedAt?: number;
+  reviewedByEmail?: string;
+  reviewedAt?: number;
+  pendingDraft?: Partial<AppSkinRecord>;
+  themeTokens: AppSkinThemeTokens;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface DLCPackageRecord {
+  id: string;
+  name: string;
+  version: string;
+  authorTag?: string;
+  authorName?: string;
+  authorEmail?: string;
+  description: string;
+  seasonTag?: string;
+  seasonLabel?: string;
+  priceLabel?: string;
+  claimCode?: string;
+  acquisitionCode?: string;
+  availableFrom?: string;
+  availableUntil?: string;
+  isOfficialSrd?: boolean;
+  isFreeForAll?: boolean;
+  isLimitedTime?: boolean;
+  isSeasonal?: boolean;
+  // Creator Credit & Attribution fields
+  createdByAdmin?: boolean;
+  hideCreatorCredit?: boolean;
+  editorCreditName?: string;
+  customCreditDescription?: string;
+  // Review & Approval Workflow fields
+  reviewStatus?: CreatorReviewStatus;
+  reviewNotes?: string;
+  submittedByEmail?: string;
+  submittedByName?: string;
+  submittedAt?: number;
+  reviewedByEmail?: string;
+  reviewedAt?: number;
+  pendingDraft?: Partial<DLCPackageRecord>;
+  counts?: {
+    maps: number;
+    albums: number;
+    monsters: number;
+    itemsAndWeapons: number;
+    stories: number;
+    npcs?: number;
+  };
+  monsters?: MonsterRecord[];
+  npcs?: NPCRecord[];
+  itemsAndSpells?: DMCustomItemOrSpell[];
+  locations?: LocationRecord[];
+  placeAlbumPhotos?: PlaceAlbumPhoto[];
+  albumPhotos?: PlaceAlbumPhoto[];
+  campaignLogs?: CampaignLogEntry[];
+  contentPayload?: {
+    monsters?: MonsterRecord[];
+    npcs?: NPCRecord[];
+    itemsAndSpells?: DMCustomItemOrSpell[];
+    locations?: LocationRecord[];
+    albumPhotos?: PlaceAlbumPhoto[];
+    campaignLogs?: CampaignLogEntry[];
+    folders?: string[];
+  };
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface CreatorCatalogPayload {
+  dlcs: DLCPackageRecord[];
+  skins?: AppSkinRecord[];
+  appSkins: AppSkinRecord[];
+  playerSkins: AppSkinRecord[];
+  dmSkins: AppSkinRecord[];
+  activeOnlineAppSkinId: string;
+  activeOnlineLobbySkinId?: string;
+  activeOnlinePlayerSkinId?: string;
+  activeOnlineDmSkinId?: string;
+  ownedDlcIds?: string[];
+  ownedSkinIds?: string[];
+  accountEntitlements?: Array<{
+    email: string;
+    displayName: string;
+    appRole: string;
+    ownedDlcIds: string[];
+    ownedSkinIds: string[];
+    updatedAt: number;
+  }>;
+}
+
+
 

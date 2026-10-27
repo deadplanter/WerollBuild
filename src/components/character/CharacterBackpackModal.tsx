@@ -25,6 +25,7 @@ import {
   classifyInventoryItemKey,
   formatWeaponAttackFormula,
 } from '../../utils/dnd-math';
+import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 
 interface CharacterBackpackModalProps {
   isOpen: boolean;
@@ -82,6 +83,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
     rarity: InventoryItem['rarity'];
     equipped: boolean;
     description: string;
+    imageUrl: string;
     weaponAttacks: WeaponAttack[];
     statModifiers: ItemStatModifier[];
     itemActions: ItemSpecialAction[];
@@ -94,6 +96,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
     rarity: 'Común',
     equipped: true,
     description: '',
+    imageUrl: '',
     weaponAttacks: [
       {
         id: 'atk-1',
@@ -123,6 +126,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
     duration: string;
     damageOrHeal: string;
     description: string;
+    imageUrl: string;
     prepared: boolean;
   }>({
     name: '',
@@ -134,6 +138,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
     duration: 'Instantáneo',
     damageOrHeal: '1d8',
     description: '',
+    imageUrl: '',
     prepared: true,
   });
 
@@ -196,6 +201,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
       rarity: 'Común',
       equipped: group !== 'common',
       description: '',
+      imageUrl: '',
       weaponAttacks:
         group === 'weapon'
           ? [
@@ -244,6 +250,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
       rarity: item.rarity || 'Común',
       equipped: Boolean(item.equipped),
       description: item.description || '',
+      imageUrl: item.imageUrl || '',
       weaponAttacks:
         Array.isArray(item.weaponAttacks) && item.weaponAttacks.length > 0
           ? item.weaponAttacks.map((a) => ({ ...a }))
@@ -375,6 +382,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
       rarity: itemDraft.rarity,
       equipped: itemDraft.equipped,
       description: itemDraft.description.trim(),
+      imageUrl: itemDraft.imageUrl.trim() || undefined,
       weaponAttacks: itemDraft.itemGroup === 'weapon' ? itemDraft.weaponAttacks : undefined,
       statModifiers: itemDraft.statModifiers.length > 0 ? itemDraft.statModifiers : undefined,
       itemActions: itemDraft.itemActions.length > 0 ? itemDraft.itemActions : undefined,
@@ -443,6 +451,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
       duration: 'Instantáneo',
       damageOrHeal: '',
       description: '',
+      imageUrl: '',
       prepared: true,
     });
     setShowSpellForm(true);
@@ -464,6 +473,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
       duration: sp.duration || 'Instantáneo',
       damageOrHeal: sp.damageOrHeal || '',
       description: sp.description || '',
+      imageUrl: sp.imageUrl || '',
       prepared: sp.prepared !== false,
     });
     setShowSpellForm(true);
@@ -483,6 +493,7 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
       duration: spellDraft.duration.trim() || 'Instantáneo',
       damageOrHeal: spellDraft.damageOrHeal.trim() || undefined,
       description: spellDraft.description.trim() || 'Conjuro registrado en el grimorio.',
+      imageUrl: spellDraft.imageUrl.trim() || undefined,
       prepared: spellDraft.prepared,
     };
 
@@ -992,6 +1003,60 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
                               ))}
                             </select>
                           </div>
+                          <div className="sm:col-span-3 pt-1 border-t border-[#4b351b]/70">
+                            <label className="block text-[10px] text-[#e2c275] font-cinzel font-bold mb-1">
+                              Imagen Exclusiva de este Ataque (Opcional — si se deja vacío usará la imagen general del arma)
+                            </label>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {(itemDraft.weaponAttacks[activeAttackTabIdx].imageUrl || itemDraft.imageUrl) && (
+                                <img
+                                  src={itemDraft.weaponAttacks[activeAttackTabIdx].imageUrl || itemDraft.imageUrl}
+                                  alt="Miniatura de ataque"
+                                  className="w-9 h-9 rounded-lg object-cover border border-[#e2c275]/80 shrink-0"
+                                />
+                              )}
+                              <input
+                                type="text"
+                                value={itemDraft.weaponAttacks[activeAttackTabIdx].imageUrl || ''}
+                                onChange={(e) =>
+                                  handleUpdateAttackInDraft(activeAttackTabIdx, {
+                                    imageUrl: e.target.value,
+                                  })
+                                }
+                                placeholder="URL de imagen para este ataque o sube archivo..."
+                                className="flex-1 min-w-[160px] bg-black/50 border border-[#6e522b] rounded px-2.5 py-1 text-xs text-white"
+                              />
+                              <label className="px-2.5 py-1 rounded bg-[#332214] hover:bg-[#48301d] border border-[#8b6b35] text-amber-200 text-[10px] font-cinzel font-bold cursor-pointer">
+                                Subir Imagen de Ataque
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    try {
+                                      const dataUrl = await compressImageFileToDataUrl(file, 320, 0.8);
+                                      handleUpdateAttackInDraft(activeAttackTabIdx, { imageUrl: dataUrl });
+                                    } catch {
+                                      // ignore
+                                    }
+                                  }}
+                                />
+                              </label>
+                              {itemDraft.weaponAttacks[activeAttackTabIdx].imageUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleUpdateAttackInDraft(activeAttackTabIdx, { imageUrl: '' })
+                                  }
+                                  className="px-2 py-1 rounded bg-red-950/60 text-red-300 text-[10px] cursor-pointer"
+                                >
+                                  Usar imagen del arma
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1182,10 +1247,103 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
                                 className="w-full bg-black/50 border border-[#6e522b] rounded px-2 py-1 text-[11px] text-stone-200"
                               />
                             </div>
+                            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[#4b351b]/60">
+                              {(act.imageUrl || itemDraft.imageUrl) && (
+                                <img
+                                  src={act.imageUrl || itemDraft.imageUrl}
+                                  alt="Miniatura acción"
+                                  className="w-7 h-7 rounded object-cover border border-[#e2c275]/80 shrink-0"
+                                />
+                              )}
+                              <input
+                                type="text"
+                                value={act.imageUrl || ''}
+                                onChange={(e) => handleUpdateActionInDraft(aIdx, { imageUrl: e.target.value })}
+                                placeholder="Imagen exclusiva de esta acción (vacío = usa imagen del objeto)"
+                                className="flex-1 min-w-[150px] bg-black/50 border border-[#6e522b] rounded px-2 py-1 text-[10px] text-white"
+                              />
+                              <label className="px-2 py-1 rounded bg-[#332214] hover:bg-[#48301d] border border-[#8b6b35] text-amber-200 text-[10px] font-cinzel font-bold cursor-pointer">
+                                Subir Imagen
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    try {
+                                      const dataUrl = await compressImageFileToDataUrl(file, 320, 0.8);
+                                      handleUpdateActionInDraft(aIdx, { imageUrl: dataUrl });
+                                    } catch {
+                                      // ignore
+                                    }
+                                  }}
+                                />
+                              </label>
+                              {act.imageUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateActionInDraft(aIdx, { imageUrl: '' })}
+                                  className="px-2 py-0.5 rounded bg-red-950/60 text-red-300 text-[10px] cursor-pointer"
+                                >
+                                  Usar del objeto
+                                </button>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  {/* Image Upload / URL for Weapon, Armor, or Common Item */}
+                  <div className="bg-[#18110b] border border-[#634824] rounded-xl p-3 space-y-2">
+                    <span className="text-xs font-cinzel font-bold text-[#e2c275] block">
+                      Ilustración / Imagen del Objeto (Opcional):
+                    </span>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      {itemDraft.imageUrl && (
+                        <img
+                          src={itemDraft.imageUrl}
+                          alt="Vista previa"
+                          className="w-12 h-12 rounded-lg object-cover border border-[#e2c275]"
+                        />
+                      )}
+                      <input
+                        type="text"
+                        value={itemDraft.imageUrl}
+                        onChange={(e) => setItemDraft({ ...itemDraft, imageUrl: e.target.value })}
+                        placeholder="URL de imagen o sube un archivo..."
+                        className="flex-1 min-w-[180px] bg-black/50 border border-[#6e522b] rounded-lg px-3 py-1.5 text-xs text-white"
+                      />
+                      <label className="px-3 py-1.5 rounded-lg bg-[#332214] hover:bg-[#48301d] border border-[#8b6b35] text-amber-200 text-xs font-cinzel font-bold cursor-pointer">
+                        Subir Imagen
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            try {
+                              const dataUrl = await compressImageFileToDataUrl(file, 360, 0.8);
+                              setItemDraft((prev) => ({ ...prev, imageUrl: dataUrl }));
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                        />
+                      </label>
+                      {itemDraft.imageUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setItemDraft({ ...itemDraft, imageUrl: '' })}
+                          className="px-2 py-1 rounded bg-red-950/60 text-red-300 text-xs"
+                        >
+                          Quitar
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1242,6 +1400,13 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
                             : 'bg-[#17100b] border-[#4d3920]'
                         }`}
                       >
+                        {item.imageUrl && (
+                          <img
+                            src={item.imageUrl}
+                            alt={item.name}
+                            className="w-12 h-12 rounded-xl object-cover border border-[#c8a45c]/70 shrink-0 shadow"
+                          />
+                        )}
                         <div className="min-w-0 flex-1 space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-cinzel font-bold text-sm text-[#f6e7c8]">
@@ -1448,6 +1613,51 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
                     </div>
                   </div>
 
+                  {/* Spell Image Upload / URL */}
+                  <div className="bg-black/35 border border-purple-500/30 rounded-xl p-2.5 flex flex-wrap items-center gap-2.5">
+                    {spellDraft.imageUrl && (
+                      <img
+                        src={spellDraft.imageUrl}
+                        alt="Vista previa conjuro"
+                        className="w-10 h-10 rounded-lg object-cover border border-purple-400"
+                      />
+                    )}
+                    <input
+                      type="text"
+                      value={spellDraft.imageUrl}
+                      onChange={(e) => setSpellDraft({ ...spellDraft, imageUrl: e.target.value })}
+                      placeholder="URL de imagen del conjuro o sube una imagen..."
+                      className="flex-1 min-w-[180px] bg-black/50 border border-purple-500/40 rounded-lg px-3 py-1.5 text-xs text-white"
+                    />
+                    <label className="px-3 py-1.5 rounded-lg bg-purple-900/60 hover:bg-purple-800 border border-purple-400/50 text-purple-100 text-xs font-cinzel font-bold cursor-pointer">
+                      Subir Imagen
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            const dataUrl = await compressImageFileToDataUrl(file, 360, 0.8);
+                            setSpellDraft((prev) => ({ ...prev, imageUrl: dataUrl }));
+                          } catch {
+                            // ignore
+                          }
+                        }}
+                      />
+                    </label>
+                    {spellDraft.imageUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setSpellDraft({ ...spellDraft, imageUrl: '' })}
+                        className="px-2 py-1 rounded bg-red-950/60 text-red-300 text-xs"
+                      >
+                        Quitar
+                      </button>
+                    )}
+                  </div>
+
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <input
                       type="text"
@@ -1493,6 +1703,13 @@ export const CharacterBackpackModal: React.FC<CharacterBackpackModalProps> = ({
                           : 'bg-[#150f0a] border-[#4d3920] opacity-75'
                       }`}
                     >
+                      {sp.imageUrl && (
+                        <img
+                          src={sp.imageUrl}
+                          alt={sp.name}
+                          className="w-12 h-12 rounded-xl object-cover border border-purple-400/70 shrink-0 shadow"
+                        />
+                      )}
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-cinzel font-bold text-sm text-[#f6e7c8]">

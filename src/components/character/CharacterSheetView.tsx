@@ -63,8 +63,12 @@ import {
   calculateEquippedItemStatBonuses,
   calculateTotalAbilityScore,
   deriveAllCharacterActions,
+  buildDeduplicatedPlayerSkillCards,
+  clampPortraitGallery,
 } from '../../utils/dnd-math';
-import { ABILITY_LABELS, SKILL_METADATA } from '../../data/srd';
+import { ABILITY_LABELS, SKILL_METADATA, SKILLS_5E } from '../../data/srd';
+import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
+import { CreatorPlayerSkin } from '../../types/dnd';
 
 const DEFAULT_SRD_SKILL_DESCRIPTIONS: Record<SkillKey, string> = {
   acrobatics: 'Mantener el equilibrio, hacer piruetas, escapar de agarres o aterrizar de pie.',
@@ -148,6 +152,108 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
   const [isParchmentModalOpen, setIsParchmentModalOpen] = useState<boolean>(false);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState<boolean>(false);
   const [skinNotice, setSkinNotice] = useState<boolean>(false);
+  const [isSkinModalOpen, setIsSkinModalOpen] = useState<boolean>(false);
+  const [availablePlayerSkins, setAvailablePlayerSkins] = useState<CreatorPlayerSkin[]>([]);
+  const [catalogPlayerSkinRecords, setCatalogPlayerSkinRecords] = useState<any[]>([]);
+  const [onlineDefaultPlayerSkinId, setOnlineDefaultPlayerSkinId] = useState<string>('skin-player-classic-gold');
+  const [redeemCodeInput, setRedeemCodeInput] = useState<string>('');
+  const [redeemFeedback, setRedeemFeedback] = useState<string>('');
+
+  React.useEffect(() => {
+    let mounted = true;
+    fetch('/api/creator/catalog')
+      .then((r) => r.json())
+      .then((data) => {
+        if (!mounted) return;
+        if (Array.isArray(data.playerSkins)) setAvailablePlayerSkins(data.playerSkins);
+        if (Array.isArray(data.skins)) {
+          setCatalogPlayerSkinRecords(data.skins.filter((s: any) => s.scope === 'player'));
+        }
+        if (data.activeOnlinePlayerSkinId) {
+          setOnlineDefaultPlayerSkinId(data.activeOnlinePlayerSkinId);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const activeSkinRecord = React.useMemo(() => {
+    const targetId = character.playerSkinId || onlineDefaultPlayerSkinId;
+    return (
+      catalogPlayerSkinRecords.find((s) => s.id === targetId) ||
+      catalogPlayerSkinRecords.find((s) => s.id === onlineDefaultPlayerSkinId) ||
+      null
+    );
+  }, [character.playerSkinId, catalogPlayerSkinRecords, onlineDefaultPlayerSkinId]);
+
+  const activeSkinTokens = activeSkinRecord?.themeTokens || null;
+
+  const statBoxCustomStyle: React.CSSProperties = React.useMemo(() => {
+    if (!activeSkinTokens) return {};
+    if (activeSkinTokens.sheetStatBoxHideBox) {
+      return {
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        boxShadow: 'none',
+        opacity:
+          activeSkinTokens.sheetStatBoxOpacity !== undefined
+            ? activeSkinTokens.sheetStatBoxOpacity
+            : 1,
+      };
+    }
+    return {
+      backgroundColor: activeSkinTokens.sheetStatBoxBg || undefined,
+      borderColor: activeSkinTokens.sheetStatBoxBorder || undefined,
+      backgroundImage: activeSkinTokens.sheetStatBoxCustomPngUrl
+        ? `url(${activeSkinTokens.sheetStatBoxCustomPngUrl})`
+        : undefined,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      opacity:
+        activeSkinTokens.sheetStatBoxOpacity !== undefined
+          ? activeSkinTokens.sheetStatBoxOpacity
+          : 1,
+      borderRadius:
+        activeSkinTokens.sheetStatBoxBorderRadius !== undefined
+          ? `${activeSkinTokens.sheetStatBoxBorderRadius}px`
+          : undefined,
+    };
+  }, [activeSkinTokens]);
+
+  const hpBarContainerStyle: React.CSSProperties = React.useMemo(() => {
+    if (!activeSkinTokens) return {};
+    return {
+      height: activeSkinTokens.sheetHpBarHeight
+        ? `${activeSkinTokens.sheetHpBarHeight}px`
+        : undefined,
+      backgroundColor: activeSkinTokens.sheetHpBarBg || undefined,
+      backgroundImage: activeSkinTokens.sheetHpBarCustomFramePngUrl
+        ? `url(${activeSkinTokens.sheetHpBarCustomFramePngUrl})`
+        : undefined,
+      backgroundSize: 'cover',
+      borderRadius:
+        activeSkinTokens.sheetHpBarBorderRadius !== undefined
+          ? `${activeSkinTokens.sheetHpBarBorderRadius}px`
+          : undefined,
+      opacity:
+        activeSkinTokens.sheetHpBarOpacity !== undefined
+          ? activeSkinTokens.sheetHpBarOpacity
+          : 1,
+    };
+  }, [activeSkinTokens]);
+
+  const hpBarFillStyle: React.CSSProperties = React.useMemo(() => {
+    if (!activeSkinTokens) return {};
+    return {
+      backgroundColor: activeSkinTokens.sheetHpBarFill || undefined,
+      backgroundImage: activeSkinTokens.sheetHpBarCustomFillPngUrl
+        ? `url(${activeSkinTokens.sheetHpBarCustomFillPngUrl})`
+        : undefined,
+      backgroundSize: 'cover',
+    };
+  }, [activeSkinTokens]);
 
   // Table Mode Modals (Map & Private Message to DM)
   const [isMapModalOpen, setIsMapModalOpen] = useState<boolean>(false);
@@ -179,20 +285,23 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
     notes: '',
   });
 
-  // Add Skill Card Modal
+  // Add / Edit Skill Card Modal
   const [showAddSkillCardModal, setShowAddSkillCardModal] = useState<boolean>(false);
+  const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
   const [skillCardForm, setSkillCardForm] = useState<{
     srdKey: SkillKey | 'custom';
     name: string;
     ability: AbilityKey;
     proficiency: 'proficient' | 'expertise';
     description: string;
+    imageUrl: string;
   }>({
     srdKey: 'perception',
     name: 'Percepción',
     ability: 'wis',
     proficiency: 'proficient',
     description: DEFAULT_SRD_SKILL_DESCRIPTIONS.perception,
+    imageUrl: '',
   });
 
   const profBonus = calculateProficiencyBonus(character.level);
@@ -250,27 +359,23 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
   );
   const equippedWeaponAttacks = allCharacterActions;
 
-  // Derived Possessed / Unlocked Skills for "Habilidades" Deck
+  // Derived Possessed / Unlocked Skills for "Habilidades" Deck (Deduplicated by srdKey & normalized name)
   const possessedSkills: CustomSkillEntry[] = React.useMemo(() => {
-    if (Array.isArray(character.customSkills) && character.customSkills.length > 0) {
-      return character.customSkills;
-    }
-    const entries: CustomSkillEntry[] = [];
-    (Object.keys(SKILL_METADATA) as SkillKey[]).forEach((k) => {
-      const prof = character.skills?.[k] || 'none';
-      if (prof !== 'none') {
-        entries.push({
-          id: `skill-${k}`,
-          srdKey: k,
-          name: SKILL_METADATA[k].nameEs,
-          ability: SKILL_METADATA[k].ability,
-          proficiency: prof,
-          description: DEFAULT_SRD_SKILL_DESCRIPTIONS[k] || '',
-        });
-      }
-    });
-    return entries;
-  }, [character.customSkills, character.skills]);
+    const deduped = buildDeduplicatedPlayerSkillCards(
+      character,
+      SKILLS_5E,
+      (ab) => getEffectiveAbilityModifier(character.abilities[ab])
+    );
+    return deduped.map((sk) => ({
+      id: sk.id,
+      srdKey: sk.srdKey as SkillKey | undefined,
+      name: sk.name,
+      ability: sk.ability,
+      proficiency: sk.proficiency,
+      description: sk.description,
+      imageUrl: sk.imageUrl,
+    }));
+  }, [character]);
 
   // Derived Prepared Spells for "Lanzar Conjuros" Deck
   const preparedSpells = React.useMemo(
@@ -471,30 +576,78 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
   const handleAddSkillCard = (e: React.FormEvent) => {
     e.preventDefault();
     if (!skillCardForm.name.trim()) return;
+    const trimmedName = skillCardForm.name.trim();
+    const normTarget = trimmedName
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
     const newEntry: CustomSkillEntry = {
-      id: `cskill-${Date.now()}`,
+      id: editingSkillId || `cskill-${Date.now()}`,
       srdKey: skillCardForm.srdKey !== 'custom' ? skillCardForm.srdKey : undefined,
-      name: skillCardForm.name.trim(),
+      name: trimmedName,
       ability: skillCardForm.ability,
       proficiency: skillCardForm.proficiency,
       description: skillCardForm.description.trim() || 'Habilidad desbloqueada.',
+      imageUrl: skillCardForm.imageUrl.trim() || undefined,
     };
-    const nextCustom = [...possessedSkills, newEntry];
+
+    // Replace any existing entry with the same id, srdKey, or normalized name so we never create duplicates
+    const filteredExisting = possessedSkills.filter((s) => {
+      if (editingSkillId && s.id === editingSkillId) return false;
+      if (newEntry.srdKey && s.srdKey === newEntry.srdKey) return false;
+      const sNorm = (s.name || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+      if (sNorm === normTarget) return false;
+      return true;
+    });
+
+    const nextCustom = [...filteredExisting, newEntry];
     const nextSkills = { ...character.skills };
+    const nextSkillDescriptions = { ...(character.skillDescriptions || {}) };
+    const nextSkillImages = { ...(character.skillImages || {}) };
+
     if (skillCardForm.srdKey !== 'custom') {
       nextSkills[skillCardForm.srdKey] = skillCardForm.proficiency;
+      if (newEntry.description) {
+        nextSkillDescriptions[skillCardForm.srdKey] = newEntry.description;
+      }
+      if (newEntry.imageUrl) {
+        nextSkillImages[skillCardForm.srdKey] = newEntry.imageUrl;
+      }
     }
+
     onUpdateCharacter({
       ...character,
       skills: nextSkills,
       customSkills: nextCustom,
+      skillDescriptions: nextSkillDescriptions,
+      skillImages: nextSkillImages,
     });
+    setEditingSkillId(null);
     setShowAddSkillCardModal(false);
+  };
+
+  const handleOpenEditSkillCard = (sk: CustomSkillEntry) => {
+    if (isLocked) return;
+    setEditingSkillId(sk.id);
+    setSkillCardForm({
+      srdKey: sk.srdKey || 'custom',
+      name: sk.name,
+      ability: sk.ability,
+      proficiency: sk.proficiency === 'expertise' ? 'expertise' : 'proficient',
+      description: sk.description || '',
+      imageUrl: sk.imageUrl || '',
+    });
+    setShowAddSkillCardModal(true);
   };
 
   const handleRemoveSkillCard = (id: string, srdKey?: SkillKey) => {
     if (isLocked) return;
-    const nextCustom = possessedSkills.filter((s) => s.id !== id);
+    const nextCustom = possessedSkills.filter((s) => s.id !== id && (!srdKey || s.srdKey !== srdKey));
     const nextSkills = { ...character.skills };
     if (srdKey) {
       nextSkills[srdKey] = 'none';
@@ -504,6 +657,54 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
       skills: nextSkills,
       customSkills: nextCustom,
     });
+  };
+
+  const handleOpenPlayerSkinModal = async () => {
+    setIsSkinModalOpen(true);
+    try {
+      const res = await fetch('/api/creator/catalog');
+      const data = await res.json();
+      if (Array.isArray(data.playerSkins)) {
+        setAvailablePlayerSkins(data.playerSkins);
+      }
+      if (Array.isArray(data.skins)) {
+        setCatalogPlayerSkinRecords(data.skins.filter((s: any) => s.scope === 'player'));
+      }
+      if (data.activeOnlinePlayerSkinId) {
+        setOnlineDefaultPlayerSkinId(data.activeOnlinePlayerSkinId);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleRedeemSkinCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!redeemCodeInput.trim()) return;
+    try {
+      const res = await fetch('/api/creator/entitlements/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: redeemCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setRedeemFeedback(data.message || '¡Skin desbloqueada en tu cuenta!');
+        setRedeemCodeInput('');
+        if (data.skinId) {
+          onUpdateCharacter({ ...character, playerSkinId: data.skinId });
+        }
+        const catRes = await fetch('/api/creator/catalog');
+        const catData = await catRes.json();
+        if (catData.ok && Array.isArray(catData.playerSkins)) {
+          setAvailablePlayerSkins(catData.playerSkins);
+        }
+      } else {
+        setRedeemFeedback(data.error || 'Código inválido.');
+      }
+    } catch {
+      setRedeemFeedback('Error de red al canjear código.');
+    }
   };
 
   const handleSubmitMessageToDM = async (e: React.FormEvent) => {
@@ -618,11 +819,63 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
         {/* ================================================================= */}
         {/* MAIN CHARACTER SHEET PANEL (12 cols in Solo, 9 cols in Table Mode)*/}
         {/* ================================================================= */}
+        {activeSkinTokens?.customFontUrl && (
+          <style>{`
+            @font-face {
+              font-family: '${activeSkinTokens.customFontFamilyName || 'CustomSheetFont'}';
+              src: url('${activeSkinTokens.customFontUrl}');
+            }
+            .custom-sheet-font {
+              font-family: '${activeSkinTokens.customFontFamilyName || 'CustomSheetFont'}', sans-serif !important;
+            }
+          `}</style>
+        )}
         <div
+          style={
+            activeSkinTokens?.sheetBgColor
+              ? {
+                  backgroundColor: activeSkinTokens.sheetBgColor,
+                  borderColor: activeSkinTokens.cardFrameColor || '#c8a45c',
+                  backgroundImage: activeSkinTokens.sheetBgTextureUrl
+                    ? `url(${activeSkinTokens.sheetBgTextureUrl})`
+                    : undefined,
+                }
+              : undefined
+          }
           className={`${
             isInActiveRoom ? 'xl:col-span-9' : 'xl:col-span-12'
-          } bg-gradient-to-b from-[#1a1c24] via-[#15171e] to-[#121319] border-2 border-[#c8a45c]/65 rounded-2xl p-3 sm:p-3.5 shadow-[0_15px_50px_rgba(0,0,0,0.85)] space-y-2.5 relative overflow-hidden`}
+          } ${
+            character.playerSkinId === 'skin-player-crimson-dragon'
+              ? 'bg-gradient-to-b from-[#2b1014] via-[#1c0b0e] to-[#120709] border-2 border-red-500/80'
+              : character.playerSkinId === 'skin-player-frost-2026'
+              ? 'bg-gradient-to-b from-[#0d2238] via-[#091829] to-[#06101c] border-2 border-cyan-400/80'
+              : 'bg-gradient-to-b from-[#1a1c24] via-[#15171e] to-[#121319] border-2 border-[#c8a45c]/65'
+          } ${
+            activeSkinTokens?.customFontUrl || activeSkinTokens?.sheetFontFamily === 'custom'
+              ? 'custom-sheet-font'
+              : activeSkinTokens?.sheetFontFamily === 'serif'
+              ? 'font-serif'
+              : activeSkinTokens?.sheetFontFamily === 'mono'
+              ? 'font-mono'
+              : ''
+          } rounded-2xl p-3 sm:p-3.5 shadow-[0_15px_50px_rgba(0,0,0,0.85)] space-y-2.5 relative overflow-hidden`}
         >
+          {activeSkinRecord &&
+            !activeSkinRecord.hideCreatorCredit &&
+            (activeSkinRecord.editorCreditName || !activeSkinRecord.createdByAdmin) && (
+              <div
+                data-testid="active-player-skin-creator-credit"
+                className="px-3 py-1.5 rounded-xl bg-amber-950/75 border border-amber-500/50 flex items-center justify-between gap-2 text-[11px] text-amber-200"
+              >
+                <span>
+                  ✨ <strong>Skin: {activeSkinRecord.name}</strong> • Créditos:{' '}
+                  <strong>{activeSkinRecord.editorCreditName || activeSkinRecord.authorName}</strong>
+                </span>
+                <span className="text-[10px] text-stone-300 truncate max-w-md">
+                  {activeSkinRecord.customCreditDescription || activeSkinRecord.description}
+                </span>
+              </div>
+            )}
           {/* Decorative Corner Accents */}
           <div className="pointer-events-none absolute top-1.5 left-1.5 w-4 h-4 border-t-2 border-l-2 border-[#e2c275]/60 rounded-tl" />
           <div className="pointer-events-none absolute top-1.5 right-1.5 w-4 h-4 border-t-2 border-r-2 border-[#e2c275]/60 rounded-tr" />
@@ -633,32 +886,66 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
           {/* ROW 1: CHARACTER IDENTITY & 4 ORNATE COMBAT STAT BOXES          */}
           {/* --------------------------------------------------------------- */}
           <div className="bg-[#12141b]/90 border border-[#c8a45c]/45 rounded-xl px-3 py-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
-            {/* Left: Circular Gold Avatar + Name + Subtitle */}
+            {/* Left: Circular Gold Avatar + 4-Portrait Quick Switcher + Name + Subtitle */}
             <div className="flex items-center gap-3.5">
-              <div
-                onClick={() => !isLocked && setIsAvatarModalOpen(true)}
-                className={`relative group shrink-0 rounded-full p-0.5 bg-gradient-to-b from-[#f3dfb2] via-[#c8a45c] to-[#785a28] shadow-lg ${
-                  !isLocked ? 'cursor-pointer' : ''
-                }`}
-                title={!isLocked ? 'Cambiar retrato o icono del personaje' : undefined}
-              >
-                <div className="rounded-full overflow-hidden bg-[#14161d]">
-                  <EntityAvatar
-                    avatarType={character.avatarType || (character.avatarUrl ? 'custom' : 'icon')}
-                    customUrl={character.avatarCustomUrl || character.avatarUrl}
-                    iconId={character.avatarIcon || 'anonymous'}
-                    size="lg"
-                    className="rounded-full"
-                  />
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <div
+                  onClick={() => !isLocked && setIsAvatarModalOpen(true)}
+                  className={`relative group shrink-0 rounded-full p-0.5 bg-gradient-to-b from-[#f3dfb2] via-[#c8a45c] to-[#785a28] shadow-lg ${
+                    !isLocked ? 'cursor-pointer' : ''
+                  }`}
+                  title={!isLocked ? 'Cambiar retrato o gestionar galería (máx 4 imágenes)' : undefined}
+                >
+                  <div className="rounded-full overflow-hidden bg-[#14161d]">
+                    <EntityAvatar
+                      avatarType={character.avatarType || (character.avatarUrl ? 'custom' : 'icon')}
+                      customUrl={character.avatarCustomUrl || character.avatarUrl}
+                      iconId={character.avatarIcon || 'anonymous'}
+                      size="lg"
+                      className="rounded-full"
+                    />
+                  </div>
+                  {!isLocked && (
+                    <button
+                      type="button"
+                      aria-label="Editar retrato"
+                      className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-[#241c12] border border-[#e2c275] text-[#e2c275] flex items-center justify-center shadow"
+                    >
+                      <Edit2 className="w-2.5 h-2.5" />
+                    </button>
+                  )}
                 </div>
-                {!isLocked && (
-                  <button
-                    type="button"
-                    aria-label="Editar retrato"
-                    className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-[#241c12] border border-[#e2c275] text-[#e2c275] flex items-center justify-center shadow"
-                  >
-                    <Edit2 className="w-2.5 h-2.5" />
-                  </button>
+
+                {/* Quick 4-Portrait Switcher Strip (if portraitGallery has images) */}
+                {Array.isArray(character.portraitGallery) && character.portraitGallery.length > 0 && (
+                  <div className="flex items-center gap-1" data-testid="character-portrait-quick-strip">
+                    {clampPortraitGallery(character.portraitGallery).map((imgUrl, idx) => {
+                      const isActive = (character.avatarCustomUrl || character.avatarUrl) === imgUrl;
+                      return (
+                        <button
+                          key={`qport-${idx}`}
+                          type="button"
+                          onClick={() =>
+                            !isLocked &&
+                            onUpdateCharacter({
+                              ...character,
+                              avatarType: 'custom',
+                              avatarCustomUrl: imgUrl,
+                              avatarUrl: imgUrl,
+                            })
+                          }
+                          title={`Cambiar a Retrato #${idx + 1}`}
+                          className={`w-4 h-4 rounded-full overflow-hidden border transition cursor-pointer ${
+                            isActive
+                              ? 'border-amber-300 ring-1 ring-amber-400 scale-110'
+                              : 'border-stone-600 opacity-70 hover:opacity-100'
+                          }`}
+                        >
+                          <img src={imgUrl} alt={`Retrato ${idx + 1}`} className="w-full h-full object-cover" />
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
 
@@ -738,6 +1025,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
             {/* Right: 4 Tall Ornate Gold-Bordered Combat Stat Boxes */}
             <div className="grid grid-cols-4 gap-2 shrink-0">
               <div
+                style={statBoxCustomStyle}
                 className="bg-gradient-to-b from-[#1d202b] to-[#12141c] border-2 border-[#c8a45c]/70 rounded-xl px-2.5 py-1 text-center min-w-[68px] shadow-inner"
                 title={equippedBonuses.ac ? `Base ${character.armorClass ?? 10} + ${equippedBonuses.ac} por objetos equipados` : undefined}
               >
@@ -752,6 +1040,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
 
               <button
                 type="button"
+                style={statBoxCustomStyle}
                 onClick={() => onTriggerRoll('Iniciativa', effectiveInitiativeBonus)}
                 className="bg-gradient-to-b from-[#1d202b] to-[#12141c] hover:from-[#262a38] border-2 border-[#c8a45c]/70 hover:border-[#f3dfb2] rounded-xl px-2.5 py-1 text-center min-w-[68px] shadow-inner transition cursor-pointer"
                 title={`Tirar Iniciativa (1d20 ${formatModifier(effectiveInitiativeBonus)})`}
@@ -766,6 +1055,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
               </button>
 
               <div
+                style={statBoxCustomStyle}
                 className="bg-gradient-to-b from-[#1d202b] to-[#12141c] border-2 border-[#c8a45c]/70 rounded-xl px-2.5 py-1 text-center min-w-[78px] shadow-inner"
                 title={equippedBonuses.speed ? `Base ${character.speed ?? 30} + ${equippedBonuses.speed} por objetos equipados` : undefined}
               >
@@ -777,7 +1067,10 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                 </div>
               </div>
 
-              <div className="bg-gradient-to-b from-[#1d202b] to-[#12141c] border-2 border-[#c8a45c]/70 rounded-xl px-2.5 py-1 text-center min-w-[68px] shadow-inner">
+              <div
+                style={statBoxCustomStyle}
+                className="bg-gradient-to-b from-[#1d202b] to-[#12141c] border-2 border-[#c8a45c]/70 rounded-xl px-2.5 py-1 text-center min-w-[68px] shadow-inner"
+              >
                 <div className="text-[10px] font-cinzel font-bold uppercase tracking-wider text-[#cbb692]">
                   COMP.
                 </div>
@@ -845,7 +1138,10 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
               </div>
 
               {/* Glowing Green Health Bar with Dados de Golpe overlaid inside right */}
-              <div className="relative h-6 rounded-lg bg-[#0b0d12] border border-[#c8a45c]/50 overflow-hidden shadow-inner flex items-center">
+              <div
+                style={hpBarContainerStyle}
+                className="relative h-6 rounded-lg bg-[#0b0d12] border border-[#c8a45c]/50 overflow-hidden shadow-inner flex items-center"
+              >
                 <div
                   className={`h-full transition-all duration-300 ${
                     character.currentHp / Math.max(1, character.maxHp) > 0.45
@@ -859,6 +1155,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                       100,
                       Math.max(0, (character.currentHp / Math.max(1, character.maxHp)) * 100)
                     )}%`,
+                    ...hpBarFillStyle,
                   }}
                 />
                 <div className="absolute inset-0 px-2.5 flex items-center justify-end pointer-events-none">
@@ -881,9 +1178,18 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onTriggerRoll('Salvación de Muerte', 0)}
-                      className="text-[10px] font-cinzel font-bold text-[#e2c275] hover:underline cursor-pointer"
+                      className="text-[10px] font-cinzel font-bold text-[#e2c275] hover:underline cursor-pointer flex items-center gap-1"
+                      title="Tirar Salvación de Muerte (1d20)"
                     >
-                      d20
+                      {activeSkinTokens?.sheetD20ButtonCustomPngUrl ? (
+                        <img
+                          src={activeSkinTokens.sheetD20ButtonCustomPngUrl}
+                          alt="d20"
+                          className="w-4 h-4 object-contain inline-block hover:scale-110 transition"
+                        />
+                      ) : (
+                        <span>d20</span>
+                      )}
                     </button>
                   </div>
                   <div className="flex items-center justify-between gap-2 text-[10px]">
@@ -937,20 +1243,13 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setSkinNotice(true);
-                      setTimeout(() => setSkinNotice(false), 2500);
-                    }}
+                    data-testid="btn-player-sheet-skin"
+                    onClick={handleOpenPlayerSkinModal}
                     className="w-13 h-11 rounded-lg bg-gradient-to-b from-[#25221d] to-[#171512] hover:from-[#332e26] border border-[#c8a45c]/70 flex flex-col items-center justify-center gap-0.5 text-[#f3dfb2] shadow transition cursor-pointer relative"
-                    title="Aspectos visuales de hoja (Próximamente)"
+                    title="Cambiar Skin de Hoja de Jugador y Carta de Personaje"
                   >
                     <Palette className="w-3.5 h-3.5 text-[#e2c275]" />
                     <span className="font-cinzel font-bold text-[9px]">Skin</span>
-                    {skinNotice && (
-                      <span className="absolute -top-7 right-0 px-2 py-0.5 rounded bg-amber-950 border border-amber-400 text-[9px] text-amber-200 whitespace-nowrap shadow-lg z-20">
-                        Próximamente
-                      </span>
-                    )}
                   </button>
                 </div>
               </div>
@@ -1137,7 +1436,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                     {/* Section Header */}
                     <div className="flex items-center gap-3 mb-3">
                       <h2 className="font-cinzel font-black text-base sm:text-lg text-[#f5e4be] tracking-wider uppercase whitespace-nowrap">
-                        MAZOS DE JUEGO
+                        {activeSkinTokens?.deckSectionTitleText || 'MAZOS DE JUEGO'}
                       </h2>
                       <div className="h-px flex-1 bg-gradient-to-r from-[#c8a45c]/60 to-transparent" />
                       {currentPlayerDeckCount > 2 && (
@@ -1147,10 +1446,10 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                       )}
                       <span className="text-[11px] font-cinzel text-[#d8ba73] uppercase tracking-wider">
                         {activeDeck === 'combat'
-                          ? 'COMBATE Y ACCIONES'
+                          ? activeSkinTokens?.deckCombatTitleText || 'COMBATE Y ACCIONES'
                           : activeDeck === 'skills'
-                          ? 'HABILIDADES'
-                          : 'LANZAR CONJUROS'}
+                          ? activeSkinTokens?.deckSkillsTitleText || 'HABILIDADES'
+                          : activeSkinTokens?.deckSpellsTitleText || 'LANZAR CONJUROS'}
                       </span>
                     </div>
 
@@ -1175,7 +1474,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                         </div>
                         <div className="min-w-0">
                           <div className="font-cinzel font-black text-[11px] sm:text-xs text-[#f5e4be] leading-tight uppercase">
-                            COMBATES Y ACCIONES
+                            {activeSkinTokens?.deckCombatTitleText || 'COMBATES Y ACCIONES'}
                           </div>
                           <div className="text-[10px] text-amber-300/90 font-mono mt-0.5">
                             {combatCardsCount} Cartas
@@ -1202,7 +1501,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                         </div>
                         <div className="min-w-0">
                           <div className="font-cinzel font-black text-[11px] sm:text-xs text-cyan-100 leading-tight uppercase">
-                            HABILIDADES
+                            {activeSkinTokens?.deckSkillsTitleText || 'HABILIDADES'}
                           </div>
                           <div className="text-[10px] text-cyan-300 font-mono mt-0.5">
                             {possessedSkills.length} Cartas
@@ -1229,7 +1528,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                         </div>
                         <div className="min-w-0">
                           <div className="font-cinzel font-black text-[11px] sm:text-xs text-purple-100 leading-tight uppercase">
-                            LANZAR CONJUROS
+                            {activeSkinTokens?.deckSpellsTitleText || 'LANZAR CONJUROS'}
                           </div>
                           <div className="text-[10px] text-purple-300 font-mono mt-0.5">
                             {preparedSpells.length} Preparados
@@ -1296,18 +1595,24 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
 
                                   {/* Framed Tarot Illustration Box */}
                                   <div
-                                    className={`my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl border-2 shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition ${
+                                    className={`my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl border-2 shadow-inner flex items-center justify-center overflow-hidden group-hover:scale-105 transition ${
                                       action.isSpecialAction
                                         ? 'bg-gradient-to-b from-[#3d1e58] to-[#180f24] border-purple-400/50'
                                         : 'bg-gradient-to-b from-[#2b2318] to-[#141210] border-[#786545]'
                                     }`}
                                   >
-                                    {action.isSpecialAction ? (
+                                    {action.imageUrl ? (
+                                      <img
+                                        src={action.imageUrl}
+                                        alt={action.name}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : action.isSpecialAction ? (
                                       <Zap className="w-9 h-9 text-purple-300 drop-shadow" />
                                     ) : (
                                       <svg
                                         viewBox="0 0 64 64"
-                                        className="w-full h-full text-[#dcb868] drop-shadow"
+                                        className="w-11 h-11 text-[#dcb868] drop-shadow"
                                         fill="currentColor"
                                       >
                                         <path d="M52 8L40 12L18 34L12 32L8 36L16 44L10 50L14 54L20 48L28 56L32 52L30 46L52 24L56 12L52 8ZM22 40L44 18L46 20L24 42L22 40Z" />
@@ -1418,36 +1723,63 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                   key={sk.id}
                                   data-testid={`player-card-${sk.id}`}
                                   onClick={() => onTriggerRoll(`Habilidad: ${sk.name}`, totalBonus, 20)}
+                                  title={sk.description || undefined}
                                   className="group relative rounded-2xl border-2 border-cyan-400/80 ring-1 ring-inset ring-cyan-300/25 hover:border-cyan-200 bg-gradient-to-b from-[#132838] via-[#0e1c28] to-[#09121a] p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer"
                                 >
                                   <div className="flex items-center justify-between text-[11px] text-cyan-300 font-cinzel font-bold border-b border-cyan-500/30 pb-1">
                                     <span>{ABILITY_LABELS[sk.ability].abbr}</span>
                                     {!isLocked ? (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleRemoveSkillCard(sk.id, sk.srdKey);
-                                        }}
-                                        className="text-red-400 hover:text-red-200"
-                                        title="Quitar habilidad del mazo"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
+                                      <div className="flex items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleOpenEditSkillCard(sk);
+                                          }}
+                                          className="text-cyan-300 hover:text-white"
+                                          title="Editar descripción o imagen de la habilidad"
+                                        >
+                                          <Edit3 className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleRemoveSkillCard(sk.id, sk.srdKey);
+                                          }}
+                                          className="text-red-400 hover:text-red-200"
+                                          title="Quitar habilidad del mazo"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
                                     ) : (
                                       <BookOpen className="w-3.5 h-3.5 text-cyan-300" />
                                     )}
                                   </div>
 
-                                  <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#152d3e] to-[#0b1721] border-2 border-cyan-500/50 shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition">
-                                    <BookOpen className="w-9 h-9 text-cyan-300" />
+                                  <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#152d3e] to-[#0b1721] border-2 border-cyan-500/50 shadow-inner flex items-center justify-center overflow-hidden group-hover:scale-105 transition">
+                                    {sk.imageUrl ? (
+                                      <img
+                                        src={sk.imageUrl}
+                                        alt={sk.name}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <BookOpen className="w-9 h-9 text-cyan-300" />
+                                    )}
                                   </div>
 
-                                  <div className="text-center space-y-1.5">
-                                    <div className="font-cinzel font-black text-xs sm:text-sm text-white uppercase leading-tight line-clamp-2">
+                                  <div className="text-center space-y-1">
+                                    <div className="font-cinzel font-black text-xs sm:text-sm text-white uppercase leading-tight line-clamp-1">
                                       {sk.name}
                                     </div>
-                                    <div className="rounded-xl bg-[#0b141e] border border-cyan-400/25 py-1.5 px-2.5 shadow-inner">
+                                    {sk.description && (
+                                      <p className="text-[10px] text-cyan-200/80 line-clamp-2 leading-tight px-1">
+                                        {sk.description}
+                                      </p>
+                                    )}
+                                    <div className="rounded-xl bg-[#0b141e] border border-cyan-400/25 py-1 px-2.5 shadow-inner">
                                       <div className="font-cinzel font-black text-base sm:text-lg text-cyan-200 leading-none">
                                         {formatModifier(totalBonus)}
                                       </div>
@@ -1487,8 +1819,16 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                 <Flame className="w-3.5 h-3.5 text-purple-300" />
                               </div>
 
-                              <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#311a4a] to-[#160b24] border-2 border-purple-400/50 shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition">
-                                <Sparkles className="w-9 h-9 text-purple-300" />
+                              <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#311a4a] to-[#160b24] border-2 border-purple-400/50 shadow-inner flex items-center justify-center overflow-hidden group-hover:scale-105 transition">
+                                {sp.imageUrl ? (
+                                  <img
+                                    src={sp.imageUrl}
+                                    alt={sp.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <Sparkles className="w-9 h-9 text-purple-300" />
+                                )}
                               </div>
 
                               <div className="text-center space-y-1.5">
@@ -1520,8 +1860,20 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                           data-testid="btn-player-deck-add"
                           onClick={() => {
                             if (activeDeck === 'combat') setShowAddCombatCardModal(true);
-                            else if (activeDeck === 'skills') setShowAddSkillCardModal(true);
-                            else setIsBackpackModalOpen(true);
+                            else if (activeDeck === 'skills') {
+                              setEditingSkillId(null);
+                              setSkillCardForm({
+                                srdKey: 'perception',
+                                name: 'Percepción',
+                                ability: 'wis',
+                                proficiency: 'proficient',
+                                description:
+                                  character.skillDescriptions?.perception ||
+                                  DEFAULT_SRD_SKILL_DESCRIPTIONS.perception,
+                                imageUrl: character.skillImages?.perception || '',
+                              });
+                              setShowAddSkillCardModal(true);
+                            } else setIsBackpackModalOpen(true);
                           }}
                           className="min-h-[225px] sm:min-h-[240px] rounded-2xl border-2 border-dashed border-[#c8a45c]/45 hover:border-[#f5e4be] bg-[#141724]/75 hover:bg-[#1a1f30] p-3 flex flex-col items-center justify-center gap-2.5 text-[#cbb692] hover:text-white transition cursor-pointer group shadow-inner"
                           title="Agregar nueva carta a este mazo"
@@ -1560,7 +1912,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
             <div className="lg:col-span-5 bg-[#12151e]/95 border-2 border-[#c8a45c]/65 rounded-2xl p-3 flex flex-col justify-between gap-2.5 shadow-xl">
               <div className="flex items-center gap-3">
                 <h2 className="font-cinzel font-black text-base sm:text-lg text-[#e7c67b] tracking-wider uppercase whitespace-nowrap">
-                  EL RINCÓN DEL AVENTURERO
+                  {activeSkinTokens?.adventurerCornerTitleText || 'EL RINCÓN DEL AVENTURERO'}
                 </h2>
                 <div className="h-px flex-1 bg-gradient-to-r from-[#c8a45c]/60 to-transparent" />
               </div>
@@ -1577,83 +1929,91 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                   {totalWeight.toFixed(0)} / {carryCap.maxCarry} lb
                 </span>
 
-                {/* Framed Adventurer's Leather Backpack SVG Illustration */}
-                <div className="w-20 h-20 sm:w-22 sm:h-22 rounded-2xl bg-[#10141c] border-2 border-[#8c7853] shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition">
-                  <svg viewBox="0 0 80 80" className="w-full h-full drop-shadow-lg">
-                    {/* Left & Right Straps */}
-                    <path
-                      d="M22 26 C12 32, 12 54, 20 58"
-                      stroke="#593e28"
-                      strokeWidth="4.5"
-                      fill="none"
-                      strokeLinecap="round"
+                {/* Framed Adventurer's Leather Backpack SVG or Custom Skin Illustration */}
+                <div className="w-20 h-20 sm:w-22 sm:h-22 rounded-2xl bg-[#10141c] border-2 border-[#8c7853] shadow-inner flex items-center justify-center p-2.5 group-hover:scale-105 transition overflow-hidden">
+                  {activeSkinTokens?.sheetBackpackCustomPngUrl ? (
+                    <img
+                      src={activeSkinTokens.sheetBackpackCustomPngUrl}
+                      alt="Mochila"
+                      className="w-full h-full object-contain drop-shadow-lg"
                     />
-                    <path
-                      d="M36 14 C36 9, 44 9, 44 14"
-                      stroke="#6e4d32"
-                      strokeWidth="4"
-                      fill="none"
-                    />
-                    {/* Main Backpack Body */}
-                    <rect
-                      x="22"
-                      y="16"
-                      width="36"
-                      height="46"
-                      rx="8"
-                      fill="#7c583b"
-                      stroke="#1f140b"
-                      strokeWidth="2.5"
-                    />
-                    {/* Top Flap */}
-                    <path
-                      d="M22 22 C22 15, 58 15, 58 22 L56 36 C46 39, 34 39, 24 36 Z"
-                      fill="#8f6746"
-                      stroke="#1f140b"
-                      strokeWidth="2.4"
-                    />
-                    {/* Front Pocket */}
-                    <rect
-                      x="27"
-                      y="41"
-                      width="26"
-                      height="17"
-                      rx="4"
-                      fill="#69482e"
-                      stroke="#1f140b"
-                      strokeWidth="2.2"
-                    />
-                    {/* Side Pouch */}
-                    <rect
-                      x="17"
-                      y="38"
-                      width="7"
-                      height="18"
-                      rx="3"
-                      fill="#69482e"
-                      stroke="#1f140b"
-                      strokeWidth="2"
-                    />
-                    <rect
-                      x="56"
-                      y="38"
-                      width="7"
-                      height="18"
-                      rx="3"
-                      fill="#69482e"
-                      stroke="#1f140b"
-                      strokeWidth="2"
-                    />
-                    {/* Leather Buckle Straps & Gold Clasps */}
-                    <rect x="30" y="20" width="4" height="24" rx="1.5" fill="#4a301c" stroke="#1f140b" strokeWidth="1.4" />
-                    <rect x="46" y="20" width="4" height="24" rx="1.5" fill="#4a301c" stroke="#1f140b" strokeWidth="1.4" />
-                    <rect x="29" y="32" width="6" height="5" rx="1" fill="#d8b467" stroke="#1f140b" strokeWidth="1.3" />
-                    <rect x="45" y="32" width="6" height="5" rx="1" fill="#d8b467" stroke="#1f140b" strokeWidth="1.3" />
-                  </svg>
+                  ) : (
+                    <svg viewBox="0 0 80 80" className="w-full h-full drop-shadow-lg">
+                      {/* Left & Right Straps */}
+                      <path
+                        d="M22 26 C12 32, 12 54, 20 58"
+                        stroke="#593e28"
+                        strokeWidth="4.5"
+                        fill="none"
+                        strokeLinecap="round"
+                      />
+                      <path
+                        d="M36 14 C36 9, 44 9, 44 14"
+                        stroke="#6e4d32"
+                        strokeWidth="4"
+                        fill="none"
+                      />
+                      {/* Main Backpack Body */}
+                      <rect
+                        x="22"
+                        y="16"
+                        width="36"
+                        height="46"
+                        rx="8"
+                        fill="#7c583b"
+                        stroke="#1f140b"
+                        strokeWidth="2.5"
+                      />
+                      {/* Top Flap */}
+                      <path
+                        d="M22 22 C22 15, 58 15, 58 22 L56 36 C46 39, 34 39, 24 36 Z"
+                        fill="#8f6746"
+                        stroke="#1f140b"
+                        strokeWidth="2.4"
+                      />
+                      {/* Front Pocket */}
+                      <rect
+                        x="27"
+                        y="41"
+                        width="26"
+                        height="17"
+                        rx="4"
+                        fill="#69482e"
+                        stroke="#1f140b"
+                        strokeWidth="2.2"
+                      />
+                      {/* Side Pouch */}
+                      <rect
+                        x="17"
+                        y="38"
+                        width="7"
+                        height="18"
+                        rx="3"
+                        fill="#69482e"
+                        stroke="#1f140b"
+                        strokeWidth="2"
+                      />
+                      <rect
+                        x="56"
+                        y="38"
+                        width="7"
+                        height="18"
+                        rx="3"
+                        fill="#69482e"
+                        stroke="#1f140b"
+                        strokeWidth="2"
+                      />
+                      {/* Leather Buckle Straps & Gold Clasps */}
+                      <rect x="30" y="20" width="4" height="24" rx="1.5" fill="#4a301c" stroke="#1f140b" strokeWidth="1.4" />
+                      <rect x="46" y="20" width="4" height="24" rx="1.5" fill="#4a301c" stroke="#1f140b" strokeWidth="1.4" />
+                      <rect x="29" y="32" width="6" height="5" rx="1" fill="#d8b467" stroke="#1f140b" strokeWidth="1.3" />
+                      <rect x="45" y="32" width="6" height="5" rx="1" fill="#d8b467" stroke="#1f140b" strokeWidth="1.3" />
+                    </svg>
+                  )}
                 </div>
 
                 <h3 className="font-cinzel font-black text-sm sm:text-base text-[#e7c67b] group-hover:text-[#fff1cc] uppercase tracking-wider mt-2">
-                  EQUIPO E INVENTARIO
+                  {activeSkinTokens?.sheetBackpackLabelText || 'EQUIPO E INVENTARIO'}
                 </h3>
 
                 <div className="flex items-center justify-center gap-1.5 mt-0.5 text-xs font-sans">
@@ -1680,46 +2040,54 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                     {journalIndex.totalSheets} Hojas
                   </span>
 
-                  {/* Framed Leather Journal SVG Illustration */}
-                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[#10141c] border-2 border-[#8c7853] shadow-inner flex items-center justify-center p-2 mt-1.5 group-hover:scale-105 transition">
-                    <svg viewBox="0 0 64 64" className="w-full h-full drop-shadow">
-                      <rect
-                        x="14"
-                        y="8"
-                        width="36"
-                        height="48"
-                        rx="4"
-                        fill="#6b462b"
-                        stroke="#1c1108"
-                        strokeWidth="2.5"
+                  {/* Framed Leather Journal SVG or Custom Skin Illustration */}
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[#10141c] border-2 border-[#8c7853] shadow-inner flex items-center justify-center p-2 mt-1.5 group-hover:scale-105 transition overflow-hidden">
+                    {activeSkinTokens?.sheetJournalCustomPngUrl ? (
+                      <img
+                        src={activeSkinTokens.sheetJournalCustomPngUrl}
+                        alt="Diario"
+                        className="w-full h-full object-contain drop-shadow"
                       />
-                      <line x1="20" y1="8" x2="20" y2="56" stroke="#3d2616" strokeWidth="2.5" />
-                      {/* Gold Corners & Clasp */}
-                      <path d="M42 8 H50 V16 Z" fill="#d8b467" />
-                      <path d="M42 56 H50 V48 Z" fill="#d8b467" />
-                      <rect
-                        x="43"
-                        y="28"
-                        width="9"
-                        height="8"
-                        rx="2"
-                        fill="#d8b467"
-                        stroke="#1c1108"
-                        strokeWidth="1.8"
-                      />
-                      {/* Open Book Emblem on Cover */}
-                      <path
-                        d="M25 24 Q30 22 34 25 Q38 22 43 24 V38 Q38 36 34 39 Q30 36 25 38 Z"
-                        fill="none"
-                        stroke="#d8b467"
-                        strokeWidth="1.8"
-                      />
-                    </svg>
+                    ) : (
+                      <svg viewBox="0 0 64 64" className="w-full h-full drop-shadow">
+                        <rect
+                          x="14"
+                          y="8"
+                          width="36"
+                          height="48"
+                          rx="4"
+                          fill="#6b462b"
+                          stroke="#1c1108"
+                          strokeWidth="2.5"
+                        />
+                        <line x1="20" y1="8" x2="20" y2="56" stroke="#3d2616" strokeWidth="2.5" />
+                        {/* Gold Corners & Clasp */}
+                        <path d="M42 8 H50 V16 Z" fill="#d8b467" />
+                        <path d="M42 56 H50 V48 Z" fill="#d8b467" />
+                        <rect
+                          x="43"
+                          y="28"
+                          width="9"
+                          height="8"
+                          rx="2"
+                          fill="#d8b467"
+                          stroke="#1c1108"
+                          strokeWidth="1.8"
+                        />
+                        {/* Open Book Emblem on Cover */}
+                        <path
+                          d="M25 24 Q30 22 34 25 Q38 22 43 24 V38 Q38 36 34 39 Q30 36 25 38 Z"
+                          fill="none"
+                          stroke="#d8b467"
+                          strokeWidth="1.8"
+                        />
+                      </svg>
+                    )}
                   </div>
 
                   <div className="mt-1.5">
                     <h3 className="font-cinzel font-black text-xs text-[#e7c67b] group-hover:text-[#fff1cc] uppercase leading-tight">
-                      DIARIO DE
+                      {activeSkinTokens?.sheetJournalLabelText || 'DIARIO DE'}
                       <br />
                       {character.name}
                     </h3>
@@ -1919,121 +2287,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
         )}
       </div>
 
-      {/* =================================================================== */}
-      {/* TABLE MODE BOTTOM BAR: LOBBY/CLOUD + DUNGEON MASTER BANNER + MAPA   */}
-      {/* =================================================================== */}
-      {isInActiveRoom && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-stretch pt-1">
-          {/* Left 3 Cols: Stacked REGRESAR AL LOBBY & GUARDAR EN LA NUBE */}
-          <div className="lg:col-span-3 flex flex-col justify-between gap-2">
-            {onReturnToLobby && (
-              <button
-                type="button"
-                onClick={onReturnToLobby}
-                className="flex-1 py-2 px-3.5 rounded-xl bg-gradient-to-r from-[#23201c] to-[#191714] hover:from-[#302b25] border border-[#c8a45c]/60 text-[#f5e4be] font-cinzel font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow transition cursor-pointer"
-              >
-                <ArrowLeft className="w-4 h-4 text-[#e2c275]" />
-                <span>REGRESAR AL LOBBY</span>
-              </button>
-            )}
-            {onSaveToCloud && (
-              <button
-                type="button"
-                onClick={onSaveToCloud}
-                className="flex-1 py-2 px-3.5 rounded-xl bg-gradient-to-r from-emerald-900/90 to-emerald-950 hover:from-emerald-800 border border-emerald-500/60 text-emerald-100 font-cinzel font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow transition cursor-pointer"
-              >
-                <Upload className="w-4 h-4 text-emerald-300" />
-                <span>GUARDAR EN LA NUBE</span>
-              </button>
-            )}
-          </div>
-
-          {/* Center 7 Cols: DUNGEON MASTER Live Banner */}
-          <div className="lg:col-span-7 bg-gradient-to-r from-[#1c1528] via-[#15121f] to-[#1c1528] border-2 border-[#c8a45c]/70 rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-xl">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-12 h-12 rounded-xl bg-purple-950/90 border-2 border-[#e2c275] flex items-center justify-center text-amber-300 shrink-0 shadow-inner">
-                <Crown className="w-6 h-6" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-cinzel font-black text-sm sm:text-base text-[#f5e4be] uppercase tracking-wider">
-                    DUNGEON MASTER
-                  </span>
-                  <span
-                    className={`text-[11px] font-bold flex items-center gap-1 ${
-                      dmConnected ? 'text-emerald-400' : 'text-amber-400'
-                    }`}
-                  >
-                    <span
-                      className={`w-2 h-2 rounded-full ${
-                        dmConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                      }`}
-                    />
-                    {dmConnected ? 'En Línea' : 'Conectado a Sala'} • Mesa: {roomCode}
-                  </span>
-                </div>
-                <p className="text-xs text-purple-200/90 truncate mt-0.5">
-                  {dmLiveMessage || 'El Dungeon Master observa la mesa en silencio...'}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              {onOpenRollFeed && (
-                <button
-                  type="button"
-                  onClick={onOpenRollFeed}
-                  className="px-3 py-1.5 rounded-xl bg-black/50 hover:bg-black/70 border border-purple-400/40 text-purple-200 font-cinzel font-bold text-xs flex items-center gap-1.5 cursor-pointer"
-                  title="Ver historial de tiradas de la sala"
-                >
-                  <Dices className="w-4 h-4 text-amber-400" />
-                  <span>Tiradas ({rollFeed.length})</span>
-                </button>
-              )}
-              {onSendPlayerMessageToDM && (
-                <button
-                  type="button"
-                  onClick={() => setIsDmMsgModalOpen(true)}
-                  className="px-3 py-1.5 rounded-xl bg-purple-800/80 hover:bg-purple-700 border border-purple-400/60 text-white font-cinzel font-bold text-xs flex items-center gap-1.5 cursor-pointer"
-                  title="Enviar mensaje o susurro privado al Dungeon Master"
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Susurrar al DM</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Right 2 Cols: COMPACT MAPA BUTTON (Launches TableMapView) */}
-          <div className="lg:col-span-2 flex items-stretch">
-            <button
-              type="button"
-              data-testid="btn-player-open-map"
-              onClick={() => {
-                if (onOpenTableMapView) {
-                  onOpenTableMapView();
-                } else {
-                  setIsMapModalOpen(true);
-                }
-              }}
-              className="w-full h-full min-h-[64px] rounded-2xl border-2 border-[#e2c275] bg-gradient-to-b from-[#2e2216] via-[#21180f] to-[#140e09] hover:from-[#3d2d1d] px-3 py-2 flex items-center justify-center gap-2.5 shadow-xl transition cursor-pointer group"
-              title="Ir a la Vista de Mapa de la Mesa"
-            >
-              <div className="w-10 h-10 rounded-xl bg-[#3d2b18] border border-[#e2c275] flex items-center justify-center text-[#f5e4be] group-hover:scale-105 transition shrink-0">
-                <Compass className="w-5 h-5 text-amber-300" />
-              </div>
-              <div className="text-left min-w-0">
-                <span className="font-cinzel font-black text-sm text-[#f5e4be] tracking-wider uppercase block leading-none truncate">
-                  MAPA
-                </span>
-                <span className="text-[10px] text-emerald-300 block mt-0.5 truncate">
-                  📍 {activeLocationName || 'Ver Ubicación'}
-                </span>
-              </div>
-            </button>
-          </div>
-        </div>
-      )}
+      {/* La barra de sesión (Regresar al Lobby, Guardar, Estandarte del DM y Ubicación/Mapa) ahora está integrada en la barra superior */}
 
       {/* =================================================================== */}
       {/* INTERACTIVE MODALS                                                  */}
@@ -2077,7 +2331,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
         onUnlockRequest={onUnlockRequest}
       />
 
-      {/* 5. Avatar Customizer Modal */}
+      {/* 5. Avatar Customizer Modal (with 4-Slot Portrait Gallery) */}
       {isAvatarModalOpen && (
         <AvatarCustomizerModal
           isOpen={isAvatarModalOpen}
@@ -2086,17 +2340,157 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
           currentType={character.avatarType || (character.avatarUrl ? 'custom' : 'icon')}
           currentCustomUrl={character.avatarCustomUrl || character.avatarUrl || ''}
           currentIconId={character.avatarIcon || 'anonymous'}
-          onSave={({ type, customUrl, iconId }) => {
+          currentPortraitGallery={character.portraitGallery || []}
+          onSave={({ type, customUrl, iconId, portraitGallery }) => {
             onUpdateCharacter({
               ...character,
               avatarType: type,
               avatarCustomUrl: customUrl,
               avatarIcon: iconId,
               avatarUrl: type === 'custom' ? customUrl : undefined,
+              portraitGallery: clampPortraitGallery(portraitGallery || character.portraitGallery || []),
             });
             setIsAvatarModalOpen(false);
           }}
         />
+      )}
+
+      {/* 5b. Player Skin Selector Modal */}
+      {isSkinModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          data-testid="player-skin-selector-modal"
+        >
+          <div className="w-full max-w-lg bg-[#171922] border-2 border-[#c8a45c] rounded-2xl p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-stone-800 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Palette className="w-5 h-5 text-[#e2c275]" />
+                <h3 className="font-cinzel font-black text-base text-[#f5e4be] uppercase tracking-wider">
+                  Skins de Hoja y Carta de Jugador
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSkinModalOpen(false)}
+                className="text-stone-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#cbb692]">
+              La skin seleccionada se aplicará tanto a tu <strong>Hoja de Personaje</strong> como a tu{' '}
+              <strong>Carta de Personaje</strong> en el Lobby y en la Mesa. La Skin Online Default está siempre disponible.
+            </p>
+
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+              {(availablePlayerSkins.length > 0
+                ? availablePlayerSkins
+                : [
+                    {
+                      id: 'skin-player-default',
+                      name: 'Obsidiana & Oro Real (Skin Online Default)',
+                      description: 'Aspecto predeterminado sincronizado con la Skin Online de la App.',
+                      accentColor: '#c8a45c',
+                      cardFrameStyle: 'gold-ornate' as const,
+                      createdAt: '',
+                      createdBy: 'system',
+                    },
+                  ]
+              ).map((sk) => {
+                const isSelected = (character.playerSkinId || 'skin-player-default') === sk.id;
+                return (
+                  <button
+                    key={sk.id}
+                    type="button"
+                    data-testid={`select-player-skin-${sk.id}`}
+                    onClick={() => {
+                      onUpdateCharacter({ ...character, playerSkinId: sk.id });
+                    }}
+                    className={`w-full text-left p-3 rounded-xl border-2 transition flex items-center justify-between gap-3 cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#251f16] border-[#e2c275] shadow-lg'
+                        : 'bg-[#11131a] border-stone-800 hover:border-[#c8a45c]/60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span
+                        className="w-7 h-7 rounded-lg border border-white/25 shrink-0"
+                        style={{ backgroundColor: sk.accentColor || '#c8a45c' }}
+                      />
+                      <div className="min-w-0">
+                        <div className="font-cinzel font-bold text-xs text-[#f5e4be] flex items-center gap-2">
+                          <span>{sk.name}</span>
+                          {sk.seasonTag && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-950 border border-amber-500/40 text-[9px] text-amber-300">
+                              {sk.seasonTag}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-stone-400 truncate">{sk.description}</p>
+                        {(() => {
+                          const fullRec = catalogPlayerSkinRecords.find((r) => r.id === sk.id);
+                          if (
+                            fullRec &&
+                            !fullRec.hideCreatorCredit &&
+                            (fullRec.editorCreditName || !fullRec.createdByAdmin)
+                          ) {
+                            return (
+                              <p className="text-[10px] text-amber-300 font-cinzel mt-0.5">
+                                ✨ Créditos del Creador:{' '}
+                                <strong>{fullRec.editorCreditName || fullRec.authorName}</strong>
+                                {fullRec.customCreditDescription
+                                  ? ` — ${fullRec.customCreditDescription}`
+                                  : ''}
+                              </p>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-lg font-cinzel font-bold text-[10px] uppercase shrink-0 ${
+                        isSelected
+                          ? 'bg-amber-500 text-black'
+                          : 'bg-stone-800 text-stone-300'
+                      }`}
+                    >
+                      {isSelected ? 'Activa' : 'Aplicar'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Redeem Seasonal / Exclusive Skin Code */}
+            <form onSubmit={handleRedeemSkinCode} className="pt-2 border-t border-stone-800 space-y-2">
+              <label className="block text-[11px] font-cinzel text-[#cbb692]">
+                ¿Tienes un código de Skin de Temporada o Evento? (Ej. NAVIDAD2026 o DRAGONROJO)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={redeemCodeInput}
+                  onChange={(e) => setRedeemCodeInput(e.target.value)}
+                  placeholder="Ingresa código de skin o DLC..."
+                  className="flex-1 bg-[#101218] border border-stone-700 rounded-xl px-3 py-1.5 text-xs text-white font-mono uppercase"
+                />
+                <button
+                  type="submit"
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-cinzel font-black text-xs cursor-pointer"
+                >
+                  Canjear
+                </button>
+              </div>
+              {redeemFeedback && (
+                <p className="text-[11px] font-cinzel text-emerald-300">{redeemFeedback}</p>
+              )}
+            </form>
+          </div>
+        </div>
       )}
 
       {/* 6. HP Damage / Heal / Temp Modal */}
@@ -2259,7 +2653,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
         </div>
       )}
 
-      {/* 8. Add Skill Card Modal */}
+      {/* 8. Add / Edit Skill Card Modal */}
       {showAddSkillCardModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
@@ -2272,11 +2666,16 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
           >
             <div className="flex items-center justify-between border-b border-stone-800 pb-2">
               <h3 className="font-cinzel font-bold text-base text-cyan-200">
-                Desbloquear / Equipar Carta de Habilidad
+                {editingSkillId
+                  ? 'Editar Carta de Habilidad'
+                  : 'Desbloquear / Equipar Carta de Habilidad'}
               </h3>
               <button
                 type="button"
-                onClick={() => setShowAddSkillCardModal(false)}
+                onClick={() => {
+                  setEditingSkillId(null);
+                  setShowAddSkillCardModal(false);
+                }}
                 className="text-stone-400 hover:text-white"
               >
                 <X className="w-4 h-4" />
@@ -2297,15 +2696,23 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                       srdKey: 'custom',
                       name: '',
                       description: '',
+                      imageUrl: '',
                     });
                   } else {
                     const meta = SKILL_METADATA[val];
+                    const existingCard = possessedSkills.find((s) => s.srdKey === val);
                     setSkillCardForm({
                       srdKey: val,
                       name: meta.nameEs,
                       ability: meta.ability,
-                      proficiency: 'proficient',
-                      description: DEFAULT_SRD_SKILL_DESCRIPTIONS[val] || meta.description,
+                      proficiency:
+                        existingCard?.proficiency === 'expertise' ? 'expertise' : 'proficient',
+                      description:
+                        existingCard?.description ||
+                        character.skillDescriptions?.[val] ||
+                        DEFAULT_SRD_SKILL_DESCRIPTIONS[val] ||
+                        meta.description,
+                      imageUrl: existingCard?.imageUrl || character.skillImages?.[val] || '',
                     });
                   }
                 }}
@@ -2351,19 +2758,84 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
               </div>
             </div>
 
+            {/* Skill Description Input */}
+            <div>
+              <label className="block text-[11px] font-cinzel text-cyan-200 mb-1">
+                Descripción de la Habilidad
+              </label>
+              <textarea
+                rows={3}
+                data-testid="input-skill-card-description"
+                value={skillCardForm.description}
+                onChange={(e) =>
+                  setSkillCardForm({ ...skillCardForm, description: e.target.value })
+                }
+                placeholder="Describe cómo tu personaje usa esta habilidad, efectos o notas de rol..."
+                className="w-full bg-[#101218] border border-stone-700 rounded-xl p-2.5 text-xs text-white"
+              />
+            </div>
+
+            {/* Skill Image Upload / URL */}
+            <div>
+              <label className="block text-[11px] font-cinzel text-cyan-200 mb-1">
+                Imagen de la Carta de Habilidad (Opcional)
+              </label>
+              <div className="flex items-center gap-2">
+                {skillCardForm.imageUrl && (
+                  <img
+                    src={skillCardForm.imageUrl}
+                    alt="Previsualización habilidad"
+                    className="w-10 h-10 rounded-lg object-cover border border-cyan-400 shrink-0"
+                  />
+                )}
+                <input
+                  type="text"
+                  data-testid="input-skill-card-image-url"
+                  value={skillCardForm.imageUrl}
+                  onChange={(e) =>
+                    setSkillCardForm({ ...skillCardForm, imageUrl: e.target.value })
+                  }
+                  placeholder="URL de imagen o sube archivo..."
+                  className="flex-1 bg-[#101218] border border-stone-700 rounded-xl px-3 py-1.5 text-xs text-white"
+                />
+                <label className="px-2.5 py-1.5 rounded-xl bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-200 text-xs font-cinzel font-bold cursor-pointer shrink-0">
+                  Subir
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const dataUrl = await compressImageFileToDataUrl(file, 360, 0.8);
+                        setSkillCardForm((prev) => ({ ...prev, imageUrl: dataUrl }));
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setShowAddSkillCardModal(false)}
+                onClick={() => {
+                  setEditingSkillId(null);
+                  setShowAddSkillCardModal(false);
+                }}
                 className="px-4 py-2 rounded-xl bg-stone-800 text-stone-300 text-xs font-cinzel"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-cinzel font-black text-xs"
+                data-testid="btn-save-skill-card"
+                className="px-5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-cinzel font-black text-xs cursor-pointer"
               >
-                Añadir al Mazo
+                {editingSkillId ? 'Guardar Cambios' : 'Añadir al Mazo'}
               </button>
             </div>
           </form>

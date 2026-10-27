@@ -20,29 +20,55 @@ export const DEFAULT_HOST_SETTINGS: HostSettings = {
   dmPassword: '',
   moderatorPassword: 'admin',
   headerTitle: 'WeRoll',
-  headerSubtitle: 'Companion & DM Suite v1.2 Beta',
+  headerSubtitle: 'Companion & DM Suite v1.4 Beta',
   headerLogoIcon: 'shield',
   developerNotice: {
     enabled: true,
-    title: 'WeRoll • Novedades v1.2 Beta',
-    content: '¡Versión 1.2 Beta disponible! Atlas del DM rediseñado e intuitivo (botones superiores Álbum, Mapas Tácticos y Mapas, Cola en Visuales, Explorador Masivo de Carpetas en Mundo y botón Ajustes de Mesa), Modo Mapa en Vivo con Vista DM vs Vista en Vivo, cuadrícula táctica interactiva con fichas móviles y Guardado Incremental por Diferencias (Delta Sync).',
-    version: '1.2 Beta',
+    title: 'WeRoll • Novedades v1.4 Beta',
+    content: '¡Versión 1.4 Beta disponible! Barra superior unificada en sesión y Modo Mapa, lienzo de mapa ampliado con paneles flotantes plegables, Cartas Tarot miniatura en la parte inferior de la mesa, estadísticas totales en las cartas de jugador e ilustraciones individuales por ataque y acción.',
+    version: '1.4 Beta',
   },
   developerAnnouncement: {
     enabled: true,
-    title: 'WeRoll • Novedades v1.2 Beta',
-    content: '¡Versión 1.2 Beta disponible! Atlas del DM rediseñado e intuitivo (botones superiores Álbum, Mapas Tácticos y Mapas, Cola en Visuales, Explorador Masivo de Carpetas en Mundo y botón Ajustes de Mesa), Modo Mapa en Vivo con Vista DM vs Vista en Vivo, cuadrícula táctica interactiva con fichas móviles y Guardado Incremental por Diferencias (Delta Sync).',
-    version: '1.2 Beta',
+    title: 'WeRoll • Novedades v1.4 Beta',
+    content: '¡Versión 1.4 Beta disponible! Barra superior unificada en sesión y Modo Mapa, lienzo de mapa ampliado con paneles flotantes plegables, Cartas Tarot miniatura en la parte inferior de la mesa, estadísticas totales en las cartas de jugador e ilustraciones individuales por ataque y acción.',
+    version: '1.4 Beta',
   },
   adminGreeting: {
     enabled: true,
     title: 'Comunicado del Administrador',
-    message: '¡Bienvenido a WeRoll 5E v1.2 Beta! Nuevo Atlas del DM intuitivo con Cola en Visuales, Vista DM vs Vista en Vivo con fichas tácticas móviles y Guardado Incremental Delta Sync.',
+    message: '¡Bienvenido a WeRoll 5E v1.4 Beta! Disfruta del nuevo Modo Mapa ampliado con barra superior unificada, paneles flotantes plegables, Cartas Tarot en miniatura con estadísticas totales e imágenes personalizadas por ataque.',
     type: 'info',
     updatedAt: Date.now(),
   },
   oracleWelcomeMessage: 'Saludos, viajero. Soy el Sabio Arcano, tu árbitro y custodio de las reglas de 5E. ¿Qué duda deseas resolver hoy?',
   changelog: [
+    {
+      version: '1.4 Beta',
+      date: '2026-10-26',
+      title: 'WeRoll 1.4 Beta • Barra Superior Unificada en Partida, Modo Mapa Ampliado con Paneles Plegables, Cartas Tarot Miniatura en Mesa, Estadísticas Totales e Imágenes por Ataque',
+      changes: [
+        'Barra Superior Unificada en Hoja y Modo Mapa (DM y Jugadores): Reubicación de los botones Regresar al Lobby / Regresar a Hoja y Guardar en la barra superior junto al Estandarte del Dungeon Master (con mensajes en vivo, historial de tiradas y Susurrar al DM) y el botón de Ubicación Actual / Mapa.',
+        'Modo Mapa de Mayor Espacio con Paneles Flotantes Plegables: Ampliación del lienzo principal del mapa e integración de ventanas superpuestas plegables (Minimizar / Expandir) para los Mazos y la Libreta del Jugador, así como Proyección de Zona y Crónicas para el DM.',
+        'Cartas Tarot de Jugadores en Miniatura en la Parte Inferior del Mapa: Nueva barra inferior en el Modo Mapa (para DM y Jugadores) que muestra las Cartas Tarot completas a escala miniatura conservando todos sus elementos sin restar espacio al mapa.',
+        'Puntuaciones Totales de Características en la Carta Tarot: Las 6 cajas de estadísticas (FUE, DES, CON, INT, SAB, CAR) de la Carta Tarot ahora muestran el valor total de cada característica en lugar de solo el modificador.',
+        'Ilustraciones Individuales por Ataque y por Acción: Soporte para asignar imágenes independientes a cada ataque de un arma multi-ataque y a cada acción de un objeto, reflejándose directamente en sus cartas del mazo de Ataques y Acciones.',
+      ],
+    },
+    {
+      version: '1.3 Beta',
+      date: '2026-10-24',
+      title: 'WeRoll 1.3 Beta • Sincronización Anti-Flicker, Cola de Eventos Local Anti-Microdesconexiones, Validación OTP, Galería de 4 Retratos y Cartas Ilustradas',
+      changes: [
+        'Sincronización Optimista Anti-Flicker y Estabilidad en Sesiones Prolongadas: Eliminación del parpadeo al ajustar puntos de vida (HP), oro o cambiar mapas en vivo, junto con limpieza automática de memoria tras 15–30 minutos de partida.',
+        'Cola de Eventos Local y Escudo Anti-Microdesconexiones: Las tiradas de dados, cambios de vida y acciones se respaldan localmente ante microdesconexiones de red y se sincronizan al reconectar, evitando que los jugadores sean devueltos al Lobby por fallos transitorios.',
+        'Validación de Correo con Código OTP para Nuevos Registros: Verificación de correo mediante código OTP de 6 dígitos para cuentas nuevas, manteniendo exentas y verificadas todas las cuentas ya registradas.',
+        'Deduplicación y Descripciones en Cartas de Habilidades: Eliminación de cartas duplicadas al entrar al Modo Mapa y soporte completo para agregar descripciones detalladas a cada habilidad.',
+        'Ilustraciones en Monstruos, Objetos, Armas, Armaduras, Conjuros y Habilidades: Soporte para adjuntar o enlazar imágenes personalizadas con deduplicación SHA-256.',
+        'Galería de hasta 4 Retratos Descargables por Personaje: Guarda hasta 4 retratos en la hoja de jugador, intercámbialos con un clic y descárgalos localmente.',
+        'Mapas Tácticos (En Desarrollo) y Optimización de Sabio Arcano: Los botones de Mapas Tácticos muestran el sello "En Proceso / En Desarrollo", y Sabio Arcano queda reservado para roles autorizados (Moderación y Administración).',
+      ],
+    },
     {
       version: '1.2 Beta',
       date: '2026-10-23',
@@ -398,17 +424,21 @@ export function loadHostSettings(): HostSettings {
     if (!data) return DEFAULT_HOST_SETTINGS;
     const parsed = JSON.parse(data);
     const merged: HostSettings = { ...DEFAULT_HOST_SETTINGS, ...parsed };
-    const v10 = DEFAULT_HOST_SETTINGS.changelog?.[0];
-    if (v10 && Array.isArray(merged.changelog)) {
-      const idx = merged.changelog.findIndex((c) => c.version && c.version.toLowerCase().includes('1.0'));
+    const v14 = DEFAULT_HOST_SETTINGS.changelog?.[0];
+    if (v14 && Array.isArray(merged.changelog)) {
+      const idx = merged.changelog.findIndex((c) => c.version && c.version.toLowerCase().includes('1.4'));
       if (idx === -1) {
-        merged.changelog = [v10, ...merged.changelog];
+        merged.changelog = [v14, ...merged.changelog];
       } else {
-        merged.changelog[idx] = v10;
+        merged.changelog[idx] = v14;
       }
     }
     if (
       !merged.headerSubtitle ||
+      merged.headerSubtitle.includes('1.3') ||
+      merged.headerSubtitle.includes('1.2') ||
+      merged.headerSubtitle.includes('1.1') ||
+      merged.headerSubtitle.includes('1.0') ||
       merged.headerSubtitle.includes('0.9') ||
       merged.headerSubtitle.includes('0.8') ||
       merged.headerSubtitle.includes('0.65') ||
@@ -417,7 +447,13 @@ export function loadHostSettings(): HostSettings {
     ) {
       merged.headerSubtitle = DEFAULT_HOST_SETTINGS.headerSubtitle;
     }
-    if (merged.developerNotice?.version?.includes('0.9')) {
+    if (
+      merged.developerNotice?.version?.includes('0.9') ||
+      merged.developerNotice?.version?.includes('1.0') ||
+      merged.developerNotice?.version?.includes('1.1') ||
+      merged.developerNotice?.version?.includes('1.2') ||
+      merged.developerNotice?.version?.includes('1.3')
+    ) {
       merged.developerNotice = DEFAULT_HOST_SETTINGS.developerNotice;
     }
     return merged;

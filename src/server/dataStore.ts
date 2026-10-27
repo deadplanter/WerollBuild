@@ -24,6 +24,7 @@ import {
   validateUniqueRoomNameAndCode,
   normalizeRoomIdentifier,
 } from '../utils/dnd-math.ts';
+import { defaultDlcSrd } from './srdDlcData.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,6 +73,8 @@ export interface UserAccount {
   sessionCount?: number;
   lastSessionStartAt?: number;
   currentActivity?: string;
+  ownedDlcIds?: string[];
+  ownedSkinIds?: string[];
   passwordResetRequested?: boolean;
   passwordResetRequestedAt?: number;
   passwordResetNote?: string;
@@ -514,6 +517,20 @@ export const dataStore = {
         }
       } else if (u.canPostInForum === undefined) {
         u.canPostInForum = false;
+        needsSave = true;
+      }
+      if (!Array.isArray(u.ownedDlcIds)) {
+        u.ownedDlcIds = ['dlc-srd-5e-oficial'];
+        needsSave = true;
+      } else if (!u.ownedDlcIds.includes('dlc-srd-5e-oficial')) {
+        u.ownedDlcIds.push('dlc-srd-5e-oficial');
+        needsSave = true;
+      }
+      if (!Array.isArray(u.ownedSkinIds)) {
+        u.ownedSkinIds =
+          u.appRole === 'admin' || u.appRole === 'creator'
+            ? ['skin-app-default', 'skin-player-default', 'skin-player-crimson-dragon', 'skin-dm-default', 'skin-dm-obsidian-throne']
+            : ['skin-app-default', 'skin-player-default', 'skin-dm-default'];
         needsSave = true;
       }
     }
@@ -1539,6 +1556,42 @@ export const dataStore = {
   getForumPosts(category?: string, roleFilter?: string, query?: string): ForumPost[] {
     const defaultPosts: ForumPost[] = [
       {
+        id: 'post-update-140',
+        category: 'app-updates',
+        title: 'WeRoll 1.4 Beta • Barra Superior Unificada en Partida, Modo Mapa Ampliado, Cartas Tarot Miniatura en Mesa, Estadísticas Totales e Imágenes por Ataque',
+        content: '¡Llega WeRoll 1.4 Beta! Rediseñamos la experiencia en partida y en el Modo Mapa tanto para el Dungeon Master como para los Jugadores: nueva barra superior unificada con los botones de Regresar y Guardar en la misma posición, Estandarte del DM en vivo con Susurrar al DM y acceso rápido a la Ubicación Actual / Mapa. Además, el lienzo del Modo Mapa ahora cuenta con mayor espacio e incorpora paneles flotantes plegables (Mazos y Libreta del Jugador, Proyección de Zona y Crónicas del DM), las Cartas Tarot de los jugadores se ubican en la barra inferior en versión miniatura conservando todos sus elementos, las cajas de características ahora muestran el puntaje total de cada estadística en lugar de solo el bono, y las armas multi-ataque y objetos permiten asignar una imagen personalizada a cada ataque o acción.',
+        authorEmail: 'admin@weroll.app',
+        authorName: 'Administrador Supremo',
+        authorTagId: 'adm',
+        authorFullTag: 'Administrador Supremo@adm',
+        authorPlayerType: 'both',
+        authorAppRole: 'admin',
+        flair: 'Actualización',
+        createdAt: 1793055600000,
+        upvotes: 96,
+        upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
+        commentsCount: 7,
+        pinned: true,
+      },
+      {
+        id: 'post-update-130',
+        category: 'app-updates',
+        title: 'WeRoll 1.3 Beta • Sincronización Anti-Parpadeo, Cola Local contra Micro-Desconexiones, Retratos (x4), Ilustraciones en Cartas y Verificación OTP',
+        content: '¡Llega WeRoll 1.3 Beta! Mejoramos la estabilidad y fluidez en partidas prolongadas eliminando el parpadeo de vida (PG) y mapas mediante control de versión monotónico, e incorporamos una Cola Local de Eventos que protege tus tiradas y cambios si sufres una micro-desconexión de internet sin expulsarte al Lobby. Además: galería de hasta 4 retratos descargables e intercambiables en la Player Sheet, imágenes en monstruos, armas, armaduras, objetos, conjuros y habilidades, descripciones y deduplicación en cartas de habilidades, 5 tipos de entradas en el Tomo de Crónicas del DM y verificación OTP para cuentas nuevas.',
+        authorEmail: 'admin@weroll.app',
+        authorName: 'Administrador Supremo',
+        authorTagId: 'adm',
+        authorFullTag: 'Administrador Supremo@adm',
+        authorPlayerType: 'both',
+        authorAppRole: 'admin',
+        flair: 'Actualización',
+        createdAt: 1792859200000,
+        upvotes: 84,
+        upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
+        commentsCount: 6,
+        pinned: false,
+      },
+      {
         id: 'post-update-120',
         category: 'app-updates',
         title: 'WeRoll 1.2 Beta • Rediseño del Atlas del DM, Cola en Visuales, Vista DM vs Vista en Vivo con Fichas Tácticas y Delta Sync',
@@ -1554,7 +1607,7 @@ export const dataStore = {
         upvotes: 68,
         upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
         commentsCount: 5,
-        pinned: true,
+        pinned: false,
       },
       {
         id: 'post-update-110',
@@ -1760,7 +1813,7 @@ export const dataStore = {
     if (!posts || posts.length === 0) {
       posts = defaultPosts;
       writeJSON('forum_posts.json', posts);
-    } else if (!posts.some((p) => p.id === 'post-update-120')) {
+    } else if (!posts.some((p) => p.id === 'post-update-140')) {
       posts = [defaultPosts[0], ...posts.map((p) => (p.pinned ? { ...p, pinned: false } : p))];
       writeJSON('forum_posts.json', posts);
     }
@@ -2337,6 +2390,35 @@ export const dataStore = {
 
   // --- PERSISTENT HOST SETTINGS & CHANGELOG ---
   getHostSettings(): HostSettings {
+    const v14BetaEntry: ChangelogEntry = {
+      version: '1.4 Beta',
+      date: '2026-10-26',
+      title: 'WeRoll 1.4 Beta • Barra Superior Unificada en Partida, Modo Mapa Ampliado con Paneles Plegables, Cartas Tarot Miniatura en Mesa, Estadísticas Totales e Imágenes por Ataque',
+      changes: [
+        'Barra Superior Unificada en Hoja y Modo Mapa (DM y Jugadores): Reubicación de los botones Regresar al Lobby / Regresar a Hoja y Guardar en la barra superior junto al Estandarte del Dungeon Master (con mensajes en vivo, historial de tiradas y Susurrar al DM) y el botón de Ubicación Actual / Mapa.',
+        'Modo Mapa de Mayor Espacio con Paneles Flotantes Plegables: Ampliación del lienzo principal del mapa e integración de ventanas superpuestas plegables (Minimizar / Expandir) para los Mazos y la Libreta del Jugador, así como Proyección de Zona y Crónicas para el DM.',
+        'Cartas Tarot de Jugadores en Miniatura en la Parte Inferior del Mapa: Nueva barra inferior en el Modo Mapa (para DM y Jugadores) que muestra las Cartas Tarot completas a escala miniatura conservando todos sus elementos sin restar espacio al mapa.',
+        'Puntuaciones Totales de Características en la Carta Tarot: Las 6 cajas de estadísticas (FUE, DES, CON, INT, SAB, CAR) de la Carta Tarot ahora muestran el valor total de cada característica en lugar de solo el modificador.',
+        'Ilustraciones Individuales por Ataque y por Acción: Soporte para asignar imágenes independientes a cada ataque de un arma multi-ataque y a cada acción de un objeto, reflejándose directamente en sus cartas del mazo de Ataques y Acciones.',
+      ],
+    };
+
+    const v13BetaEntry: ChangelogEntry = {
+      version: '1.3 Beta',
+      date: '2026-10-24',
+      title: 'WeRoll 1.3 Beta • Sincronización Anti-Parpadeo en Vivo, Cola Local contra Micro-Desconexiones, Retratos Descargables (x4), Ilustraciones en Cartas y Verificación OTP',
+      changes: [
+        'Sincronización Anti-Parpadeo de Vida (PG) y Mapas en Sesiones Largas: Nuevo control monotónico de versión y bloqueo optimista al modificar Puntos de Golpe, monedas de oro o cambiar el mapa proyectado por el DM, eliminando el parpadeo entre valores antiguos y nuevos.',
+        'Cola Local de Eventos contra Micro-Desconexiones: Almacenamiento local inmediato de tiradas de dados y cambios de ficha durante cortes momentáneos de red, evitando expulsiones accidentales al Lobby y sincronizando automáticamente al recuperar la conexión.',
+        'Verificación de Correo con Código OTP (Nuevos Registros): Validación de correo electrónico mediante código de 6 dígitos para cuentas de nuevo registro (las cuentas ya registradas continúan iniciando sesión de forma directa).',
+        'Galería de hasta 4 Retratos Descargables por Personaje: En la Player Sheet puedes guardar hasta 4 imágenes de retrato por personaje, alternar cuál está activa con un clic y descargarlas en tu dispositivo.',
+        'Ilustraciones en Monstruos, Armas, Armaduras, Objetos, Conjuros y Habilidades: Soporte para adjuntar imágenes personalizadas a cada criatura del bestiario, arma, armadura, objeto común, conjuro o habilidad, mostrándose en sus cartas del Mazo de Juego.',
+        'Deduplicación de Habilidades en Modo Mapa y Descripciones Editables: Eliminación de cartas duplicadas de habilidades al entrar al mapa y campo de descripción detallado en cada carta de habilidad.',
+        'Tomo de Crónicas del DM con 5 Categorías: Clasificación de entradas por Capítulo, Historia de Personaje, Misión Principal, Misión Secundaria y Acontecimiento Importante con filtrado rápido.',
+        'Permisos del Sabio Arcano y Señalización de Mapas Tácticos: Acceso optimizado por rol para consultas del Sabio Arcano e indicador de Mapas Tácticos en fase de desarrollo.',
+      ],
+    };
+
     const v12BetaEntry: ChangelogEntry = {
       version: '1.2 Beta',
       date: '2026-10-23',
@@ -2472,7 +2554,7 @@ export const dataStore = {
 
     const defaultSettings: HostSettings = {
       headerTitle: 'WeRoll',
-      headerSubtitle: 'Companion & DM Suite v1.2 Beta',
+      headerSubtitle: 'Companion & DM Suite v1.4 Beta',
       headerLogoIcon: 'shield',
       aiModel: 'gemini-flash-lite-latest',
       moderatorPassword: 'admin',
@@ -2485,25 +2567,27 @@ export const dataStore = {
         enabled: true,
         title: 'Comunicado del Administrador',
         message:
-          '¡Bienvenido a WeRoll 5E v1.2 Beta! Nuevo Atlas del DM intuitivo con Cola en Visuales, Vista DM vs Vista en Vivo con fichas tácticas móviles y Guardado Incremental Delta Sync.',
+          '¡Bienvenido a WeRoll 5E v1.4 Beta! Disfruta del nuevo Modo Mapa ampliado con barra superior unificada, paneles flotantes plegables, Cartas Tarot en miniatura con estadísticas totales e imágenes personalizadas por ataque.',
         type: 'info',
         updatedAt: Date.now(),
       },
       developerNotice: {
         enabled: true,
-        title: 'WeRoll • Novedades v1.2 Beta',
+        title: 'WeRoll • Novedades v1.4 Beta',
         content:
-          '¡Versión 1.2 Beta disponible! Atlas del DM rediseñado e intuitivo (botones superiores Álbum, Mapas Tácticos y Mapas, Cola en Visuales, Explorador Masivo de Carpetas en Mundo y botón Ajustes de Mesa), Modo Mapa en Vivo con Vista DM vs Vista en Vivo, cuadrícula táctica interactiva con fichas móviles y Guardado Incremental por Diferencias (Delta Sync).',
-        version: '1.2 Beta',
+          '¡Versión 1.4 Beta disponible! Barra superior unificada en sesión y Modo Mapa, lienzo de mapa ampliado con paneles flotantes plegables, Cartas Tarot miniatura en la parte inferior de la mesa, estadísticas totales en las cartas de jugador e ilustraciones individuales por ataque y acción.',
+        version: '1.4 Beta',
       },
       developerAnnouncement: {
         enabled: true,
-        title: 'WeRoll • Novedades v1.2 Beta',
+        title: 'WeRoll • Novedades v1.4 Beta',
         content:
-          '¡Versión 1.2 Beta disponible! Atlas del DM rediseñado e intuitivo (botones superiores Álbum, Mapas Tácticos y Mapas, Cola en Visuales, Explorador Masivo de Carpetas en Mundo y botón Ajustes de Mesa), Modo Mapa en Vivo con Vista DM vs Vista en Vivo, cuadrícula táctica interactiva con fichas móviles y Guardado Incremental por Diferencias (Delta Sync).',
-        version: '1.2 Beta',
+          '¡Versión 1.4 Beta disponible! Barra superior unificada en sesión y Modo Mapa, lienzo de mapa ampliado con paneles flotantes plegables, Cartas Tarot miniatura en la parte inferior de la mesa, estadísticas totales en las cartas de jugador e ilustraciones individuales por ataque y acción.',
+        version: '1.4 Beta',
       },
       changelog: [
+        v14BetaEntry,
+        v13BetaEntry,
         v12BetaEntry,
         v11BetaEntry,
         v10BetaEntry,
@@ -2627,12 +2711,32 @@ export const dataStore = {
       finalChangelog[v12Idx] = v12BetaEntry;
     }
 
+    const v13Idx = finalChangelog.findIndex(
+      (entry) => entry.version && entry.version.toLowerCase().includes('1.3')
+    );
+    if (v13Idx === -1) {
+      finalChangelog = [v13BetaEntry, ...finalChangelog];
+    } else {
+      finalChangelog[v13Idx] = v13BetaEntry;
+    }
+
+    const v14Idx = finalChangelog.findIndex(
+      (entry) => entry.version && entry.version.toLowerCase().includes('1.4')
+    );
+    if (v14Idx === -1) {
+      finalChangelog = [v14BetaEntry, ...finalChangelog];
+    } else {
+      finalChangelog[v14Idx] = v14BetaEntry;
+    }
+
     const finalHeaderSubtitle =
       !current.headerSubtitle ||
       /v0\.(1|2|3|4|5|6|65|8|9|95)\b/i.test(current.headerSubtitle) ||
       current.headerSubtitle.includes('0.9') ||
       current.headerSubtitle.includes('1.0') ||
-      current.headerSubtitle.includes('1.1')
+      current.headerSubtitle.includes('1.1') ||
+      current.headerSubtitle.includes('1.2') ||
+      current.headerSubtitle.includes('1.3')
         ? defaultSettings.headerSubtitle
         : current.headerSubtitle;
 
@@ -2644,14 +2748,14 @@ export const dataStore = {
       developerNotice: {
         ...defaultSettings.developerNotice!,
         ...(current.developerNotice || {}),
-        version: '1.2 Beta',
-        title: 'WeRoll • Novedades v1.2 Beta',
+        version: '1.4 Beta',
+        title: 'WeRoll • Novedades v1.4 Beta',
         content: defaultSettings.developerNotice!.content,
       },
       developerAnnouncement: {
         enabled: true,
-        version: '1.2 Beta',
-        title: 'WeRoll • Novedades v1.2 Beta',
+        version: '1.4 Beta',
+        title: 'WeRoll • Novedades v1.4 Beta',
         content: defaultSettings.developerNotice!.content,
       },
       adminGreeting: current.adminGreeting
@@ -2662,7 +2766,9 @@ export const dataStore = {
               current.adminGreeting.message &&
               (current.adminGreeting.message.includes('0.9') ||
                 current.adminGreeting.message.includes('1.0') ||
-                current.adminGreeting.message.includes('1.1'))
+                current.adminGreeting.message.includes('1.1') ||
+                current.adminGreeting.message.includes('1.2') ||
+                current.adminGreeting.message.includes('1.3'))
                 ? defaultSettings.adminGreeting!.message
                 : current.adminGreeting.message,
           }
@@ -2855,6 +2961,7 @@ export const dataStore = {
       forumComments: readJSON<ForumComment[]>('forum_comments.json', []),
       friendMessages: readJSON<FriendDirectMessage[]>('friend_messages.json', []),
       dmMessages: this.getDmMessages(),
+      creatorStudio: this.getCreatorStudioVault(),
     };
   },
 
@@ -3048,6 +3155,11 @@ export const dataStore = {
           writeJSON('dm_messages.json', payload.dmMessages);
         } else if (shouldReplaceCleanly) {
           writeJSON('dm_messages.json', []);
+        }
+
+        // 11. Restore Creator Studio Vault (DLCs & Skins)
+        if (payload.creatorStudio && typeof payload.creatorStudio === 'object') {
+          writeJSON('creator_studio_vault.json', payload.creatorStudio);
         }
 
         const curMeta = this.getSyncMetadata();
@@ -3556,6 +3668,1321 @@ export const dataStore = {
     };
   },
 
+  getCreatorStudioVault(): {
+    creator_dlc: any[];
+    creator_skin_app: any[];
+    creator_skin_player: any[];
+    creator_skin_dm: any[];
+  } {
+    // Rich default SRD compendium imported from ./srdDlcData.ts
+
+    const defaultDlcSeasonal = {
+      id: 'dlc-invierno-helado-2026',
+      name: 'Crónicas del Solsticio Helado 2026',
+      version: '1.0 Temporada',
+      authorTag: 'Administrador Supremo@adm',
+      description: 'Expansión de temporada limitada (Diciembre 2026): añade monstruos de escarcha, armas rúnicas invernales y el Santuario del Hielo Eterno.',
+      seasonTag: 'Navidad 2026',
+      claimCode: 'NAVIDAD-DLC-2026',
+      availableFrom: '2026-12-01',
+      availableUntil: '2026-12-31',
+      isOfficialSrd: false,
+      isFreeForAll: false,
+      counts: {
+        maps: 2,
+        albums: 2,
+        monsters: 3,
+        itemsAndWeapons: 4,
+        stories: 2,
+        npcs: 2,
+      },
+      contentPayload: {
+        folders: ['Valle del Viento Helado / Santuario Escarchado'],
+        locations: [
+          {
+            id: 'dlc-win-loc-1',
+            name: 'Santuario del Solsticio Helado',
+            region: 'Valle del Viento Helado',
+            type: 'Templo',
+            status: 'Congelado por magia ancestral',
+            description: 'Un templo de hielo cristalino que solo emerge durante las ventiscas de diciembre.',
+            folder: 'Valle del Viento Helado / Santuario Escarchado',
+          },
+        ],
+        monsters: [
+          {
+            id: 'dlc-win-mon-1',
+            name: 'Gólem de Escarcha Rúnica',
+            size: 'Grande',
+            type: 'Constructo',
+            alignment: 'Neutral',
+            cr: '5',
+            ac: 17,
+            hp: 85,
+            maxHp: 85,
+            speed: '30 pies',
+            str: 20,
+            dex: 9,
+            con: 18,
+            int: 6,
+            wis: 10,
+            cha: 5,
+            folder: 'Valle del Viento Helado / Santuario Escarchado',
+            traits: [{ name: 'Aura Gélida', description: 'Ralentiza 10 pies a enemigos a 5 pies.' }],
+            actions: [
+              { id: 'atk-ice', name: 'Puño Glaciar', type: 'melee', toHit: 8, damage: '2d10+5', damageType: 'Frío' },
+            ],
+          },
+        ],
+        itemsAndSpells: [
+          {
+            id: 'dlc-win-item-1',
+            name: 'Mandoble de la Estrella Polar',
+            kind: 'item',
+            itemGroup: 'weapon',
+            rarity: 'Muy Raro',
+            category: 'Arma',
+            whoHasIt: 'Altar del Solsticio',
+            whereFound: 'Santuario del Solsticio Helado',
+            description: 'Hoja forjada en hielo estelar que otorga +2 a Fuerza e inflige daño de frío adicional.',
+            weight: 6,
+            folder: 'Valle del Viento Helado / Santuario Escarchado',
+            statModifiers: [{ id: 'sm-str-2', stat: 'str', value: 2, label: 'Vigor Polar' }],
+            weaponAttacks: [
+              {
+                id: 'wa-polar',
+                name: 'Tajo Boreal',
+                description: 'Estallido de escarcha al impactar',
+                dice: '2d6',
+                bonus: 2,
+                damageType: 'Frío',
+                attackType: 'melee',
+                range: '5 pies',
+              },
+            ],
+          },
+        ],
+        campaignLogs: [
+          {
+            id: 'dlc-win-log-1',
+            sessionNumber: 1,
+            entryType: 'chapter',
+            title: 'Capítulo I: La Campana de Escarcha',
+            date: 'Solsticio de Invierno',
+            summary: 'Las campanas del templo sumergido resuenan a través de la ventisca.',
+            publicNotes: 'Una aurora boreal ilumina el sendero hacia el glaciar.',
+            privateNotes: 'El Gólem despierta si alguien toca el cáliz sin pronunciar el juramento.',
+            tags: ['Invierno 2026', 'Capítulo'],
+            folder: 'Valle del Viento Helado / Santuario Escarchado',
+            dlcSourceId: 'dlc-invierno-helado-2026',
+          },
+        ],
+      },
+      updatedAt: 1792772800000,
+    };
+
+    const defaultAppSkins = [
+      {
+        id: 'skin-app-default',
+        name: 'Skin Online Default (Clásico Dorado WeRoll)',
+        seasonTag: 'Original Online',
+        authorTag: 'Administrador Supremo@adm',
+        description:
+          'Diseño clásico oficial de WeRoll con tonos obsidiana, marcos dorados imperiales y acentos ámbar. Es la skin online base para todas las cuentas nuevas.',
+        isDefault: true,
+        isOnlineActive: true,
+        themeTokens: {
+          headerBannerBg: 'linear-gradient(180deg, rgba(17,13,10,0.98) 0%, rgba(11,9,7,0.96) 100%)',
+          headerTitleColor: '#fde68a',
+          headerTitleScale: 'md',
+          buttonScale: 'md',
+          lobbyBgAccent: 'radial-gradient(ellipse at top, rgba(120,53,15,0.18), rgba(9,9,11,0.98) 70%)',
+          forumAccentColor: '#f59e0b',
+          forumPanelBg: 'rgba(18, 15, 12, 0.94)',
+          charactersSectionBg: 'rgba(18, 14, 11, 0.92)',
+          friendsSectionBg: 'rgba(18, 15, 12, 0.94)',
+          buttonPrimaryGradient: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)',
+          borderOrnamentColor: 'rgba(217, 119, 6, 0.38)',
+        },
+        updatedAt: 1792772800000,
+      },
+    ];
+
+    const defaultPlayerSkins = [
+      {
+        id: 'skin-player-default',
+        name: 'Skin Default (Sincronizada con Skin Online)',
+        authorTag: 'WeRoll@adm',
+        description: 'Usa automáticamente la apariencia de la Skin Online activa de la aplicación.',
+        seasonTag: 'Default',
+        isDefault: true,
+        sheetTheme: {
+          primaryBorderColor: '#d97706',
+          accentColor: '#f59e0b',
+          cardFrameStyle: 'imperial-gold',
+          headerGradient: 'linear-gradient(180deg, rgba(24,19,15,0.96), rgba(14,12,10,0.98))',
+          titleColor: '#fde68a',
+        },
+        tarotCardDesign: {
+          glowColor: 'rgba(245, 158, 11, 0.35)',
+          badgeStyle: 'amber-gold',
+          cardBgGradient: 'linear-gradient(180deg, #1b1510 0%, #0f0c09 100%)',
+        },
+        updatedAt: 1792772800000,
+      },
+    ];
+
+    const defaultDmSkins = [
+      {
+        id: 'skin-dm-default',
+        name: 'Skin DM Default (Sincronizada con Skin Online)',
+        authorTag: 'WeRoll@adm',
+        description: 'Estética imperial estándar sincronizada con la Skin Online activa.',
+        seasonTag: 'Default',
+        isDefault: true,
+        worldSheetTheme: {
+          panelBgColor: '#120f0c',
+          borderGoldTone: '#d97706',
+          mapHudFrameStyle: 'imperial-atlas',
+          headerGradient: 'linear-gradient(180deg, rgba(24,19,15,0.96), rgba(12,10,8,0.98))',
+          accentColor: '#f59e0b',
+        },
+        updatedAt: 1792772800000,
+      },
+    ];
+
+    const raw = readJSON<Record<string, any>>('creator_studio_vault.json', {
+      creator_dlc: [defaultDlcSrd, defaultDlcSeasonal],
+      creator_skin_app: defaultAppSkins,
+      creator_skin_player: defaultPlayerSkins,
+      creator_skin_dm: defaultDmSkins,
+    });
+
+    let changed = false;
+
+    // Prune legacy test skins so only single default or user-created custom skins exist
+    const legacySkinIds = new Set([
+      'skin-app-navidad-2026',
+      'skin-app-sangre-carmesi',
+      'skin-player-crimson-dragon',
+      'skin-player-frost-2026',
+      'skin-dm-obsidian-throne',
+    ]);
+
+    if (Array.isArray(raw.creator_skin_app)) {
+      const before = raw.creator_skin_app.length;
+      raw.creator_skin_app = raw.creator_skin_app.filter((s: any) => !legacySkinIds.has(s.id));
+      if (raw.creator_skin_app.length !== before) changed = true;
+    }
+    if (Array.isArray(raw.creator_skin_player)) {
+      const before = raw.creator_skin_player.length;
+      raw.creator_skin_player = raw.creator_skin_player.filter((s: any) => !legacySkinIds.has(s.id));
+      if (raw.creator_skin_player.length !== before) changed = true;
+    }
+    if (Array.isArray(raw.creator_skin_dm)) {
+      const before = raw.creator_skin_dm.length;
+      raw.creator_skin_dm = raw.creator_skin_dm.filter((s: any) => !legacySkinIds.has(s.id));
+      if (raw.creator_skin_dm.length !== before) changed = true;
+    }
+
+    if (!Array.isArray(raw.creator_dlc) || raw.creator_dlc.length === 0) {
+      raw.creator_dlc = [defaultDlcSrd, defaultDlcSeasonal];
+      changed = true;
+    } else {
+      const srdIdx = raw.creator_dlc.findIndex((d: any) => d.id === 'dlc-srd-5e-oficial');
+      if (srdIdx >= 0) {
+        if ((raw.creator_dlc[srdIdx].contentPayload?.monsters?.length || 0) < 15) {
+          raw.creator_dlc[srdIdx] = defaultDlcSrd;
+          changed = true;
+        }
+      } else {
+        raw.creator_dlc.unshift(defaultDlcSrd);
+        changed = true;
+      }
+    }
+
+    if (!Array.isArray(raw.creator_skin_app) || raw.creator_skin_app.length === 0) {
+      raw.creator_skin_app = defaultAppSkins;
+      changed = true;
+    } else if (!raw.creator_skin_app.some((s: any) => s.id === 'skin-app-default')) {
+      raw.creator_skin_app.unshift(defaultAppSkins[0]);
+      changed = true;
+    }
+
+    if (!Array.isArray(raw.creator_skin_player) || raw.creator_skin_player.length === 0) {
+      raw.creator_skin_player = defaultPlayerSkins;
+      changed = true;
+    } else if (!raw.creator_skin_player.some((s: any) => s.id === 'skin-player-default')) {
+      raw.creator_skin_player.unshift(defaultPlayerSkins[0]);
+      changed = true;
+    }
+
+    if (!Array.isArray(raw.creator_skin_dm) || raw.creator_skin_dm.length === 0) {
+      raw.creator_skin_dm = defaultDmSkins;
+      changed = true;
+    } else if (!raw.creator_skin_dm.some((s: any) => s.id === 'skin-dm-default')) {
+      raw.creator_skin_dm.unshift(defaultDmSkins[0]);
+      changed = true;
+    }
+
+    // Ensure active online skins for Lobby (app), Player, and DM are marked
+    const settings = this.getHostSettings();
+    const activeLobbyId = settings.activeOnlineLobbySkinId || settings.activeAppSkinId || 'skin-app-default';
+    const activePlayerId = settings.activeOnlinePlayerSkinId || 'skin-player-default';
+    const activeDmId = settings.activeOnlineDmSkinId || 'skin-dm-default';
+
+    let foundOnlineLobby = false;
+    for (const s of raw.creator_skin_app) {
+      s.scope = 'app';
+      s.target = 'app';
+      s.reviewStatus = s.reviewStatus || 'approved';
+      if (s.createdByAdmin === undefined) s.createdByAdmin = true;
+      if (s.hideCreatorCredit === undefined) s.hideCreatorCredit = !s.editorCreditName;
+      if (s.id === activeLobbyId) {
+        s.isOnlineActive = true;
+        s.isOnlineDefault = true;
+        foundOnlineLobby = true;
+      } else {
+        s.isOnlineActive = false;
+        s.isOnlineDefault = false;
+      }
+    }
+    if (!foundOnlineLobby && raw.creator_skin_app[0]) {
+      raw.creator_skin_app[0].isOnlineActive = true;
+      raw.creator_skin_app[0].isOnlineDefault = true;
+    }
+
+    let foundOnlinePlayer = false;
+    for (const s of raw.creator_skin_player) {
+      s.scope = 'player';
+      s.target = 'player';
+      s.reviewStatus = s.reviewStatus || 'approved';
+      if (s.createdByAdmin === undefined) s.createdByAdmin = true;
+      if (s.hideCreatorCredit === undefined) s.hideCreatorCredit = !s.editorCreditName;
+      // Ensure themeTokens exists alongside sheetTheme/tarotCardDesign for the unified visual editor
+      if (!s.themeTokens) {
+        s.themeTokens = {
+          headerBannerBg: s.sheetTheme?.headerGradient || 'linear-gradient(180deg, rgba(24,19,15,0.96), rgba(14,12,10,0.98))',
+          headerTitleColor: s.sheetTheme?.titleColor || '#fde68a',
+          forumAccentColor: s.sheetTheme?.accentColor || '#f59e0b',
+          borderOrnamentColor: s.sheetTheme?.primaryBorderColor || '#d97706',
+          sheetIconScale: 'md',
+          sheetFontFamily: 'cinzel',
+          sheetPortraitSize: 'md',
+          sheetBgColor: '#12100e',
+          sheetStatBoxBg: '#191512',
+          sheetStatBoxBorder: s.sheetTheme?.primaryBorderColor || '#d97706',
+          sheetStatBoxStyle: 'ornate',
+          sheetHpBarBg: '#291515',
+          sheetHpBarFill: '#10b981',
+          sheetHpBarStyle: 'classic',
+          deckTarotCardBg: s.tarotCardDesign?.cardBgGradient || '#171310',
+          deckTarotCardBorder: s.sheetTheme?.primaryBorderColor || '#d97706',
+          deckTarotHeaderBg: '#241c14',
+          adventurerCornerBg: '#161310',
+          adventurerCornerBorder: s.sheetTheme?.primaryBorderColor || '#b45309',
+          mapModeFrameBg: '#0c0a09',
+          mapModeFrameBorder: s.sheetTheme?.primaryBorderColor || '#d97706',
+          mapModeCardBg: '#181411',
+          mapModeButtonBg: s.sheetTheme?.accentColor || '#d97706',
+          mapModeButtonText: '#ffffff',
+          mapModeDmHoodBg: '#1c1510',
+          mapModeDmHoodBorder: s.sheetTheme?.primaryBorderColor || '#f59e0b',
+          mapModeDmHoodAccent: s.sheetTheme?.titleColor || '#fde68a',
+          tarotGlowColor: s.tarotCardDesign?.glowColor || 'rgba(245, 158, 11, 0.35)',
+          tarotBorderColor: s.sheetTheme?.primaryBorderColor || '#d97706',
+          tarotHeaderGradient: s.sheetTheme?.headerGradient || 'linear-gradient(180deg, #1b1510 0%, #0f0c09 100%)',
+          tarotBadgeBg: '#78350f',
+          tarotBadgeText: '#fde68a',
+        };
+      }
+      if (s.id === activePlayerId) {
+        s.isOnlineActive = true;
+        s.isOnlineDefault = true;
+        foundOnlinePlayer = true;
+      } else {
+        s.isOnlineActive = false;
+        s.isOnlineDefault = false;
+      }
+    }
+    if (!foundOnlinePlayer && raw.creator_skin_player[0]) {
+      raw.creator_skin_player[0].isOnlineActive = true;
+      raw.creator_skin_player[0].isOnlineDefault = true;
+    }
+
+    let foundOnlineDm = false;
+    for (const s of raw.creator_skin_dm) {
+      s.scope = 'dm';
+      s.target = 'dm';
+      s.reviewStatus = s.reviewStatus || 'approved';
+      if (s.createdByAdmin === undefined) s.createdByAdmin = true;
+      if (s.hideCreatorCredit === undefined) s.hideCreatorCredit = !s.editorCreditName;
+      if (!s.themeTokens) {
+        s.themeTokens = {
+          headerBannerBg: s.worldSheetTheme?.headerGradient || 'linear-gradient(180deg, rgba(24,19,15,0.96), rgba(12,10,8,0.98))',
+          headerTitleColor: '#fde68a',
+          forumAccentColor: s.worldSheetTheme?.accentColor || '#f59e0b',
+          forumPanelBg: s.worldSheetTheme?.panelBgColor || '#120f0c',
+          borderOrnamentColor: s.worldSheetTheme?.borderGoldTone || '#d97706',
+        };
+      }
+      if (s.id === activeDmId) {
+        s.isOnlineActive = true;
+        s.isOnlineDefault = true;
+        foundOnlineDm = true;
+      } else {
+        s.isOnlineActive = false;
+        s.isOnlineDefault = false;
+      }
+    }
+    if (!foundOnlineDm && raw.creator_skin_dm[0]) {
+      raw.creator_skin_dm[0].isOnlineActive = true;
+      raw.creator_skin_dm[0].isOnlineDefault = true;
+    }
+
+    for (const d of raw.creator_dlc) {
+      d.reviewStatus = d.reviewStatus || 'approved';
+      if (d.createdByAdmin === undefined) d.createdByAdmin = true;
+      if (d.hideCreatorCredit === undefined) d.hideCreatorCredit = Boolean(d.isOfficialSrd) && !d.editorCreditName;
+      if (!d.monsters && d.contentPayload?.monsters) d.monsters = d.contentPayload.monsters;
+      if (!d.npcs && d.contentPayload?.npcs) d.npcs = d.contentPayload.npcs;
+      if (!d.itemsAndSpells && d.contentPayload?.itemsAndSpells) d.itemsAndSpells = d.contentPayload.itemsAndSpells;
+      if (!d.locations && d.contentPayload?.locations) d.locations = d.contentPayload.locations;
+      if (!d.placeAlbumPhotos && d.contentPayload?.albumPhotos) d.placeAlbumPhotos = d.contentPayload.albumPhotos;
+      if (!d.campaignLogs && d.contentPayload?.campaignLogs) d.campaignLogs = d.contentPayload.campaignLogs;
+    }
+
+    if (changed) {
+      writeJSON('creator_studio_vault.json', raw);
+    }
+
+    return {
+      creator_dlc: raw.creator_dlc,
+      creator_skin_app: raw.creator_skin_app,
+      creator_skin_player: raw.creator_skin_player,
+      creator_skin_dm: raw.creator_skin_dm,
+    };
+  },
+
+  getCreatorStudioCatalog(userEmail?: string) {
+    const vault = this.getCreatorStudioVault();
+    const onlineAppSkin =
+      vault.creator_skin_app.find((s: any) => s.isOnlineActive) ||
+      vault.creator_skin_app.find((s: any) => s.isDefault) ||
+      vault.creator_skin_app[0];
+    const onlinePlayerSkin =
+      vault.creator_skin_player.find((s: any) => s.isOnlineActive) ||
+      vault.creator_skin_player.find((s: any) => s.isDefault) ||
+      vault.creator_skin_player[0];
+    const onlineDmSkin =
+      vault.creator_skin_dm.find((s: any) => s.isOnlineActive) ||
+      vault.creator_skin_dm.find((s: any) => s.isDefault) ||
+      vault.creator_skin_dm[0];
+
+    let ownedDlcIds = ['dlc-srd-5e-oficial'];
+    let ownedSkinIds = ['skin-player-default', 'skin-dm-default'];
+
+    const appSkinIdSet = new Set(vault.creator_skin_app.map((s: any) => s.id));
+    const legacySkinIds = new Set([
+      'skin-app-default',
+      'skin-app-navidad-2026',
+      'skin-app-sangre-carmesi',
+      'skin-player-crimson-dragon',
+      'skin-player-frost-2026',
+      'skin-dm-obsidian-throne',
+    ]);
+
+    const allUsers = this.getUsers();
+    const accountEntitlements: Record<
+      string,
+      {
+        userId: string;
+        email: string;
+        displayName: string;
+        fullTag: string;
+        appRole: string;
+        ownedDlcIds: string[];
+        ownedSkinIds: string[];
+      }
+    > = {};
+
+    for (const u of allUsers) {
+      const uEmail = u.email.trim().toLowerCase();
+      const uDlcs = Array.from(new Set(['dlc-srd-5e-oficial', ...(u.ownedDlcIds || [])]));
+      const uSkins = Array.from(
+        new Set([
+          'skin-player-default',
+          'skin-dm-default',
+          ...(u.ownedSkinIds || []).filter(
+            (id: string) => !appSkinIdSet.has(id) && !legacySkinIds.has(id)
+          ),
+        ])
+      );
+      accountEntitlements[uEmail] = {
+        userId: u.id,
+        email: u.email,
+        displayName: u.displayName,
+        fullTag: `${u.displayName}@${u.userTagId || '123'}`,
+        appRole: u.appRole || 'client',
+        ownedDlcIds: uDlcs,
+        ownedSkinIds: uSkins,
+      };
+      if (userEmail && uEmail === userEmail.trim().toLowerCase()) {
+        ownedDlcIds = uDlcs;
+        ownedSkinIds = uSkins;
+      }
+    }
+
+    const unifiedSkins = [
+      ...vault.creator_skin_app.map((s: any) => ({ ...s, scope: 'app', target: 'app' })),
+      ...vault.creator_skin_player.map((s: any) => ({ ...s, scope: 'player', target: 'player' })),
+      ...vault.creator_skin_dm.map((s: any) => ({ ...s, scope: 'dm', target: 'dm' })),
+    ];
+
+    const pendingReviews = [
+      ...vault.creator_dlc
+        .filter((d: any) => d.reviewStatus === 'pending_review' || Boolean(d.pendingDraft))
+        .map((d: any) => ({ kind: 'creator_dlc' as const, item: d })),
+      ...vault.creator_skin_app
+        .filter((s: any) => s.reviewStatus === 'pending_review' || Boolean(s.pendingDraft))
+        .map((s: any) => ({ kind: 'creator_skin_app' as const, item: s })),
+      ...vault.creator_skin_player
+        .filter((s: any) => s.reviewStatus === 'pending_review' || Boolean(s.pendingDraft))
+        .map((s: any) => ({ kind: 'creator_skin_player' as const, item: s })),
+      ...vault.creator_skin_dm
+        .filter((s: any) => s.reviewStatus === 'pending_review' || Boolean(s.pendingDraft))
+        .map((s: any) => ({ kind: 'creator_skin_dm' as const, item: s })),
+    ];
+
+    return {
+      dlcs: vault.creator_dlc,
+      skins: unifiedSkins,
+      appSkins: vault.creator_skin_app,
+      playerSkins: vault.creator_skin_player,
+      dmSkins: vault.creator_skin_dm,
+      activeOnlineAppSkinId: onlineAppSkin?.id || 'skin-app-default',
+      activeOnlineLobbySkinId: onlineAppSkin?.id || 'skin-app-default',
+      activeOnlinePlayerSkinId: onlinePlayerSkin?.id || 'skin-player-default',
+      activeOnlineDmSkinId: onlineDmSkin?.id || 'skin-dm-default',
+      onlineAppSkin,
+      onlinePlayerSkin,
+      onlineDmSkin,
+      ownedDlcIds,
+      ownedSkinIds,
+      accountEntitlements,
+      pendingReviews,
+    };
+  },
+
+  saveCreatorStudioItem(
+    kind: 'creator_dlc' | 'creator_skin_app' | 'creator_skin_player' | 'creator_skin_dm',
+    item: Record<string, any>,
+    actorEmail?: string
+  ) {
+    const vault = this.getCreatorStudioVault();
+    const list = Array.isArray(vault[kind]) ? [...vault[kind]] : [];
+    const itemId = item.id || `${kind.replace('creator_', '')}-${Date.now()}`;
+    const existingIdx = list.findIndex((x: any) => x.id === itemId);
+    const existingItem = existingIdx >= 0 ? list[existingIdx] : null;
+
+    const actorUser = actorEmail ? this.findUserByEmail(actorEmail) : undefined;
+    const isAdmin =
+      !actorEmail ||
+      actorEmail.trim().toLowerCase() === 'admin@weroll.app' ||
+      actorEmail.trim().toLowerCase() === 'deadplanter@gmail.com' ||
+      actorUser?.appRole === 'admin' ||
+      actorUser?.role === 'admin';
+
+    // Ownership enforcement: Non-admin creators can only edit their own items
+    if (!isAdmin && existingItem) {
+      const ownerEmail = (existingItem.authorEmail || '').trim().toLowerCase();
+      const ownerTag = (existingItem.authorTag || '').trim().toLowerCase();
+      const actorTag = actorUser ? `${actorUser.displayName}@${actorUser.userTagId || '123'}`.toLowerCase() : '';
+      const normActor = (actorEmail || '').trim().toLowerCase();
+      if (
+        existingItem.isDefault ||
+        existingItem.isOfficialSrd ||
+        (ownerEmail && ownerEmail !== normActor) ||
+        (!ownerEmail && ownerTag && actorTag && ownerTag !== actorTag)
+      ) {
+        throw new Error(
+          'Solo el creador original de este paquete/skin o un Administrador puede editarlo.'
+        );
+      }
+    }
+
+    const now = Date.now();
+    const scope =
+      kind === 'creator_skin_app'
+        ? 'app'
+        : kind === 'creator_skin_player'
+        ? 'player'
+        : kind === 'creator_skin_dm'
+        ? 'dm'
+        : undefined;
+
+    // Normalize DLC contentPayload & top-level arrays so both World Sheet and Creator Studio read them
+    let normalizedExtra: Record<string, any> = {};
+    if (kind === 'creator_dlc') {
+      const monsters = item.monsters || item.contentPayload?.monsters || existingItem?.monsters || [];
+      const npcs = item.npcs || item.contentPayload?.npcs || existingItem?.npcs || [];
+      const itemsAndSpells =
+        item.itemsAndSpells || item.contentPayload?.itemsAndSpells || existingItem?.itemsAndSpells || [];
+      const locations = item.locations || item.contentPayload?.locations || existingItem?.locations || [];
+      const albumPhotos =
+        item.placeAlbumPhotos ||
+        item.albumPhotos ||
+        item.contentPayload?.albumPhotos ||
+        existingItem?.placeAlbumPhotos ||
+        [];
+      const campaignLogs =
+        item.campaignLogs || item.contentPayload?.campaignLogs || existingItem?.campaignLogs || [];
+      const folders = item.contentPayload?.folders || existingItem?.contentPayload?.folders || ['DLC / General'];
+
+      normalizedExtra = {
+        monsters,
+        npcs,
+        itemsAndSpells,
+        locations,
+        placeAlbumPhotos: albumPhotos,
+        albumPhotos,
+        campaignLogs,
+        counts: {
+          maps: locations.length,
+          albums: albumPhotos.length,
+          monsters: monsters.length,
+          itemsAndWeapons: itemsAndSpells.length,
+          stories: campaignLogs.length,
+          npcs: npcs.length,
+        },
+        contentPayload: {
+          ...(existingItem?.contentPayload || {}),
+          ...(item.contentPayload || {}),
+          monsters,
+          npcs,
+          itemsAndSpells,
+          locations,
+          albumPhotos,
+          campaignLogs,
+          folders,
+        },
+      };
+    } else if (kind === 'creator_skin_player') {
+      const tt = item.themeTokens || existingItem?.themeTokens || {};
+      normalizedExtra = {
+        scope: 'player',
+        target: 'player',
+        sheetTheme: {
+          ...(existingItem?.sheetTheme || {}),
+          ...(item.sheetTheme || {}),
+          primaryBorderColor: tt.sheetStatBoxBorder || tt.borderOrnamentColor || item.sheetTheme?.primaryBorderColor || '#d97706',
+          accentColor: tt.forumAccentColor || item.sheetTheme?.accentColor || '#f59e0b',
+          cardFrameStyle: tt.sheetStatBoxStyle || item.sheetTheme?.cardFrameStyle || 'imperial-gold',
+          headerGradient: tt.headerBannerBg || item.sheetTheme?.headerGradient || 'linear-gradient(180deg, rgba(24,19,15,0.96), rgba(14,12,10,0.98))',
+          titleColor: tt.headerTitleColor || item.sheetTheme?.titleColor || '#fde68a',
+          backgroundTextureUrl: tt.sheetBgTextureUrl || item.sheetTheme?.backgroundTextureUrl,
+        },
+        tarotCardDesign: {
+          ...(existingItem?.tarotCardDesign || {}),
+          ...(item.tarotCardDesign || {}),
+          glowColor: tt.tarotGlowColor || item.tarotCardDesign?.glowColor || 'rgba(245, 158, 11, 0.35)',
+          badgeStyle: item.tarotCardDesign?.badgeStyle || 'amber-gold',
+          cardBgGradient: tt.deckTarotCardBg || item.tarotCardDesign?.cardBgGradient || 'linear-gradient(180deg, #1b1510 0%, #0f0c09 100%)',
+        },
+      };
+    } else if (kind === 'creator_skin_dm') {
+      const tt = item.themeTokens || existingItem?.themeTokens || {};
+      normalizedExtra = {
+        scope: 'dm',
+        target: 'dm',
+        worldSheetTheme: {
+          ...(existingItem?.worldSheetTheme || {}),
+          ...(item.worldSheetTheme || {}),
+          panelBgColor: tt.forumPanelBg || item.worldSheetTheme?.panelBgColor || '#120f0c',
+          borderGoldTone: tt.borderOrnamentColor || item.worldSheetTheme?.borderGoldTone || '#d97706',
+          mapHudFrameStyle: item.worldSheetTheme?.mapHudFrameStyle || 'imperial-atlas',
+          headerGradient: tt.headerBannerBg || item.worldSheetTheme?.headerGradient,
+          accentColor: tt.forumAccentColor || item.worldSheetTheme?.accentColor || '#f59e0b',
+        },
+      };
+    } else if (kind === 'creator_skin_app') {
+      normalizedExtra = {
+        scope: 'app',
+        target: 'app',
+      };
+    }
+
+    let updatedItem: Record<string, any>;
+
+    // Review Queue Logic: If a non-admin Creator creates or edits, require Admin review!
+    if (!isAdmin) {
+      const proposedPayload = {
+        ...(existingItem || {}),
+        ...item,
+        ...normalizedExtra,
+        id: itemId,
+        authorEmail: existingItem?.authorEmail || actorUser?.email || actorEmail,
+        authorName: existingItem?.authorName || actorUser?.displayName || item.authorName || 'Creador',
+        authorTag:
+          existingItem?.authorTag ||
+          (actorUser ? `${actorUser.displayName}@${actorUser.userTagId || '123'}` : item.authorTag || 'Creador'),
+        createdByAdmin: false,
+        hideCreatorCredit: false,
+        editorCreditName:
+          item.editorCreditName ||
+          existingItem?.editorCreditName ||
+          (actorUser ? `${actorUser.displayName}@${actorUser.userTagId || '123'}` : 'Creador de Contenido'),
+        customCreditDescription: item.customCreditDescription || item.description || existingItem?.description || '',
+        updatedAt: now,
+      };
+
+      if (existingItem && existingItem.reviewStatus === 'approved') {
+        // Keep live item intact for current users while storing the new update in pendingDraft for Admin review
+        updatedItem = {
+          ...existingItem,
+          reviewStatus: 'pending_review',
+          submittedByEmail: actorEmail,
+          submittedByName: actorUser?.displayName || actorEmail,
+          submittedAt: now,
+          pendingDraft: proposedPayload,
+          updatedAt: now,
+        };
+      } else {
+        updatedItem = {
+          ...proposedPayload,
+          reviewStatus: 'pending_review',
+          submittedByEmail: actorEmail,
+          submittedByName: actorUser?.displayName || actorEmail,
+          submittedAt: now,
+        };
+      }
+    } else {
+      const hasCustomEditorCredit = Boolean((item.editorCreditName || '').trim());
+      updatedItem = {
+        ...(existingItem || {}),
+        ...item,
+        ...normalizedExtra,
+        id: itemId,
+        ...(scope ? { scope, target: scope } : {}),
+        authorEmail: item.authorEmail || existingItem?.authorEmail || actorEmail || 'admin@weroll.app',
+        authorName: item.authorName || existingItem?.authorName || actorUser?.displayName || 'Administrador Supremo',
+        authorTag:
+          item.authorTag ||
+          existingItem?.authorTag ||
+          (actorUser ? `${actorUser.displayName}@${actorUser.userTagId || 'adm'}` : 'Administrador Supremo@adm'),
+        createdByAdmin: existingItem?.createdByAdmin !== undefined ? existingItem.createdByAdmin : true,
+        hideCreatorCredit:
+          item.hideCreatorCredit !== undefined
+            ? Boolean(item.hideCreatorCredit)
+            : !hasCustomEditorCredit,
+        editorCreditName: (item.editorCreditName || '').trim() || existingItem?.editorCreditName || undefined,
+        customCreditDescription:
+          (item.customCreditDescription || '').trim() || existingItem?.customCreditDescription || undefined,
+        reviewStatus: 'approved',
+        pendingDraft: undefined,
+        reviewedByEmail: actorEmail || 'admin@weroll.app',
+        reviewedAt: now,
+        updatedAt: now,
+      };
+    }
+
+    if (existingIdx >= 0) {
+      list[existingIdx] = updatedItem;
+    } else {
+      list.push(updatedItem);
+    }
+
+    vault[kind] = list;
+    writeJSON('creator_studio_vault.json', vault);
+
+    // Automatically grant ownership to creator/admin who created it
+    if (actorEmail) {
+      const user = this.findUserByEmail(actorEmail);
+      if (user) {
+        if (kind === 'creator_dlc') {
+          user.ownedDlcIds = Array.from(new Set([...(user.ownedDlcIds || []), itemId]));
+        } else {
+          user.ownedSkinIds = Array.from(new Set([...(user.ownedSkinIds || []), itemId]));
+        }
+        const allUsers = this.getUsers();
+        const uIdx = allUsers.findIndex((u) => u.id === user.id);
+        if (uIdx >= 0) {
+          allUsers[uIdx] = user;
+          writeJSON('users.json', allUsers);
+        }
+      }
+    }
+
+    // If an Admin updated an existing approved DLC or Skin, notify all accounts that own it
+    if (isAdmin && existingIdx >= 0) {
+      this.notifyEntitlementOwnersOfUpdate({
+        itemId,
+        itemName: updatedItem.name || itemId,
+        itemType: kind === 'creator_dlc' ? 'dlc' : 'skin',
+        summary: `Se ha publicado una actualización para "${updatedItem.name || itemId}".`,
+      });
+    }
+
+    this.markMutation(`Creator Studio [${kind}] guardado: ${updatedItem.name || itemId}`);
+    this.recordDeltaEntry({
+      entityKind: kind,
+      entityId: itemId,
+      entityLabel: updatedItem.name || itemId,
+      actorEmail: actorEmail || 'admin@weroll.app',
+      changedFields: Object.keys(item),
+      payloadSizeKb: Math.max(0.4, Math.round((JSON.stringify(updatedItem).length / 1024) * 10) / 10),
+      summary: `Guardado en Panel de Creador (${kind}): "${updatedItem.name || itemId}"`,
+    });
+
+    return updatedItem;
+  },
+
+  reviewCreatorStudioItem(params: {
+    kind: 'creator_dlc' | 'creator_skin_app' | 'creator_skin_player' | 'creator_skin_dm';
+    id: string;
+    decision: 'approve' | 'reject';
+    reviewNotes?: string;
+    adminEmail?: string;
+  }) {
+    const vault = this.getCreatorStudioVault();
+    const list = Array.isArray(vault[params.kind]) ? [...vault[params.kind]] : [];
+    const idx = list.findIndex((x: any) => x.id === params.id);
+    if (idx === -1) {
+      throw new Error('No se encontró el paquete o skin en la cola de revisión.');
+    }
+
+    const current = list[idx];
+    const now = Date.now();
+
+    if (params.decision === 'approve') {
+      const merged = current.pendingDraft
+        ? {
+            ...current,
+            ...current.pendingDraft,
+            pendingDraft: undefined,
+            reviewStatus: 'approved',
+            reviewNotes: params.reviewNotes || 'Aprobado y verificado por Administración.',
+            reviewedByEmail: params.adminEmail || 'admin@weroll.app',
+            reviewedAt: now,
+            updatedAt: now,
+          }
+        : {
+            ...current,
+            reviewStatus: 'approved',
+            reviewNotes: params.reviewNotes || 'Aprobado y verificado por Administración.',
+            reviewedByEmail: params.adminEmail || 'admin@weroll.app',
+            reviewedAt: now,
+            updatedAt: now,
+          };
+
+      list[idx] = merged;
+      vault[params.kind] = list;
+      writeJSON('creator_studio_vault.json', vault);
+
+      this.notifyEntitlementOwnersOfUpdate({
+        itemId: merged.id,
+        itemName: merged.name || merged.id,
+        itemType: params.kind === 'creator_dlc' ? 'dlc' : 'skin',
+        summary: `El Administrador ha revisado y aprobado la última versión de "${merged.name}". ¡Ya está activa en tu cuenta!`,
+      });
+
+      this.markMutation(`Revisión aprobada en Creator Studio [${params.kind}]: ${merged.name}`);
+      return merged;
+    } else {
+      const rejected = {
+        ...current,
+        pendingDraft: undefined,
+        reviewStatus: current.pendingDraft ? 'approved' : 'rejected',
+        reviewNotes: params.reviewNotes || 'Revisión rechazada por el Administrador.',
+        reviewedByEmail: params.adminEmail || 'admin@weroll.app',
+        reviewedAt: now,
+        updatedAt: now,
+      };
+      list[idx] = rejected;
+      vault[params.kind] = list;
+      writeJSON('creator_studio_vault.json', vault);
+      this.markMutation(`Revisión rechazada en Creator Studio [${params.kind}]: ${current.name}`);
+      return rejected;
+    }
+  },
+
+  notifyEntitlementOwnersOfUpdate(params: {
+    itemId: string;
+    itemName: string;
+    itemType: 'dlc' | 'skin';
+    summary: string;
+  }) {
+    try {
+      const allUsers = this.getUsers();
+      const adminUser =
+        allUsers.find((u) => u.email.toLowerCase() === 'admin@weroll.app') || allUsers[0];
+      if (!adminUser) return;
+
+      for (const u of allUsers) {
+        const ownsItem =
+          params.itemType === 'dlc'
+            ? (u.ownedDlcIds || []).includes(params.itemId)
+            : (u.ownedSkinIds || []).includes(params.itemId);
+        if (ownsItem && u.id !== adminUser.id) {
+          this.sendFriendDirectMessage({
+            fromUserId: adminUser.id,
+            fromDisplayName: adminUser.displayName,
+            fromUserTagId: adminUser.userTagId || 'adm',
+            fromFullTag: `${adminUser.displayName}@${adminUser.userTagId || 'adm'}`,
+            fromEmail: adminUser.email,
+            toUserId: u.id,
+            toDisplayName: u.displayName,
+            toUserTagId: u.userTagId || '123',
+            toFullTag: `${u.displayName}@${u.userTagId || '123'}`,
+            toEmail: u.email,
+            content: `📦 [Actualización de ${params.itemType === 'dlc' ? 'DLC' : 'Skin'}: ${params.itemName}] ${params.summary}`,
+          });
+        }
+      }
+    } catch {
+      // Non-blocking notification
+    }
+  },
+
+  deleteCreatorStudioItem(
+    kind: 'creator_dlc' | 'creator_skin_app' | 'creator_skin_player' | 'creator_skin_dm',
+    id: string,
+    actorEmail?: string
+  ): boolean {
+    if (
+      id === 'dlc-srd-5e-oficial' ||
+      id === 'skin-app-default' ||
+      id === 'skin-player-default' ||
+      id === 'skin-dm-default'
+    ) {
+      throw new Error('No se puede eliminar el paquete o skin base por defecto del sistema.');
+    }
+    const vault = this.getCreatorStudioVault();
+    const list = Array.isArray(vault[kind]) ? vault[kind] : [];
+    const target = list.find((x: any) => x.id === id);
+    if (!target) return false;
+
+    const actorUser = actorEmail ? this.findUserByEmail(actorEmail) : undefined;
+    const isAdmin =
+      !actorEmail ||
+      actorEmail.trim().toLowerCase() === 'admin@weroll.app' ||
+      actorEmail.trim().toLowerCase() === 'deadplanter@gmail.com' ||
+      actorUser?.appRole === 'admin' ||
+      actorUser?.role === 'admin';
+
+    if (!isAdmin) {
+      const ownerEmail = (target.authorEmail || '').trim().toLowerCase();
+      if (ownerEmail && ownerEmail !== (actorEmail || '').trim().toLowerCase()) {
+        throw new Error('Solo el creador original o un Administrador puede eliminar este elemento.');
+      }
+    }
+
+    const filtered = list.filter((x: any) => x.id !== id);
+    vault[kind] = filtered;
+    writeJSON('creator_studio_vault.json', vault);
+
+    const settings = this.getHostSettings();
+    if (kind === 'creator_skin_app' && (settings.activeAppSkinId === id || settings.activeOnlineLobbySkinId === id)) {
+      this.saveHostSettings(
+        { activeAppSkinId: 'skin-app-default', activeOnlineLobbySkinId: 'skin-app-default' },
+        { silentSync: true }
+      );
+    } else if (kind === 'creator_skin_player' && settings.activeOnlinePlayerSkinId === id) {
+      this.saveHostSettings({ activeOnlinePlayerSkinId: 'skin-player-default' }, { silentSync: true });
+    } else if (kind === 'creator_skin_dm' && settings.activeOnlineDmSkinId === id) {
+      this.saveHostSettings({ activeOnlineDmSkinId: 'skin-dm-default' }, { silentSync: true });
+    }
+
+    this.markMutation(`Elemento eliminado de Creator Studio [${kind}]: ${id} por ${actorEmail || 'Admin'}`);
+    return true;
+  },
+
+  setActiveOnlineAppSkin(
+    skinId: string,
+    actorEmail?: string,
+    scopeOverride?: 'app' | 'player' | 'dm'
+  ) {
+    const vault = this.getCreatorStudioVault();
+    const inApp = vault.creator_skin_app.find((s: any) => s.id === skinId);
+    const inPlayer = vault.creator_skin_player.find((s: any) => s.id === skinId);
+    const inDm = vault.creator_skin_dm.find((s: any) => s.id === skinId);
+
+    const resolvedScope: 'app' | 'player' | 'dm' =
+      scopeOverride || (inPlayer ? 'player' : inDm ? 'dm' : 'app');
+
+    if (resolvedScope === 'player') {
+      const target = inPlayer || inApp;
+      if (!target) throw new Error('La Skin de Jugador seleccionada no existe.');
+      for (const s of vault.creator_skin_player) {
+        s.isOnlineActive = s.id === skinId;
+        s.isOnlineDefault = s.id === skinId;
+      }
+      writeJSON('creator_studio_vault.json', vault);
+      this.saveHostSettings(
+        { activeOnlinePlayerSkinId: skinId },
+        { mutationReason: `Skin Online de Jugador cambiada a "${target.name}" por ${actorEmail || 'Admin'}` }
+      );
+      return target;
+    }
+
+    if (resolvedScope === 'dm') {
+      const target = inDm || inApp;
+      if (!target) throw new Error('La Skin de Dungeon Master seleccionada no existe.');
+      for (const s of vault.creator_skin_dm) {
+        s.isOnlineActive = s.id === skinId;
+        s.isOnlineDefault = s.id === skinId;
+      }
+      writeJSON('creator_studio_vault.json', vault);
+      this.saveHostSettings(
+        { activeOnlineDmSkinId: skinId },
+        { mutationReason: `Skin Online de DM cambiada a "${target.name}" por ${actorEmail || 'Admin'}` }
+      );
+      return target;
+    }
+
+    const target = inApp;
+    if (!target) {
+      throw new Error('La Skin de Lobby/App seleccionada no existe.');
+    }
+    for (const s of vault.creator_skin_app) {
+      s.isOnlineActive = s.id === skinId;
+      s.isOnlineDefault = s.id === skinId;
+    }
+    writeJSON('creator_studio_vault.json', vault);
+    this.saveHostSettings(
+      { activeAppSkinId: skinId, activeOnlineLobbySkinId: skinId },
+      { mutationReason: `Skin Online del Lobby cambiada a "${target.name}" por ${actorEmail || 'Admin'}` }
+    );
+    return target;
+  },
+
+  promoteAppSkinToTarget(params: {
+    appSkinId: string;
+    targetKind: 'creator_skin_player' | 'creator_skin_dm';
+    customName?: string;
+    claimCode?: string;
+    seasonTag?: string;
+    availableFrom?: string;
+    availableUntil?: string;
+    editorCreditName?: string;
+    customCreditDescription?: string;
+    hideCreatorCredit?: boolean;
+    actorEmail?: string;
+  }) {
+    const vault = this.getCreatorStudioVault();
+    const allSkins = [
+      ...vault.creator_skin_app,
+      ...vault.creator_skin_player,
+      ...vault.creator_skin_dm,
+    ];
+    const sourceSkin = allSkins.find((s: any) => s.id === params.appSkinId);
+    if (!sourceSkin) {
+      throw new Error('No se encontró la Skin de origen.');
+    }
+
+    const tokens = sourceSkin.themeTokens || {};
+    const newId = `${params.targetKind === 'creator_skin_player' ? 'skin-player' : 'skin-dm'}-${Date.now()}`;
+    const finalName =
+      (params.customName || '').trim() ||
+      `${sourceSkin.name} (${params.targetKind === 'creator_skin_player' ? 'Edición Jugador' : 'Edición DM'})`;
+    const customCredit = (params.editorCreditName || '').trim();
+    const customDesc =
+      (params.customCreditDescription || '').trim() ||
+      sourceSkin.customCreditDescription ||
+      sourceSkin.description;
+
+    if (params.targetKind === 'creator_skin_player') {
+      const newPlayerSkin = {
+        id: newId,
+        name: finalName,
+        scope: 'player',
+        target: 'player',
+        authorTag: customCredit || sourceSkin.authorTag || 'Administrador Supremo@adm',
+        authorName: customCredit || sourceSkin.authorName || 'Administrador Supremo',
+        editorCreditName: customCredit || undefined,
+        customCreditDescription: customDesc,
+        hideCreatorCredit: params.hideCreatorCredit !== undefined ? params.hideCreatorCredit : !customCredit,
+        createdByAdmin: true,
+        reviewStatus: 'approved',
+        description: customDesc || `Convertida desde "${sourceSkin.name}". Estiliza la Player Sheet, el Modo Mapa y la Carta Tarot del personaje.`,
+        seasonTag: params.seasonTag || sourceSkin.seasonTag || 'Especial',
+        claimCode: (params.claimCode || '').trim() || `SKIN-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+        availableFrom: params.availableFrom || sourceSkin.availableFrom,
+        availableUntil: params.availableUntil || sourceSkin.availableUntil,
+        isDefault: false,
+        isAcquirable: true,
+        themeTokens: { ...tokens },
+        sheetTheme: {
+          primaryBorderColor: tokens.sheetStatBoxBorder || tokens.forumAccentColor || '#f59e0b',
+          accentColor: tokens.forumAccentColor || '#f59e0b',
+          cardFrameStyle: tokens.sheetStatBoxStyle || 'promoted-app-skin',
+          headerGradient: tokens.headerBannerBg || 'linear-gradient(180deg, rgba(24,19,15,0.96), rgba(14,12,10,0.98))',
+          titleColor: tokens.headerTitleColor || '#fde68a',
+        },
+        tarotCardDesign: {
+          glowColor: tokens.tarotGlowColor || tokens.borderOrnamentColor || 'rgba(245, 158, 11, 0.45)',
+          badgeStyle: 'custom-season',
+          cardBgGradient: tokens.deckTarotCardBg || tokens.charactersSectionBg || 'linear-gradient(180deg, #1b1510 0%, #0f0c09 100%)',
+        },
+        updatedAt: Date.now(),
+      };
+      return this.saveCreatorStudioItem('creator_skin_player', newPlayerSkin, params.actorEmail);
+    } else {
+      const newDmSkin = {
+        id: newId,
+        name: finalName,
+        scope: 'dm',
+        target: 'dm',
+        authorTag: customCredit || sourceSkin.authorTag || 'Administrador Supremo@adm',
+        authorName: customCredit || sourceSkin.authorName || 'Administrador Supremo',
+        editorCreditName: customCredit || undefined,
+        customCreditDescription: customDesc,
+        hideCreatorCredit: params.hideCreatorCredit !== undefined ? params.hideCreatorCredit : !customCredit,
+        createdByAdmin: true,
+        reviewStatus: 'approved',
+        description: customDesc || `Convertida desde "${sourceSkin.name}". Personaliza el World Sheet del Dungeon Master.`,
+        seasonTag: params.seasonTag || sourceSkin.seasonTag || 'Especial',
+        claimCode: (params.claimCode || '').trim() || `DMSKIN-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+        availableFrom: params.availableFrom || sourceSkin.availableFrom,
+        availableUntil: params.availableUntil || sourceSkin.availableUntil,
+        isDefault: false,
+        isAcquirable: true,
+        themeTokens: { ...tokens },
+        worldSheetTheme: {
+          panelBgColor: tokens.forumPanelBg || '#120f0c',
+          borderGoldTone: tokens.forumAccentColor || '#d97706',
+          mapHudFrameStyle: 'promoted-dm-skin',
+          headerGradient: tokens.headerBannerBg,
+          accentColor: tokens.forumAccentColor || '#f59e0b',
+        },
+        updatedAt: Date.now(),
+      };
+      return this.saveCreatorStudioItem('creator_skin_dm', newDmSkin, params.actorEmail);
+    }
+  },
+
+  grantOrRevokeEntitlement(params: {
+    targetEmail: string;
+    itemId: string;
+    itemType: 'dlc' | 'skin';
+    action: 'grant' | 'revoke';
+    actorEmail?: string;
+  }) {
+    const users = this.getUsers();
+    const normEmail = (params.targetEmail || '').trim().toLowerCase();
+    const idx = users.findIndex((u) => u.email.trim().toLowerCase() === normEmail);
+    if (idx === -1) {
+      throw new Error(`No se encontró ninguna cuenta registrada con el correo "${params.targetEmail}".`);
+    }
+
+    const user = users[idx];
+    if (params.itemType === 'dlc') {
+      const list = new Set(['dlc-srd-5e-oficial', ...(user.ownedDlcIds || [])]);
+      if (params.action === 'grant') list.add(params.itemId);
+      else if (params.itemId !== 'dlc-srd-5e-oficial') list.delete(params.itemId);
+      user.ownedDlcIds = Array.from(list);
+    } else {
+      const list = new Set(['skin-app-default', 'skin-player-default', 'skin-dm-default', ...(user.ownedSkinIds || [])]);
+      if (params.action === 'grant') list.add(params.itemId);
+      else if (!['skin-app-default', 'skin-player-default', 'skin-dm-default'].includes(params.itemId)) {
+        list.delete(params.itemId);
+      }
+      user.ownedSkinIds = Array.from(list);
+    }
+
+    users[idx] = user;
+    this.saveUsers(
+      users,
+      `Licencia en la nube (${params.itemType.toUpperCase()} ${params.itemId}) ${params.action === 'grant' ? 'otorgada a' : 'revocada de'} ${user.email}`
+    );
+    return {
+      userId: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      ownedDlcIds: user.ownedDlcIds,
+      ownedSkinIds: user.ownedSkinIds,
+    };
+  },
+
+  claimEntitlementByCode(params: { userEmail: string; code: string }) {
+    const normEmail = (params.userEmail || '').trim().toLowerCase();
+    const cleanCode = (params.code || '').trim().toUpperCase();
+    if (!normEmail || !cleanCode) {
+      throw new Error('Debes iniciar sesión e ingresar un código de activación válido.');
+    }
+
+    const users = this.getUsers();
+    const uIdx = users.findIndex((u) => u.email.trim().toLowerCase() === normEmail);
+    if (uIdx === -1) {
+      throw new Error('Tu cuenta de usuario no fue encontrada en el servidor.');
+    }
+
+    const vault = this.getCreatorStudioVault();
+    const matchedDlc = vault.creator_dlc.find(
+      (d: any) =>
+        d.reviewStatus !== 'rejected' &&
+        ((d.claimCode || '').trim().toUpperCase() === cleanCode ||
+          (d.acquisitionCode || '').trim().toUpperCase() === cleanCode ||
+          d.id.toUpperCase() === cleanCode)
+    );
+    const matchedSkin = [
+      ...vault.creator_skin_player,
+      ...vault.creator_skin_dm,
+      ...vault.creator_skin_app,
+    ].find(
+      (s: any) =>
+        s.reviewStatus !== 'rejected' &&
+        ((s.claimCode || '').trim().toUpperCase() === cleanCode ||
+          (s.acquisitionCode || '').trim().toUpperCase() === cleanCode ||
+          s.id.toUpperCase() === cleanCode)
+    );
+
+    if (!matchedDlc && !matchedSkin) {
+      throw new Error(`El código "${cleanCode}" no corresponde a ningún DLC o Skin activa.`);
+    }
+
+    const targetItem = matchedDlc || matchedSkin;
+    const nowIso = new Date().toISOString().slice(0, 10);
+    if (targetItem.availableUntil && nowIso > targetItem.availableUntil) {
+      throw new Error(
+        `La ventana de temporada para "${targetItem.name}" expiró el ${targetItem.availableUntil}. Solo un Administrador puede otorgarla manualmente.`
+      );
+    }
+
+    if (matchedDlc) {
+      return {
+        itemType: 'dlc' as const,
+        item: matchedDlc,
+        ...this.grantOrRevokeEntitlement({
+          targetEmail: normEmail,
+          itemId: matchedDlc.id,
+          itemType: 'dlc',
+          action: 'grant',
+        }),
+      };
+    } else {
+      return {
+        itemType: 'skin' as const,
+        item: matchedSkin,
+        ...this.grantOrRevokeEntitlement({
+          targetEmail: normEmail,
+          itemId: matchedSkin.id,
+          itemType: 'skin',
+          action: 'grant',
+        }),
+      };
+    }
+  },
+
+  // --- OTP EMAIL VERIFICATION FOR NEW REGISTRATIONS ONLY ---
+  generateRegistrationOtp(email: string): {
+    email: string;
+    alreadyRegistered: boolean;
+    code?: string;
+    expiresAt?: number;
+  } {
+    const normEmail = (email || '').trim().toLowerCase();
+    if (!normEmail || !normEmail.includes('@')) {
+      throw new Error('Ingresa un correo electrónico válido para enviar el código OTP.');
+    }
+
+    // Existing registered accounts are ALREADY verified and never need OTP
+    const existingUser = this.findUserByEmail(normEmail);
+    if (existingUser) {
+      return {
+        email: normEmail,
+        alreadyRegistered: true,
+      };
+    }
+
+    const otpStore = readJSON<
+      Record<
+        string,
+        {
+          email: string;
+          code: string;
+          createdAt: number;
+          expiresAt: number;
+          verified: boolean;
+        }
+      >
+    >('otp_verifications.json', {});
+
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const now = Date.now();
+    const expiresAt = now + 15 * 60 * 1000; // 15 minutes
+
+    otpStore[normEmail] = {
+      email: normEmail,
+      code,
+      createdAt: now,
+      expiresAt,
+      verified: false,
+    };
+
+    writeJSON('otp_verifications.json', otpStore);
+    return {
+      email: normEmail,
+      alreadyRegistered: false,
+      code,
+      expiresAt,
+    };
+  },
+
+  verifyRegistrationOtp(email: string, code: string): {
+    verified: boolean;
+    alreadyRegistered?: boolean;
+  } {
+    const normEmail = (email || '').trim().toLowerCase();
+    const cleanCode = (code || '').trim();
+
+    if (this.findUserByEmail(normEmail)) {
+      return { verified: true, alreadyRegistered: true };
+    }
+
+    const otpStore = readJSON<
+      Record<
+        string,
+        {
+          email: string;
+          code: string;
+          createdAt: number;
+          expiresAt: number;
+          verified: boolean;
+        }
+      >
+    >('otp_verifications.json', {});
+
+    const entry = otpStore[normEmail];
+    if (!entry) {
+      throw new Error('No se encontró un código OTP activo para este correo. Solicita uno nuevo.');
+    }
+    if (Date.now() > entry.expiresAt) {
+      throw new Error('El código OTP ha expirado. Solicita un nuevo código de 6 dígitos.');
+    }
+    if (entry.code !== cleanCode) {
+      throw new Error('El código OTP de 6 dígitos ingresado no es correcto.');
+    }
+
+    entry.verified = true;
+    otpStore[normEmail] = entry;
+    writeJSON('otp_verifications.json', otpStore);
+    return { verified: true };
+  },
+
+  getOtpArchitectureSummary() {
+    const users = this.getUsers();
+    const otpStore = readJSON<Record<string, any>>('otp_verifications.json', {});
+    const entries = Object.values(otpStore);
+    return {
+      mode: 'Verificación OTP de 6 dígitos exclusiva para nuevos registros (cuentas existentes exentas)',
+      existingExemptAccountsCount: users.length,
+      totalOtpsIssued: entries.length,
+      verifiedNewEmailsCount: entries.filter((e: any) => e.verified).length,
+      ttlMinutes: 15,
+    };
+  },
+
   getCreatorStudioArchitecturePreview(): {
     modules: Array<{
       id: string;
@@ -3567,21 +4994,16 @@ export const dataStore = {
       itemsCount: number;
     }>;
   } {
-    const creatorStore = readJSON<Record<string, any>>('creator_studio_vault.json', {
-      creator_skin_player: [],
-      creator_skin_dm: [],
-      creator_dlc: [],
-      creator_skin_app: [],
-    });
+    const creatorStore = this.getCreatorStudioVault();
     return {
       modules: [
         {
           id: 'player_skin',
           deltaKey: 'creator_skin_player',
-          title: '1. Diseño de Skin de Jugador (Pantalla de Jugador)',
-          subtitle: 'Cambia la estética de la Player Sheet (en modo edición y en mesa) y el marco único de la Carta Tarot del personaje.',
-          targetScreens: ['Player Sheet (Edición)', 'Player Sheet (En Mesa)', 'Carta Tarot de Personaje'],
-          sampleFields: ['playerSkinId', 'sheetTheme.backgroundTextureUrl', 'tarotCardDesign.frameBorderUrl', 'tarotCardDesign.glowColor'],
+          title: '1. Diseño de Skin de Jugador (Sheet + Modo Mapa + Carta Tarot)',
+          subtitle: 'Personaliza tamaños de iconos, fondos, cajas de características, fuente, barra de vida, Mazos de Juego, Rincón del Aventurero, Modo Mapa y Carta Tarot.',
+          targetScreens: ['Player Sheet (Completa)', 'Modo Mapa de Jugador', 'Carta Tarot (Lobby & Mesa)'],
+          sampleFields: ['themeTokens.sheetIconScale', 'themeTokens.sheetHpBarStyle', 'themeTokens.mapModeDmHoodBg', 'themeTokens.tarotGlowColor'],
           itemsCount: (creatorStore.creator_skin_player || []).length || 1,
         },
         {
@@ -3596,22 +5018,23 @@ export const dataStore = {
         {
           id: 'dlc_pack',
           deltaKey: 'creator_dlc',
-          title: '3. Paquetes de DLC (Expansiones Inyectables)',
-          subtitle: 'Paquetes modulares que inyectan mapas, álbumes de fotos, monstruos, armas/objetos e historias prediseñadas en un World Sheet.',
+          title: '3. Paquetes de DLC (Expansiones Inyectables con Revisión Admin)',
+          subtitle: 'Paquetes modulares con flujo de aprobación administrativa que inyectan mapas, álbumes, monstruos, armas/objetos, PNJs e historias en un World Sheet.',
           targetScreens: ['Atlas del Mundo', 'Álbum de Fotos', 'Bestiario DM', 'Armería & Tesoros', 'Diario & Crónicas'],
-          sampleFields: ['installedDlcIds', 'maps[]', 'albums[]', 'monsters[]', 'itemsAndWeapons[]', 'stories[]'],
+          sampleFields: ['installedDlcIds', 'reviewStatus', 'pendingDraft', 'monsters[]', 'itemsAndSpells[]', 'campaignLogs[]'],
           itemsCount: (creatorStore.creator_dlc || []).length || 1,
         },
         {
           id: 'app_skin',
           deltaKey: 'creator_skin_app',
-          title: '4. Skins de la Página / App General (Temporadas)',
-          subtitle: 'Temas globales (ej. Navidad, Halloween o regresar al Diseño Original) que transforman el Lobby, el Foro, la carátula superior y los botones.',
-          targetScreens: ['Carátula Superior (Header)', 'Lobby & Portal', 'Foro Comunitario WeRoll', 'Botones & Marcos Globales'],
-          sampleFields: ['activeAppSkinId', 'seasonTag', 'themeTokens.headerBannerBg', 'themeTokens.lobbyBgAccent', 'themeTokens.buttonPrimaryGradient'],
-          itemsCount: (creatorStore.creator_skin_app || []).length || 2,
+          title: '4. 3 Skins Online Default (Lobby, Jugador y Dungeon Master)',
+          subtitle: 'Control de las 3 skins online activas por defecto para toda la comunidad, duplicación, edición profunda y conversión a skins permanentes con créditos personalizables.',
+          targetScreens: ['Skin Online del Lobby', 'Skin Online del Jugador', 'Skin Online del Dungeon Master'],
+          sampleFields: ['activeOnlineLobbySkinId', 'activeOnlinePlayerSkinId', 'activeOnlineDmSkinId', 'editorCreditName'],
+          itemsCount: (creatorStore.creator_skin_app || []).length || 3,
         },
       ],
     };
   },
 };
+

@@ -1,7 +1,8 @@
-import React from 'react';
-import { Shield, Zap, Eye, Plus, Minus } from 'lucide-react';
+import React, { useState } from 'react';
+import { Shield, Zap, Eye, Plus, Minus, RotateCw } from 'lucide-react';
 import { EntityAvatar } from '../common/EntityAvatar';
-import { Character5e, PartyMemberLive } from '../../types/dnd';
+import { Character5e, PartyMemberLive, AppSkinThemeTokens, DiceRollResult } from '../../types/dnd';
+import { soundManager } from '../../utils/audio';
 import {
   calculateModifier,
   formatModifier,
@@ -11,14 +12,20 @@ import {
   parseAlignmentDescriptor,
   calculateEquippedItemStatBonuses,
   calculateTotalAbilityScore,
+  resolveTarotCardAbilityScores,
+  formatCompactRollDieBadge,
 } from '../../utils/dnd-math';
 
 export interface CharacterTarotCardProps {
   character?: Character5e;
   member?: PartyMemberLive;
+  skinTokens?: AppSkinThemeTokens;
   isOnline?: boolean;
   compact?: boolean;
   miniGrid?: boolean;
+  miniature?: boolean;
+  showLastRollInMap?: boolean;
+  lastRoll?: DiceRollResult | null;
   onClickCoinPouch?: () => void;
   showDmControls?: boolean;
   onDmAdjustPlayer?: (
@@ -31,11 +38,112 @@ export interface CharacterTarotCardProps {
   testId?: string;
 }
 
-/**
- * Renders the alignment icon based on ethics (shape) and morality (color):
- * - Morality (Color): Bueno -> Green, Neutral -> Gray/Silver, Malvado -> Red
- * - Ethics (Shape): Caótico -> Spiral/Vortex, Neutral -> Equilibrium Symbol, Legal -> Scales/Law Book
- */
+const MapLastRollDieBadge: React.FC<{
+  roll?: DiceRollResult | null;
+  size?: 'xs' | 'sm';
+}> = ({ roll, size = 'sm' }) => {
+  const parsed = formatCompactRollDieBadge(roll);
+  const sides = parsed?.sides || 20;
+  const valueText = parsed ? String(parsed.displayValue) : '—';
+  const labelText = parsed ? parsed.diceLabel.toUpperCase() : '1D20';
+  const strokeColor = parsed?.isCritSuccess
+    ? '#34d399'
+    : parsed?.isCritFail
+    ? '#f87171'
+    : '#e5c478';
+  const fillColor = parsed?.isCritSuccess
+    ? '#064e3b'
+    : parsed?.isCritFail
+    ? '#7f1d1d'
+    : '#141824';
+
+  const svgSizeClass = size === 'xs' ? 'w-6 h-6' : 'w-8 h-8';
+
+  return (
+    <div
+      data-testid="tarot-map-last-roll-badge"
+      title={
+        roll
+          ? `Última tirada: ${roll.label || labelText} = ${valueText} (${roll.formula || labelText})`
+          : 'Sin tiradas recientes'
+      }
+      className="flex flex-col items-center justify-center bg-[#0d1018]/90 border border-[#c8a45c]/75 rounded-lg px-1.5 py-0.5 shadow-[0_4px_12px_rgba(0,0,0,0.85)] select-none"
+    >
+      <div className={`relative ${svgSizeClass} flex items-center justify-center`}>
+        <svg viewBox="0 0 36 36" className="w-full h-full drop-shadow">
+          {sides === 4 && (
+            <polygon
+              points="18,3 33,31 3,31"
+              fill={fillColor}
+              stroke={strokeColor}
+              strokeWidth="2.2"
+              strokeLinejoin="round"
+            />
+          )}
+          {sides === 6 && (
+            <rect
+              x="5"
+              y="5"
+              width="26"
+              height="26"
+              rx="4"
+              fill={fillColor}
+              stroke={strokeColor}
+              strokeWidth="2.2"
+            />
+          )}
+          {sides === 8 && (
+            <polygon
+              points="18,2 33,18 18,34 3,18"
+              fill={fillColor}
+              stroke={strokeColor}
+              strokeWidth="2.2"
+              strokeLinejoin="round"
+            />
+          )}
+          {sides === 10 && (
+            <polygon
+              points="18,2 33,14 27,33 9,33 3,14"
+              fill={fillColor}
+              stroke={strokeColor}
+              strokeWidth="2.2"
+              strokeLinejoin="round"
+            />
+          )}
+          {sides === 12 && (
+            <polygon
+              points="18,2 31,9 34,23 25,33 11,33 2,23 5,9"
+              fill={fillColor}
+              stroke={strokeColor}
+              strokeWidth="2.2"
+              strokeLinejoin="round"
+            />
+          )}
+          {(sides === 20 || sides === 100) && (
+            <polygon
+              points="18,2 32,10 32,26 18,34 4,26 4,10"
+              fill={fillColor}
+              stroke={strokeColor}
+              strokeWidth="2.2"
+              strokeLinejoin="round"
+            />
+          )}
+        </svg>
+        <span
+          className={`absolute inset-0 flex items-center justify-center font-cinzel font-black ${
+            sides === 4 ? 'pt-1.5 text-[9px]' : size === 'xs' ? 'text-[10px]' : 'text-[11px]'
+          } text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)] leading-none`}
+        >
+          {valueText}
+        </span>
+      </div>
+      <span className="text-[7px] font-mono font-black text-[#e5c478] tracking-tighter leading-none mt-0.5 uppercase">
+        {labelText}
+      </span>
+    </div>
+  );
+};
+
 export const AlignmentBadgeIcon: React.FC<{
   alignment?: string;
   size?: 'xs' | 'sm' | 'md';
@@ -209,9 +317,13 @@ export const AlignmentBadgeIcon: React.FC<{
 export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
   character,
   member,
+  skinTokens,
   isOnline = true,
   compact = false,
   miniGrid = false,
+  miniature = false,
+  showLastRollInMap = false,
+  lastRoll,
   onClickCoinPouch,
   showDmControls = false,
   onDmAdjustPlayer,
@@ -220,7 +332,10 @@ export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
   dataTestId,
   testId,
 }) => {
+  const isMini = Boolean(miniature || miniGrid);
+
   // Resolve unified fields from either Character5e or PartyMemberLive
+  const resolvedLastRoll = lastRoll ?? member?.lastRoll ?? null;
   const charId = character?.id || member?.characterId || 'char-card';
   const name = character?.name || member?.characterName || 'Aventurero';
   const level = character?.level ?? member?.level ?? 1;
@@ -247,28 +362,21 @@ export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
     ? (character.speed ?? 30) + (equippedBonuses?.speed ?? 0)
     : member?.speed ?? 30;
 
-  const strMod = character
-    ? calculateTotalAbilityScore(character.abilities.str, equippedBonuses?.str ?? 0).modifier
-    : calculateModifier(member?.abilities?.str ?? 10);
-  const dexMod = character
-    ? calculateTotalAbilityScore(character.abilities.dex, equippedBonuses?.dex ?? 0).modifier
-    : calculateModifier(member?.abilities?.dex ?? 10);
-  const conMod = character
-    ? calculateTotalAbilityScore(character.abilities.con, equippedBonuses?.con ?? 0).modifier
-    : calculateModifier(member?.abilities?.con ?? 10);
-  const intMod = character
-    ? calculateTotalAbilityScore(character.abilities.int, equippedBonuses?.int ?? 0).modifier
-    : calculateModifier(member?.abilities?.int ?? 10);
-  const wisMod = character
-    ? calculateTotalAbilityScore(character.abilities.wis, equippedBonuses?.wis ?? 0).modifier
-    : calculateModifier(member?.abilities?.wis ?? 10);
-  const chaMod = character
-    ? calculateTotalAbilityScore(character.abilities.cha, equippedBonuses?.cha ?? 0).modifier
-    : calculateModifier(member?.abilities?.cha ?? 10);
+  // Total Ability Scores & Modifiers (FUE, DES, CON, INT, SAB, CAR)
+  const resolvedAbilities = React.useMemo(
+    () => resolveTarotCardAbilityScores(character, member),
+    [character, member]
+  );
 
-  const wisScore = character
-    ? calculateTotalAbilityScore(character.abilities.wis, equippedBonuses?.wis ?? 0).totalScore
-    : (member?.abilities?.wis ?? 10);
+  const strScore = resolvedAbilities.str.totalScore;
+  const dexScore = resolvedAbilities.dex.totalScore;
+  const conScore = resolvedAbilities.con.totalScore;
+  const intScore = resolvedAbilities.int.totalScore;
+  const wisScore = resolvedAbilities.wis.totalScore;
+  const chaScore = resolvedAbilities.cha.totalScore;
+
+  const dexMod = resolvedAbilities.dex.modifier;
+
   const pp = character
     ? calculatePassivePerception(
         wisScore,
@@ -308,247 +416,100 @@ export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
     member?.avatarUrl;
   const avatarIcon = character?.avatarIcon || member?.avatarIcon;
 
-  // =========================================================================
-  // MINI-GRID MODE (Used in TableMapView 2x2 Player Cards Grid: 4 cards fit simultaneously)
-  // =========================================================================
-  if (miniGrid) {
+  const effectiveSkinTokens = skinTokens || member?.skinTokens;
+  const [isFlipped, setIsFlipped] = useState<boolean>(false);
+
+  const activePlayerSkinId =
+    character?.playerSkinId || member?.playerSkinId || 'skin-player-default';
+  const skinVisuals = React.useMemo(() => {
+    if (activePlayerSkinId === 'skin-player-crimson-dragon') {
+      return {
+        cardBg: 'from-[#321216] via-[#210d11] to-[#14080a]',
+        border: 'border-red-500/90 ring-red-400/30',
+        titleColor: 'text-amber-300',
+        badgeText: 'Escamas Carmesí',
+        badgeClasses: 'bg-red-950/90 border-red-400/70 text-red-200',
+      };
+    }
+    if (activePlayerSkinId === 'skin-player-frost-2026') {
+      return {
+        cardBg: 'from-[#0d2238] via-[#091829] to-[#06101c]',
+        border: 'border-cyan-400/90 ring-cyan-300/35',
+        titleColor: 'text-cyan-200',
+        badgeText: 'Escarcha Invernal 2026',
+        badgeClasses: 'bg-cyan-950/90 border-cyan-400/70 text-cyan-200',
+      };
+    }
+    if (activePlayerSkinId && activePlayerSkinId !== 'skin-player-default') {
+      return {
+        cardBg: 'from-[#231934] via-[#181226] to-[#110c1c]',
+        border: 'border-purple-400/90 ring-purple-300/30',
+        titleColor: 'text-purple-200',
+        badgeText: 'Skin de Héroe',
+        badgeClasses: 'bg-purple-950/90 border-purple-400/70 text-purple-200',
+      };
+    }
+    return {
+      cardBg: 'from-[#1f2533] via-[#1a1f2c] to-[#141822]',
+      border: 'border-[#c8a45c] ring-[#e2c275]/25',
+      titleColor: 'text-[#e5c478]',
+      badgeText: null,
+      badgeClasses: '',
+    };
+  }, [activePlayerSkinId]);
+
+  const handleToggleFlip = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    soundManager.playCardFlip(effectiveSkinTokens?.sheetAudioProfile);
+    setIsFlipped((prev) => !prev);
+  };
+
+  if (isFlipped) {
     return (
       <div
         data-testid={dataTestId || testId || `character-tarot-card-${charId}`}
-        className={`relative rounded-xl bg-gradient-to-b from-[#1f2533] via-[#1a1f2c] to-[#141822] border-[1.5px] border-[#c8a45c] ring-1 ring-inset ring-[#e2c275]/20 shadow-[0_6px_18px_rgba(0,0,0,0.85)] p-2 space-y-1 flex flex-col justify-between text-[#f5e4be] select-none ${className}`}
+        data-player-skin={activePlayerSkinId}
+        onClick={handleToggleFlip}
+        style={{
+          borderColor: effectiveSkinTokens?.tarotBorderColor || '#c8a45c',
+          boxShadow: effectiveSkinTokens?.tarotGlowColor
+            ? `0 0 28px ${effectiveSkinTokens.tarotGlowColor}`
+            : undefined,
+          backgroundImage: effectiveSkinTokens?.tarotCardBackCustomPngUrl
+            ? `url(${effectiveSkinTokens.tarotCardBackCustomPngUrl})`
+            : undefined,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+        }}
+        className={`relative rounded-2xl bg-gradient-to-b from-[#1a1326] via-[#120e1c] to-[#0b0912] border-2 ${skinVisuals.border} ring-1 ring-inset shadow-[0_12px_35px_rgba(0,0,0,0.85)] ${
+          isMini
+            ? 'p-2.5 min-h-[245px]'
+            : compact
+            ? 'p-3.5 min-h-[320px]'
+            : 'p-4 sm:p-5 min-h-[420px]'
+        } flex flex-col items-center justify-center text-[#f5e4be] select-none overflow-hidden cursor-pointer transition-all duration-500 ${className}`}
       >
-        {/* Top-Right Compact Online Dot */}
-        {isOnline && (
-          <div className="absolute top-1.5 right-2 flex items-center gap-1 text-emerald-400 text-[9px] font-semibold">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
-            <span>En Línea</span>
+        {!effectiveSkinTokens?.tarotCardBackCustomPngUrl && (
+          <div className="p-4 rounded-2xl border-2 border-amber-500/40 bg-black/50 flex flex-col items-center justify-center text-center space-y-2">
+            <div className="w-12 h-12 rounded-full border-2 border-amber-400/70 flex items-center justify-center text-xl shadow-[0_0_20px_rgba(245,158,11,0.4)]">
+              ✦
+            </div>
+            <span className="font-cinzel font-black text-xs sm:text-sm text-amber-300 uppercase tracking-widest">
+              {name}
+            </span>
+            <span className="text-[10px] font-mono text-stone-400">
+              Reverso Tarot Arcano • Clic para voltear
+            </span>
           </div>
         )}
-
-        {/* 1. Compact Circular Gold Portrait + Niv/XP Ribbon */}
-        <div className="flex flex-col items-center">
-          <div className="relative w-11 h-11 rounded-full p-0.5 bg-gradient-to-b from-[#e6c77c] via-[#b89146] to-[#785920] shadow-md">
-            <EntityAvatar
-              avatarType={avatarType}
-              customUrl={avatarCustomUrl}
-              iconId={avatarIcon}
-              category="player"
-              size="sm"
-              className="w-full h-full rounded-full object-cover bg-[#131722]"
-            />
-          </div>
-
-          <div className="relative -mt-2 z-10 flex items-center justify-center">
-            <div className="px-2 py-0.2 rounded bg-gradient-to-b from-[#232938] to-[#171b26] border border-[#c8a45c]/90 shadow text-[9px] font-sans font-bold text-[#f3e3c3] tracking-tight whitespace-nowrap">
-              Niv. {level} • {experience} XP
-            </div>
-          </div>
-        </div>
-
-        {/* 2. Name + Alignment Badge + Race • Class */}
-        <div className="text-center leading-tight">
-          <div className="flex items-center justify-center gap-1 flex-nowrap max-w-full">
-            <h3
-              className="font-cinzel font-black text-[11px] text-[#e5c478] uppercase tracking-wide truncate"
-              title={name}
-            >
-              {name}
-            </h3>
-            <AlignmentBadgeIcon alignment={alignment} size="xs" />
-          </div>
-          <div className="text-[9px] text-[#9aa3b5] font-medium truncate">
-            {raceAndClass}
-          </div>
-        </div>
-
-        {/* 3. 4-Box Combat Stat Row: CA | INIC | VEL | PP */}
-        <div className="grid grid-cols-4 gap-1">
-          <div className="rounded-lg bg-[#11141d] border border-[#c8a45c]/65 py-0.5 px-0.5 flex flex-col items-center justify-center">
-            <span className="text-[8px] font-cinzel font-bold text-[#cbb692] uppercase leading-none">
-              CA
-            </span>
-            <span className="font-cinzel font-black text-xs text-white leading-tight">
-              {ac}
-            </span>
-          </div>
-
-          <div className="rounded-lg bg-[#11141d] border border-[#c8a45c]/65 py-0.5 px-0.5 flex flex-col items-center justify-center">
-            <span className="text-[8px] font-cinzel font-bold text-[#cbb692] uppercase leading-none">
-              INIC
-            </span>
-            <span className="font-cinzel font-black text-xs text-white leading-tight">
-              {formatModifier(initiative)}
-            </span>
-          </div>
-
-          <div className="rounded-lg bg-[#11141d] border border-[#c8a45c]/65 py-0.5 px-0.5 flex flex-col items-center justify-center">
-            <span className="text-[8px] font-cinzel font-bold text-[#cbb692] uppercase leading-none">
-              VEL
-            </span>
-            <span className="font-cinzel font-black text-[11px] text-white leading-tight">
-              {speed}
-            </span>
-          </div>
-
-          <div className="rounded-lg bg-[#11141d] border border-[#c8a45c]/65 py-0.5 px-0.5 flex flex-col items-center justify-center">
-            <span className="text-[8px] font-cinzel font-bold text-[#cbb692] uppercase leading-none">
-              PP
-            </span>
-            <span className="font-cinzel font-black text-xs text-white leading-tight">
-              {pp}
-            </span>
-          </div>
-        </div>
-
-        {/* 4. Glossy Health Bar (PG X/Y) + Compact DM Controls */}
-        <div className="space-y-1">
-          <div className="w-full h-4.5 rounded-lg bg-[#0e1118] border border-[#c8a45c]/80 p-0.5 shadow-inner relative overflow-hidden">
-            <div
-              className={`h-full rounded transition-all duration-300 ${
-                hpPercent > 50
-                  ? 'bg-gradient-to-r from-[#148858] via-[#22b573] to-[#3ddc97]'
-                  : hpPercent > 25
-                  ? 'bg-gradient-to-r from-amber-700 via-amber-500 to-amber-400'
-                  : 'bg-gradient-to-r from-red-800 via-red-600 to-red-500'
-              }`}
-              style={{ width: `${hpPercent}%` }}
-            />
-            <span className="absolute inset-0 flex items-center justify-center font-sans font-bold text-[9px] text-white tracking-wider drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
-              PG {currentHp}/{maxHp}
-            </span>
-          </div>
-
-          {showDmControls && onDmAdjustPlayer && (
-            <div className="grid grid-cols-2 gap-1">
-              <button
-                type="button"
-                data-testid={`dm-heal-player-${charId}`}
-                onClick={() => onDmAdjustPlayer(charId, { hpDelta: 1 })}
-                className="py-0.5 px-1 rounded bg-emerald-950/90 hover:bg-emerald-800 border border-emerald-500/60 text-emerald-200 font-cinzel font-bold text-[8px] flex items-center justify-center gap-0.5 transition cursor-pointer"
-              >
-                <Plus className="w-2.5 h-2.5" />
-                <span>+1 PG</span>
-              </button>
-              <button
-                type="button"
-                data-testid={`dm-damage-player-${charId}`}
-                onClick={() => onDmAdjustPlayer(charId, { hpDelta: -1 })}
-                className="py-0.5 px-1 rounded bg-red-950/90 hover:bg-red-800 border border-red-500/60 text-red-200 font-cinzel font-bold text-[8px] flex items-center justify-center gap-0.5 transition cursor-pointer"
-              >
-                <Minus className="w-2.5 h-2.5" />
-                <span>-1 PG</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* 5. 3x2 Ability Modifiers Grid (FUE, DES, CON, INT, SAB, CAR) */}
-        <div className="grid grid-cols-3 gap-1">
-          {(
-            [
-              { abbr: 'FUE', mod: strMod },
-              { abbr: 'DES', mod: dexMod },
-              { abbr: 'CON', mod: conMod },
-              { abbr: 'INT', mod: intMod },
-              { abbr: 'SAB', mod: wisMod },
-              { abbr: 'CAR', mod: chaMod },
-            ] as const
-          ).map((st) => (
-            <div
-              key={st.abbr}
-              className="rounded-lg bg-[#11141d] border border-[#c8a45c]/65 py-0.5 px-1 flex flex-col items-center justify-center"
-            >
-              <span className="text-[8px] font-cinzel font-bold text-[#d8ba73] uppercase leading-none">
-                {st.abbr}
-              </span>
-              <span className="font-cinzel font-black text-[11px] text-white leading-tight">
-                {formatModifier(st.mod)}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {/* 6. Compact Leather Coin Pouch & 4 Metallic Coins */}
-        <div className="pt-1 border-t border-[#c8a45c]/30">
-          <div className="flex items-center justify-between gap-1">
-            <div className="w-6 h-6 flex items-center justify-center shrink-0">
-              <svg viewBox="0 0 64 64" className="w-full h-full drop-shadow">
-                <path
-                  d="M22 14 C24 10, 29 12, 32 10 C35 12, 40 10, 42 14 L38 22 L26 22 Z"
-                  fill="#7a5436"
-                  stroke="#23160c"
-                  strokeWidth="2.2"
-                />
-                <path
-                  d="M24 22 C13 28, 10 44, 15 52 C19 57, 45 57, 49 52 C54 44, 51 28, 40 22 Z"
-                  fill="#8c6240"
-                  stroke="#23160c"
-                  strokeWidth="2.4"
-                />
-                <rect
-                  x="23"
-                  y="20"
-                  width="18"
-                  height="4"
-                  rx="2"
-                  fill="#c8a45c"
-                  stroke="#23160c"
-                  strokeWidth="1.8"
-                />
-              </svg>
-            </div>
-
-            <div className="flex-1 grid grid-cols-4 gap-0.5">
-              {/* PO */}
-              <div className="flex flex-col items-center">
-                <div className="w-5.5 h-5.5 rounded-full bg-gradient-to-b from-[#fbe285] via-[#d9a738] to-[#9b6c15] flex items-center justify-center border border-[#5c3d06]/70">
-                  <span className="font-cinzel font-black text-[9px] text-[#2b1a03] leading-none">
-                    {currency.gp || 0}
-                  </span>
-                </div>
-                <span className="text-[7px] font-cinzel font-bold text-[#e2c275] leading-none mt-0.5">
-                  PO
-                </span>
-              </div>
-
-              {/* PP */}
-              <div className="flex flex-col items-center">
-                <div className="w-5.5 h-5.5 rounded-full bg-gradient-to-b from-[#f1f5f9] via-[#94a3b8] to-[#475569] flex items-center justify-center border border-slate-700/70">
-                  <span className="font-cinzel font-black text-[9px] text-slate-900 leading-none">
-                    {currency.sp || 0}
-                  </span>
-                </div>
-                <span className="text-[7px] font-cinzel font-bold text-slate-300 leading-none mt-0.5">
-                  PP
-                </span>
-              </div>
-
-              {/* PC */}
-              <div className="flex flex-col items-center">
-                <div className="w-5.5 h-5.5 rounded-full bg-gradient-to-b from-[#f6ad85] via-[#c46d3b] to-[#7c3a16] flex items-center justify-center border border-[#4d2109]/70">
-                  <span className="font-cinzel font-black text-[9px] text-[#291003] leading-none">
-                    {currency.cp || 0}
-                  </span>
-                </div>
-                <span className="text-[7px] font-cinzel font-bold text-[#d98a5f] leading-none mt-0.5">
-                  PC
-                </span>
-              </div>
-
-              {/* PL */}
-              <div className="flex flex-col items-center">
-                <div className="w-5.5 h-5.5 rounded-full bg-gradient-to-b from-[#ffffff] via-[#cbd5e1] to-[#64748b] flex items-center justify-center border border-[#334155]/70">
-                  <span className="font-cinzel font-black text-[9px] text-slate-900 leading-none">
-                    {currency.pp || 0}
-                  </span>
-                </div>
-                <span className="text-[7px] font-cinzel font-bold text-cyan-200 leading-none mt-0.5">
-                  PL
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <button
+          type="button"
+          onClick={handleToggleFlip}
+          className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-lg bg-black/75 border border-amber-500/60 text-amber-200 font-cinzel font-bold text-[10px] flex items-center gap-1 z-30 cursor-pointer"
+        >
+          <RotateCw className="w-3 h-3" />
+          <span>Anverso</span>
+        </button>
       </div>
     );
   }
@@ -556,23 +517,107 @@ export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
   return (
     <div
       data-testid={dataTestId || testId || `character-tarot-card-${charId}`}
-      className={`relative rounded-2xl bg-gradient-to-b from-[#1f2533] via-[#1a1f2c] to-[#141822] border-2 border-[#c8a45c] ring-1 ring-inset ring-[#e2c275]/25 shadow-[0_12px_35px_rgba(0,0,0,0.85)] ${
-        compact ? 'p-3.5 space-y-2.5' : 'p-4 sm:p-5 space-y-3.5'
-      } flex flex-col justify-between text-[#f5e4be] select-none ${className}`}
+      data-player-skin={activePlayerSkinId}
+      style={{
+        borderColor: effectiveSkinTokens?.tarotBorderColor || undefined,
+        boxShadow: effectiveSkinTokens?.tarotGlowColor
+          ? `0 0 25px ${effectiveSkinTokens.tarotGlowColor}`
+          : undefined,
+      }}
+      className={`relative rounded-2xl bg-gradient-to-b ${skinVisuals.cardBg} border-2 ${skinVisuals.border} ring-1 ring-inset shadow-[0_12px_35px_rgba(0,0,0,0.85)] ${
+        isMini
+          ? 'p-2.5 space-y-1.5'
+          : compact
+          ? 'p-3.5 space-y-2.5'
+          : 'p-4 sm:p-5 space-y-3.5'
+      } flex flex-col justify-between text-[#f5e4be] select-none overflow-hidden transition-all duration-300 ${className}`}
     >
-      {/* Top-Right Online Status Pill */}
-      {isOnline && (
-        <div className="absolute top-3.5 right-4 flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
-          <span>En Línea</span>
+      {/* Optional Custom Frame PNG and Holo Overlay PNG */}
+      {effectiveSkinTokens?.tarotCardCustomFramePngUrl && (
+        <img
+          src={effectiveSkinTokens.tarotCardCustomFramePngUrl}
+          alt="Tarot Frame"
+          className="pointer-events-none absolute inset-0 w-full h-full object-fill z-20 rounded-2xl"
+        />
+      )}
+      {effectiveSkinTokens?.tarotCardCustomOverlayPngUrl && (
+        <img
+          src={effectiveSkinTokens.tarotCardCustomOverlayPngUrl}
+          alt="Tarot Overlay"
+          className="pointer-events-none absolute inset-0 w-full h-full object-cover opacity-60 mix-blend-screen z-10 rounded-2xl"
+        />
+      )}
+      {effectiveSkinTokens?.tarotParticleEffect &&
+        effectiveSkinTokens.tarotParticleEffect !== 'none' && (
+          <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 text-[10px] opacity-75 z-20">
+            {effectiveSkinTokens.tarotParticleEffect === 'embers' && '🔥 ✨ 🔥'}
+            {effectiveSkinTokens.tarotParticleEffect === 'snow' && '❄️ ❅ ❄️'}
+            {effectiveSkinTokens.tarotParticleEffect === 'arcane_sparkles' && '✨ 🔮 ✨'}
+            {effectiveSkinTokens.tarotParticleEffect === 'golden_dust' && '🌟 ✨ 🌟'}
+          </div>
+        )}
+
+      {/* Top-Left Active Player Skin Badge & 3D Flip Button */}
+      <div
+        className={`absolute ${
+          isMini ? 'top-2 left-2.5' : 'top-3.5 left-4'
+        } flex items-center gap-1 z-30`}
+      >
+        {skinVisuals.badgeText && (
+          <div
+            className={`px-1.5 py-0.5 rounded-md border ${
+              isMini ? 'text-[8px]' : 'text-[9px]'
+            } font-cinzel font-bold uppercase tracking-wider shadow ${skinVisuals.badgeClasses}`}
+          >
+            ✨ {skinVisuals.badgeText}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={handleToggleFlip}
+          title="Voltear Carta Tarot 3D"
+          className="p-1 rounded-md bg-black/50 hover:bg-black/80 border border-[#c8a45c]/50 text-[#e5c478] transition cursor-pointer"
+        >
+          <RotateCw className={isMini ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
+        </button>
+      </div>
+
+      {/* Top-Right Online Status Pill + Map Mode Last Die Roll Badge */}
+      {(isOnline || showLastRollInMap) && (
+        <div
+          className={`absolute ${
+            isMini ? 'top-2 right-2.5 gap-1' : 'top-3.5 right-4 gap-1.5'
+          } flex flex-col items-end z-30`}
+        >
+          {isOnline && (
+            <div
+              className={`flex items-center gap-1 text-emerald-400 ${
+                isMini ? 'text-[9px]' : 'text-xs'
+              } font-semibold`}
+            >
+              <span
+                className={`${
+                  isMini ? 'w-1.5 h-1.5' : 'w-2.5 h-2.5'
+                } rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]`}
+              />
+              <span>En Línea</span>
+            </div>
+          )}
+          {showLastRollInMap && (
+            <MapLastRollDieBadge roll={resolvedLastRoll} size={isMini ? 'xs' : 'sm'} />
+          )}
         </div>
       )}
 
       {/* 1. Circular Gold-Framed Portrait + Overlapping Level & XP Ribbon */}
-      <div className="flex flex-col items-center pt-1">
+      <div className="flex flex-col items-center pt-0.5">
         <div
           className={`relative ${
-            compact ? 'w-20 h-20' : 'w-24 h-24 sm:w-28 sm:h-28'
+            isMini
+              ? 'w-14 h-14'
+              : compact
+              ? 'w-20 h-20'
+              : 'w-24 h-24 sm:w-28 sm:h-28'
           } rounded-full p-0.5 bg-gradient-to-b from-[#e6c77c] via-[#b89146] to-[#785920] shadow-[0_6px_20px_rgba(0,0,0,0.85)]`}
         >
           <EntityAvatar
@@ -580,28 +625,42 @@ export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
             customUrl={avatarCustomUrl}
             iconId={avatarIcon}
             category="player"
-            size="lg"
+            size={isMini ? 'md' : 'lg'}
             className="w-full h-full rounded-full object-cover bg-[#131722]"
           />
         </div>
 
         {/* Overlapping Ribbon Banner: Niv. X • Y XP */}
-        <div className="relative -mt-3.5 z-10 flex items-center justify-center">
+        <div
+          className={`relative ${
+            isMini ? '-mt-2.5' : '-mt-3.5'
+          } z-10 flex items-center justify-center`}
+        >
           {/* Left Ribbon Tail */}
           <svg
             viewBox="0 0 18 24"
-            className="w-4 h-5 -mr-1 text-[#9e7c3c] fill-[#171b26] stroke-current"
+            className={`${
+              isMini ? 'w-3 h-4' : 'w-4 h-5'
+            } -mr-1 text-[#9e7c3c] fill-[#171b26] stroke-current`}
             strokeWidth="2"
           >
             <polygon points="18,2 2,2 8,12 2,22 18,22" />
           </svg>
-          <div className="px-3.5 py-0.5 rounded bg-gradient-to-b from-[#232938] to-[#171b26] border border-[#c8a45c] shadow-md text-xs sm:text-sm font-sans font-bold text-[#f3e3c3] tracking-wide whitespace-nowrap">
+          <div
+            className={`${
+              isMini
+                ? 'px-2.5 py-0.5 text-[10px]'
+                : 'px-3.5 py-0.5 text-xs sm:text-sm'
+            } rounded bg-gradient-to-b from-[#232938] to-[#171b26] border border-[#c8a45c] shadow-md font-sans font-bold text-[#f3e3c3] tracking-wide whitespace-nowrap`}
+          >
             Niv. {level} • {experience} XP
           </div>
           {/* Right Ribbon Tail */}
           <svg
             viewBox="0 0 18 24"
-            className="w-4 h-5 -ml-1 text-[#9e7c3c] fill-[#171b26] stroke-current"
+            className={`${
+              isMini ? 'w-3 h-4' : 'w-4 h-5'
+            } -ml-1 text-[#9e7c3c] fill-[#171b26] stroke-current`}
             strokeWidth="2"
           >
             <polygon points="0,2 16,2 10,12 16,22 0,22" />
@@ -614,71 +673,136 @@ export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
         <div className="flex items-center justify-center gap-1.5 flex-nowrap max-w-full">
           <h3
             className={`font-cinzel font-black ${
-              compact ? 'text-sm sm:text-base' : 'text-base sm:text-lg'
-            } text-[#e5c478] uppercase tracking-wider leading-tight truncate`}
+              isMini
+                ? 'text-xs sm:text-sm'
+                : compact
+                ? 'text-sm sm:text-base'
+                : 'text-base sm:text-lg'
+            } ${skinVisuals.titleColor} uppercase tracking-wider leading-tight truncate`}
             title={name}
           >
             {name}
           </h3>
-          <AlignmentBadgeIcon alignment={alignment} size="sm" />
+          <AlignmentBadgeIcon alignment={alignment} size={isMini ? 'xs' : 'sm'} />
         </div>
-        <div className="text-xs sm:text-sm text-[#9aa3b5] font-medium tracking-wide">
+        <div
+          className={`${
+            isMini ? 'text-[10px]' : 'text-xs sm:text-sm'
+          } text-[#9aa3b5] font-medium tracking-wide truncate`}
+        >
           {raceAndClass}
         </div>
       </div>
 
       {/* 3. 4-Box Combat Stat Row: CA | INIC | VEL | PP */}
-      <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+      <div className={`grid grid-cols-4 ${isMini ? 'gap-1' : 'gap-1.5 sm:gap-2'}`}>
         {/* CA */}
-        <div className="rounded-xl bg-[#11141d] border border-[#c8a45c]/70 py-1.5 px-1 flex flex-col items-center justify-center shadow-inner">
-          <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-cinzel font-bold text-[#cbb692] uppercase">
-            <Shield className="w-3 h-3 text-[#d6b265]" />
+        <div
+          className={`${
+            isMini ? 'rounded-lg py-1 px-0.5' : 'rounded-xl py-1.5 px-1'
+          } bg-[#11141d] border border-[#c8a45c]/70 flex flex-col items-center justify-center shadow-inner`}
+        >
+          <div
+            className={`flex items-center gap-0.5 ${
+              isMini ? 'text-[8px]' : 'text-[10px] sm:text-[11px]'
+            } font-cinzel font-bold text-[#cbb692] uppercase`}
+          >
+            <Shield className={isMini ? 'w-2.5 h-2.5 text-[#d6b265]' : 'w-3 h-3 text-[#d6b265]'} />
             <span>CA</span>
           </div>
-          <span className="font-cinzel font-black text-base sm:text-lg text-white leading-tight">
+          <span
+            className={`font-cinzel font-black ${
+              isMini ? 'text-xs sm:text-sm' : 'text-base sm:text-lg'
+            } text-white leading-tight`}
+          >
             {ac}
           </span>
         </div>
 
         {/* INIC */}
-        <div className="rounded-xl bg-[#11141d] border border-[#c8a45c]/70 py-1.5 px-1 flex flex-col items-center justify-center shadow-inner">
-          <div className="flex items-center gap-0.5 text-[10px] sm:text-[11px] font-cinzel font-bold text-[#cbb692] uppercase">
-            <Zap className="w-3 h-3 text-[#d6b265]" />
+        <div
+          className={`${
+            isMini ? 'rounded-lg py-1 px-0.5' : 'rounded-xl py-1.5 px-1'
+          } bg-[#11141d] border border-[#c8a45c]/70 flex flex-col items-center justify-center shadow-inner`}
+        >
+          <div
+            className={`flex items-center gap-0.5 ${
+              isMini ? 'text-[8px]' : 'text-[10px] sm:text-[11px]'
+            } font-cinzel font-bold text-[#cbb692] uppercase`}
+          >
+            <Zap className={isMini ? 'w-2.5 h-2.5 text-[#d6b265]' : 'w-3 h-3 text-[#d6b265]'} />
             <span>INIC</span>
           </div>
-          <span className="font-cinzel font-black text-base sm:text-lg text-white leading-tight">
+          <span
+            className={`font-cinzel font-black ${
+              isMini ? 'text-xs sm:text-sm' : 'text-base sm:text-lg'
+            } text-white leading-tight`}
+          >
             {formatModifier(initiative)}
           </span>
         </div>
 
         {/* VEL */}
-        <div className="rounded-xl bg-[#11141d] border border-[#c8a45c]/70 py-1.5 px-1 flex flex-col items-center justify-center shadow-inner">
-          <div className="flex items-center gap-0.5 text-[10px] sm:text-[11px] font-cinzel font-bold text-[#cbb692] uppercase">
-            <span className="text-[#d6b265] text-[10px]">🦶</span>
+        <div
+          className={`${
+            isMini ? 'rounded-lg py-1 px-0.5' : 'rounded-xl py-1.5 px-1'
+          } bg-[#11141d] border border-[#c8a45c]/70 flex flex-col items-center justify-center shadow-inner`}
+        >
+          <div
+            className={`flex items-center gap-0.5 ${
+              isMini ? 'text-[8px]' : 'text-[10px] sm:text-[11px]'
+            } font-cinzel font-bold text-[#cbb692] uppercase`}
+          >
+            <span className={`text-[#d6b265] ${isMini ? 'text-[8px]' : 'text-[10px]'}`}>🦶</span>
             <span>VEL</span>
           </div>
-          <span className="font-cinzel font-black text-base sm:text-lg text-white leading-tight">
-            {speed} <small className="text-[10px] font-normal text-[#cbb692]">FT</small>
+          <span
+            className={`font-cinzel font-black ${
+              isMini ? 'text-xs sm:text-sm' : 'text-base sm:text-lg'
+            } text-white leading-tight`}
+          >
+            {speed}{' '}
+            <small className={`${isMini ? 'text-[8px]' : 'text-[10px]'} font-normal text-[#cbb692]`}>
+              FT
+            </small>
           </span>
         </div>
 
         {/* PP */}
-        <div className="rounded-xl bg-[#11141d] border border-[#c8a45c]/70 py-1.5 px-1 flex flex-col items-center justify-center shadow-inner">
-          <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-cinzel font-bold text-[#cbb692] uppercase">
-            <Eye className="w-3 h-3 text-[#d6b265]" />
+        <div
+          className={`${
+            isMini ? 'rounded-lg py-1 px-0.5' : 'rounded-xl py-1.5 px-1'
+          } bg-[#11141d] border border-[#c8a45c]/70 flex flex-col items-center justify-center shadow-inner`}
+        >
+          <div
+            className={`flex items-center gap-0.5 ${
+              isMini ? 'text-[8px]' : 'text-[10px] sm:text-[11px]'
+            } font-cinzel font-bold text-[#cbb692] uppercase`}
+          >
+            <Eye className={isMini ? 'w-2.5 h-2.5 text-[#d6b265]' : 'w-3 h-3 text-[#d6b265]'} />
             <span>PP</span>
           </div>
-          <span className="font-cinzel font-black text-base sm:text-lg text-white leading-tight">
+          <span
+            className={`font-cinzel font-black ${
+              isMini ? 'text-xs sm:text-sm' : 'text-base sm:text-lg'
+            } text-white leading-tight`}
+          >
             {pp}
           </span>
         </div>
       </div>
 
       {/* 4. Glossy Emerald Health Bar (PG X/Y) + Optional DM Controls */}
-      <div className="space-y-1.5">
-        <div className="w-full h-8 rounded-xl bg-[#0e1118] border border-[#c8a45c]/80 p-1 shadow-inner relative overflow-hidden">
+      <div className="space-y-1">
+        <div
+          className={`w-full ${
+            isMini ? 'h-5.5 rounded-lg p-0.5' : 'h-8 rounded-xl p-1'
+          } bg-[#0e1118] border border-[#c8a45c]/80 shadow-inner relative overflow-hidden`}
+        >
           <div
-            className={`h-full rounded-lg transition-all duration-300 ${
+            className={`h-full ${
+              isMini ? 'rounded' : 'rounded-lg'
+            } transition-all duration-300 ${
               hpPercent > 50
                 ? 'bg-gradient-to-r from-[#148858] via-[#22b573] to-[#3ddc97]'
                 : hpPercent > 25
@@ -687,73 +811,96 @@ export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
             }`}
             style={{ width: `${hpPercent}%` }}
           />
-          <span className="absolute inset-0 flex items-center justify-center font-sans font-bold text-xs sm:text-sm text-white tracking-wider drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
+          <span
+            className={`absolute inset-0 flex items-center justify-center font-sans font-bold ${
+              isMini ? 'text-[10px]' : 'text-xs sm:text-sm'
+            } text-white tracking-wider drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]`}
+          >
             PG {currentHp}/{maxHp}
           </span>
         </div>
 
         {/* DM-only HP Heal / Damage Controls */}
         {showDmControls && onDmAdjustPlayer && (
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-2 gap-1">
             <button
               type="button"
               data-testid={`dm-heal-player-${charId}`}
               onClick={() => onDmAdjustPlayer(charId, { hpDelta: 1 })}
-              className="py-1 px-2 rounded-lg bg-emerald-950/90 hover:bg-emerald-800 border border-emerald-500/60 text-emerald-200 font-cinzel font-bold text-[10px] flex items-center justify-center gap-1 transition cursor-pointer"
+              className={`${
+                isMini ? 'py-0.5 px-1.5 text-[9px]' : 'py-1 px-2 text-[10px]'
+              } rounded-lg bg-emerald-950/90 hover:bg-emerald-800 border border-emerald-500/60 text-emerald-200 font-cinzel font-bold flex items-center justify-center gap-1 transition cursor-pointer`}
             >
-              <Plus className="w-3 h-3" />
+              <Plus className="w-2.5 h-2.5" />
               <span>Salud (+1)</span>
             </button>
             <button
               type="button"
               data-testid={`dm-damage-player-${charId}`}
               onClick={() => onDmAdjustPlayer(charId, { hpDelta: -1 })}
-              className="py-1 px-2 rounded-lg bg-red-950/90 hover:bg-red-800 border border-red-500/60 text-red-200 font-cinzel font-bold text-[10px] flex items-center justify-center gap-1 transition cursor-pointer"
+              className={`${
+                isMini ? 'py-0.5 px-1.5 text-[9px]' : 'py-1 px-2 text-[10px]'
+              } rounded-lg bg-red-950/90 hover:bg-red-800 border border-red-500/60 text-red-200 font-cinzel font-bold flex items-center justify-center gap-1 transition cursor-pointer`}
             >
-              <Minus className="w-3 h-3" />
+              <Minus className="w-2.5 h-2.5" />
               <span>Daño (-1)</span>
             </button>
           </div>
         )}
       </div>
 
-      {/* 5. 3x2 Ability Modifiers Grid (FUE, DES, CON, INT, SAB, CAR) */}
-      <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+      {/* 5. 3x2 Total Ability Scores Grid (FUE, DES, CON, INT, SAB, CAR) */}
+      <div className={`grid grid-cols-3 ${isMini ? 'gap-1' : 'gap-1.5 sm:gap-2'}`}>
         {(
           [
-            { abbr: 'FUE', mod: strMod },
-            { abbr: 'DES', mod: dexMod },
-            { abbr: 'CON', mod: conMod },
-            { abbr: 'INT', mod: intMod },
-            { abbr: 'SAB', mod: wisMod },
-            { abbr: 'CAR', mod: chaMod },
+            { abbr: 'FUE', score: strScore },
+            { abbr: 'DES', score: dexScore },
+            { abbr: 'CON', score: conScore },
+            { abbr: 'INT', score: intScore },
+            { abbr: 'SAB', score: wisScore },
+            { abbr: 'CAR', score: chaScore },
           ] as const
         ).map((st) => (
           <div
             key={st.abbr}
-            className="rounded-xl bg-[#11141d] border border-[#c8a45c]/70 py-1.5 px-2 flex flex-col items-center justify-center shadow-inner"
+            data-testid={`tarot-stat-${st.abbr.toLowerCase()}`}
+            className={`${
+              isMini ? 'rounded-lg py-0.5 px-1' : 'rounded-xl py-1.5 px-2'
+            } bg-[#11141d] border border-[#c8a45c]/70 flex flex-col items-center justify-center shadow-inner`}
           >
-            <span className="text-[10px] sm:text-xs font-cinzel font-bold text-[#d8ba73] uppercase tracking-wider">
+            <span
+              className={`${
+                isMini ? 'text-[8px]' : 'text-[10px] sm:text-xs'
+              } font-cinzel font-bold text-[#d8ba73] uppercase tracking-wider leading-tight`}
+            >
               {st.abbr}
             </span>
-            <span className="font-cinzel font-black text-base sm:text-lg text-white leading-tight">
-              {formatModifier(st.mod)}
+            <span
+              className={`font-cinzel font-black ${
+                isMini ? 'text-xs sm:text-sm' : 'text-base sm:text-lg'
+              } text-white leading-tight`}
+            >
+              {st.score}
             </span>
           </div>
         ))}
       </div>
 
       {/* 6. Divider + Leather Coin Pouch & 4 Metallic Coins (PO, PP, PC, PL) */}
-      <div className="pt-2 border-t border-[#c8a45c]/35">
+      <div className={`${isMini ? 'pt-1' : 'pt-2'} border-t border-[#c8a45c]/35`}>
         <div
           onClick={onClickCoinPouch}
-          className={`flex items-center justify-between gap-2 ${
-            onClickCoinPouch ? 'cursor-pointer hover:opacity-95 transition' : ''
-          }`}
+          className={`flex items-center justify-between ${
+            isMini ? 'gap-1.5' : 'gap-2'
+          } ${onClickCoinPouch ? 'cursor-pointer hover:opacity-95 transition' : ''}`}
           title={onClickCoinPouch ? 'Clic para gestionar monedas e inventario' : undefined}
         >
           {/* Illustrated Leather Coin Pouch SVG */}
-          <div className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center shrink-0">
+          <div
+            className={`${
+              isMini ? 'w-8 h-8' : 'w-11 h-11 sm:w-12 sm:h-12'
+            } flex items-center justify-center shrink-0`}
+          >
             <svg viewBox="0 0 64 64" className="w-full h-full drop-shadow-md">
               {/* Pouch Top Frill */}
               <path
@@ -806,72 +953,130 @@ export const CharacterTarotCard: React.FC<CharacterTarotCardProps> = ({
           </div>
 
           {/* 4 Metallic Medallion Coins: PO (Gold), PP (Silver), PC (Copper), PL (Platinum) */}
-          <div className="flex-1 grid grid-cols-4 gap-1.5">
+          <div className={`flex-1 grid grid-cols-4 ${isMini ? 'gap-1' : 'gap-1.5'}`}>
             {/* PO - Gold */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gradient-to-b from-[#fbe285] via-[#d9a738] to-[#9b6c15] p-0.5 shadow-md flex items-center justify-center">
+              <div
+                className={`${
+                  isMini ? 'w-7 h-7' : 'w-10 h-10 sm:w-11 sm:h-11'
+                } rounded-full bg-gradient-to-b from-[#fbe285] via-[#d9a738] to-[#9b6c15] p-0.5 shadow-md flex items-center justify-center`}
+              >
                 <div className="w-full h-full rounded-full border border-dashed border-[#5c3d06]/70 bg-gradient-to-b from-[#f3cf65] to-[#b88622] flex items-center justify-center">
-                  <span className="font-cinzel font-black text-xs sm:text-sm text-[#2b1a03]">
+                  <span
+                    className={`font-cinzel font-black ${
+                      isMini ? 'text-[10px]' : 'text-xs sm:text-sm'
+                    } text-[#2b1a03]`}
+                  >
                     {currency.gp || 0}
                   </span>
                 </div>
               </div>
-              <span className="text-[10px] font-cinzel font-bold text-[#e2c275] mt-0.5">PO</span>
+              <span
+                className={`${
+                  isMini ? 'text-[8px]' : 'text-[10px]'
+                } font-cinzel font-bold text-[#e2c275] mt-0.5`}
+              >
+                PO
+              </span>
             </div>
 
             {/* PP - Silver */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gradient-to-b from-[#f1f5f9] via-[#94a3b8] to-[#475569] p-0.5 shadow-md flex items-center justify-center">
+              <div
+                className={`${
+                  isMini ? 'w-7 h-7' : 'w-10 h-10 sm:w-11 sm:h-11'
+                } rounded-full bg-gradient-to-b from-[#f1f5f9] via-[#94a3b8] to-[#475569] p-0.5 shadow-md flex items-center justify-center`}
+              >
                 <div className="w-full h-full rounded-full border border-dashed border-slate-700/70 bg-gradient-to-b from-[#e2e8f0] to-[#94a3b8] flex items-center justify-center">
-                  <span className="font-cinzel font-black text-xs sm:text-sm text-slate-900">
+                  <span
+                    className={`font-cinzel font-black ${
+                      isMini ? 'text-[10px]' : 'text-xs sm:text-sm'
+                    } text-slate-900`}
+                  >
                     {currency.sp || 0}
                   </span>
                 </div>
               </div>
-              <span className="text-[10px] font-cinzel font-bold text-slate-300 mt-0.5">PP</span>
+              <span
+                className={`${
+                  isMini ? 'text-[8px]' : 'text-[10px]'
+                } font-cinzel font-bold text-slate-300 mt-0.5`}
+              >
+                PP
+              </span>
             </div>
 
             {/* PC - Copper */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gradient-to-b from-[#f6ad85] via-[#c46d3b] to-[#7c3a16] p-0.5 shadow-md flex items-center justify-center">
+              <div
+                className={`${
+                  isMini ? 'w-7 h-7' : 'w-10 h-10 sm:w-11 sm:h-11'
+                } rounded-full bg-gradient-to-b from-[#f6ad85] via-[#c46d3b] to-[#7c3a16] p-0.5 shadow-md flex items-center justify-center`}
+              >
                 <div className="w-full h-full rounded-full border border-dashed border-[#4d2109]/70 bg-gradient-to-b from-[#e39264] to-[#9e4f24] flex items-center justify-center">
-                  <span className="font-cinzel font-black text-xs sm:text-sm text-[#291003]">
+                  <span
+                    className={`font-cinzel font-black ${
+                      isMini ? 'text-[10px]' : 'text-xs sm:text-sm'
+                    } text-[#291003]`}
+                  >
                     {currency.cp || 0}
                   </span>
                 </div>
               </div>
-              <span className="text-[10px] font-cinzel font-bold text-[#d98a5f] mt-0.5">PC</span>
+              <span
+                className={`${
+                  isMini ? 'text-[8px]' : 'text-[10px]'
+                } font-cinzel font-bold text-[#d98a5f] mt-0.5`}
+              >
+                PC
+              </span>
             </div>
 
             {/* PL - Platinum */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gradient-to-b from-[#ffffff] via-[#cbd5e1] to-[#64748b] p-0.5 shadow-md flex items-center justify-center">
+              <div
+                className={`${
+                  isMini ? 'w-7 h-7' : 'w-10 h-10 sm:w-11 sm:h-11'
+                } rounded-full bg-gradient-to-b from-[#ffffff] via-[#cbd5e1] to-[#64748b] p-0.5 shadow-md flex items-center justify-center`}
+              >
                 <div className="w-full h-full rounded-full border border-[#334155]/70 bg-gradient-to-b from-[#f8fafc] to-[#cbd5e1] flex items-center justify-center">
-                  <span className="font-cinzel font-black text-xs sm:text-sm text-slate-900">
+                  <span
+                    className={`font-cinzel font-black ${
+                      isMini ? 'text-[10px]' : 'text-xs sm:text-sm'
+                    } text-slate-900`}
+                  >
                     {currency.pp || 0}
                   </span>
                 </div>
               </div>
-              <span className="text-[10px] font-cinzel font-bold text-cyan-200 mt-0.5">PL</span>
+              <span
+                className={`${
+                  isMini ? 'text-[8px]' : 'text-[10px]'
+                } font-cinzel font-bold text-cyan-200 mt-0.5`}
+              >
+                PL
+              </span>
             </div>
           </div>
         </div>
 
         {/* Optional DM Gold Controls */}
         {showDmControls && onDmAdjustPlayer && (
-          <div className="flex items-center justify-end gap-1.5 mt-2">
-            <span className="text-[10px] font-cinzel text-[#cbb692]">Ajustar Oro (DM):</span>
+          <div className="flex items-center justify-end gap-1.5 mt-1.5">
+            <span className={`${isMini ? 'text-[9px]' : 'text-[10px]'} font-cinzel text-[#cbb692]`}>
+              Ajustar Oro (DM):
+            </span>
             <button
               type="button"
               onClick={() => onDmAdjustPlayer(charId, { gpDelta: 1 })}
-              className="px-2 py-0.5 rounded bg-amber-950 hover:bg-amber-800 border border-amber-500/60 text-amber-200 text-[10px] font-mono font-bold cursor-pointer"
+              className="px-1.5 py-0.5 rounded bg-amber-950 hover:bg-amber-800 border border-amber-500/60 text-amber-200 text-[9px] font-mono font-bold cursor-pointer"
             >
               +1 PO
             </button>
             <button
               type="button"
               onClick={() => onDmAdjustPlayer(charId, { gpDelta: -1 })}
-              className="px-2 py-0.5 rounded bg-stone-900 hover:bg-red-950 border border-stone-700 text-stone-300 text-[10px] font-mono font-bold cursor-pointer"
+              className="px-1.5 py-0.5 rounded bg-stone-900 hover:bg-red-950 border border-stone-700 text-stone-300 text-[9px] font-mono font-bold cursor-pointer"
             >
               -1 PO
             </button>

@@ -19,12 +19,15 @@ import {
   Crosshair,
   Feather,
   Upload,
+  Download,
+  Plus,
   X,
   Check,
   Trash2,
 } from 'lucide-react';
 import { EntityAvatar } from './EntityAvatar';
 import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
+import { clampPortraitGallery } from '../../utils/dnd-math';
 
 export interface AvatarCustomizerModalProps {
   isOpen: boolean;
@@ -33,8 +36,14 @@ export interface AvatarCustomizerModalProps {
   currentType?: 'icon' | 'custom';
   currentCustomUrl?: string;
   currentIconId?: string;
+  currentPortraitGallery?: string[];
   category?: 'player' | 'npc' | 'monster' | 'item' | 'spell' | 'location' | 'journal';
-  onSave: (data: { type: 'icon' | 'custom'; customUrl?: string; iconId?: string }) => void;
+  onSave: (data: {
+    type: 'icon' | 'custom';
+    customUrl?: string;
+    iconId?: string;
+    portraitGallery?: string[];
+  }) => void;
 }
 
 export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
@@ -44,12 +53,21 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
   currentType = 'icon',
   currentCustomUrl,
   currentIconId = 'anonymous',
+  currentPortraitGallery = [],
   category = 'player',
   onSave,
 }) => {
   const [logoType, setLogoType] = useState<'icon' | 'custom'>(currentType);
   const [customUrl, setCustomUrl] = useState<string | undefined>(currentCustomUrl);
   const [selectedIconId, setSelectedIconId] = useState<string>(currentIconId);
+  const [portraitGallery, setPortraitGallery] = useState<string[]>(() =>
+    clampPortraitGallery(
+      currentCustomUrl
+        ? [currentCustomUrl, ...(currentPortraitGallery || [])]
+        : currentPortraitGallery || [],
+      4
+    )
+  );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
@@ -124,39 +142,78 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
 
   const [isProcessingImg, setIsProcessingImg] = useState<boolean>(false);
 
+  const registerNewPortrait = (dataUrl: string) => {
+    setCustomUrl(dataUrl);
+    setLogoType('custom');
+    setPortraitGallery((prev) => {
+      if (prev.includes(dataUrl)) return prev;
+      if (prev.length < 4) return [...prev, dataUrl];
+      // Replace the last slot if already at 4
+      return [...prev.slice(0, 3), dataUrl];
+    });
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Por favor selecciona un archivo de imagen válido (JPG, PNG, WebP, GIF, SVG).');
       return;
     }
 
     setIsProcessingImg(true);
     try {
       const optimizedDataUrl = await compressImageFileToDataUrl(file, 512, 0.85);
-      setCustomUrl(optimizedDataUrl);
-      setLogoType('custom');
+      registerNewPortrait(optimizedDataUrl);
     } catch (err: any) {
       console.warn('Fallback al lector directo de imagen:', err);
       const reader = new FileReader();
       reader.onload = (evt) => {
         const dataUrl = evt.target?.result as string;
-        setCustomUrl(dataUrl);
-        setLogoType('custom');
+        if (dataUrl) registerNewPortrait(dataUrl);
       };
       reader.readAsDataURL(file);
     } finally {
       setIsProcessingImg(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleDownloadPortrait = (dataUrl: string, idx: number) => {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    const cleanTitle = title.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase() || 'personaje';
+    link.download = `${cleanTitle}_retrato_${idx + 1}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleRemoveFromGallery = (targetUrl: string) => {
+    const next = portraitGallery.filter((u) => u !== targetUrl);
+    setPortraitGallery(next);
+    if (customUrl === targetUrl) {
+      if (next.length > 0) {
+        setCustomUrl(next[0]);
+      } else {
+        setCustomUrl(undefined);
+        setLogoType('icon');
+      }
     }
   };
 
   const handleSave = () => {
+    const finalGallery = clampPortraitGallery(
+      logoType === 'custom' && customUrl
+        ? [customUrl, ...portraitGallery.filter((u) => u !== customUrl)]
+        : portraitGallery,
+      4
+    );
     onSave({
       type: logoType,
       customUrl: logoType === 'custom' ? customUrl : undefined,
       iconId: selectedIconId,
+      portraitGallery: finalGallery,
     });
     onClose();
   };
@@ -167,7 +224,7 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
       role="dialog"
       aria-modal="true"
     >
-      <div className="relative w-full max-w-lg bg-[#181920] border-2 border-amber-900/80 rounded-3xl shadow-2xl p-6 text-stone-200 flex flex-col max-h-[92vh] overflow-hidden space-y-5">
+      <div className="relative w-full max-w-lg bg-[#181920] border-2 border-amber-900/80 rounded-3xl shadow-2xl p-6 text-stone-200 flex flex-col max-h-[92vh] overflow-hidden space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-stone-800 pb-3">
           <div className="flex items-center gap-3">
@@ -182,7 +239,7 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
                 {title}
               </h3>
               <p className="text-xs text-stone-400">
-                Personaliza la ilustración o el icono prefabricado
+                Personaliza hasta 4 retratos intercambiables y descargables
               </p>
             </div>
           </div>
@@ -223,8 +280,10 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
             type="button"
             onClick={() => {
               setLogoType('custom');
-              if (!customUrl) {
+              if (!customUrl && portraitGallery.length === 0) {
                 fileInputRef.current?.click();
+              } else if (!customUrl && portraitGallery.length > 0) {
+                setCustomUrl(portraitGallery[0]);
               }
             }}
             className={`p-3 rounded-2xl border text-center transition font-cinzel font-bold text-xs flex items-center justify-center gap-2 ${
@@ -234,7 +293,7 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
             }`}
           >
             <Upload className="w-4 h-4 text-purple-400" />
-            <span>Subir Imagen JPG / PNG</span>
+            <span>Galería de Retratos ({portraitGallery.length}/4)</span>
           </button>
         </div>
 
@@ -268,57 +327,108 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
           </div>
         )}
 
-        {/* Mode B: Custom Upload */}
+        {/* Mode B: Custom Upload & 4-Slot Portrait Gallery */}
         {logoType === 'custom' && (
-          <div className="space-y-3 bg-[#121316] border border-stone-800 rounded-2xl p-4 flex-1">
-            <span className="block text-xs font-cinzel font-bold text-stone-200">
-              Imagen Personalizada de la Entidad
-            </span>
-            <span className="text-[11px] text-stone-400 block">
-              Formatos aceptados: PNG, JPG, JPEG, WEBP.
-            </span>
-
-            {customUrl ? (
-              <div className="p-3 bg-[#181920] border border-stone-800 rounded-xl flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <img
-                    src={customUrl}
-                    alt="Custom Avatar"
-                    className="w-12 h-12 rounded-xl object-cover border border-purple-500 shadow"
-                  />
-                  <div>
-                    <span className="text-xs font-cinzel font-bold text-purple-300 block">
-                      Imagen Cargada
-                    </span>
-                    <span className="text-[10px] text-stone-500 font-mono block">
-                      ~{Math.round(customUrl.length / 1024)} KB
-                    </span>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCustomUrl(undefined);
-                    setLogoType('icon');
-                  }}
-                  className="p-2 rounded-lg bg-stone-800 hover:bg-red-950 hover:text-red-300 text-stone-400 text-xs font-cinzel transition border border-stone-700 flex items-center gap-1"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Borrar</span>
-                </button>
-              </div>
-            ) : (
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                className="p-8 border-2 border-dashed border-stone-700 hover:border-purple-500 rounded-xl text-center cursor-pointer transition bg-[#181920]"
-              >
-                <Upload className="w-8 h-8 text-stone-500 mx-auto mb-2" />
-                <span className="text-xs font-cinzel font-bold text-stone-300 block">
-                  Haz clic aquí para seleccionar tu imagen JPG o PNG
+          <div className="space-y-3 bg-[#121316] border border-stone-800 rounded-2xl p-4 flex-1 overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="block text-xs font-cinzel font-bold text-stone-200">
+                  Galería de Retratos ({portraitGallery.length}/4 Máximo)
+                </span>
+                <span className="text-[11px] text-stone-400 block">
+                  Haz clic en cualquiera de tus 4 imágenes para activarla o descárgala cuando quieras.
                 </span>
               </div>
-            )}
+              {portraitGallery.length < 4 && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isProcessingImg}
+                  className="px-3 py-1.5 rounded-xl bg-purple-900/80 hover:bg-purple-800 border border-purple-400/60 text-purple-100 text-xs font-cinzel font-bold flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Subir ({portraitGallery.length}/4)</span>
+                </button>
+              )}
+            </div>
+
+            {/* 4 Portrait Slots Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+              {[0, 1, 2, 3].map((slotIdx) => {
+                const slotUrl = portraitGallery[slotIdx];
+                const isCurrentActive = Boolean(slotUrl && customUrl === slotUrl);
+                if (slotUrl) {
+                  return (
+                    <div
+                      key={`portrait-slot-${slotIdx}`}
+                      data-testid={`portrait-slot-${slotIdx}`}
+                      onClick={() => {
+                        setCustomUrl(slotUrl);
+                        setLogoType('custom');
+                      }}
+                      className={`group relative rounded-xl border-2 p-1.5 flex flex-col items-center justify-between cursor-pointer transition ${
+                        isCurrentActive
+                          ? 'border-amber-400 bg-amber-950/30 shadow-[0_0_15px_rgba(245,158,11,0.35)]'
+                          : 'border-stone-700 bg-[#181920] hover:border-purple-400'
+                      }`}
+                    >
+                      <div className="relative w-full aspect-square rounded-lg overflow-hidden bg-black/60">
+                        <img
+                          src={slotUrl}
+                          alt={`Retrato ${slotIdx + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                        {isCurrentActive && (
+                          <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-amber-500 text-black font-cinzel font-black text-[9px] uppercase">
+                            Activo
+                          </span>
+                        )}
+                      </div>
+                      <div className="w-full flex items-center justify-between gap-1 mt-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownloadPortrait(slotUrl, slotIdx);
+                          }}
+                          className="flex-1 py-1 px-1.5 rounded bg-stone-800 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-500/30 text-[10px] font-cinzel font-bold flex items-center justify-center gap-1"
+                          title="Descargar esta imagen de retrato"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>Descargar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveFromGallery(slotUrl);
+                          }}
+                          className="p-1 rounded bg-stone-800 hover:bg-red-950 text-red-300 border border-red-500/30"
+                          title="Quitar de la galería"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <button
+                    key={`portrait-empty-${slotIdx}`}
+                    type="button"
+                    data-testid={`portrait-empty-${slotIdx}`}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="rounded-xl border-2 border-dashed border-stone-700 hover:border-purple-400 bg-[#181920]/70 p-3 flex flex-col items-center justify-center gap-1.5 aspect-square text-stone-400 hover:text-purple-200 transition cursor-pointer"
+                  >
+                    <Upload className="w-5 h-5 text-purple-400" />
+                    <span className="text-[10px] font-cinzel font-bold text-center">
+                      Espacio {slotIdx + 1}/4
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -337,10 +447,11 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
             className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-cinzel font-bold text-xs shadow-lg transition flex items-center gap-1.5"
           >
             <Check className="w-4 h-4" />
-            Guardar Icono
+            Guardar Retrato
           </button>
         </div>
       </div>
     </div>
   );
 };
+

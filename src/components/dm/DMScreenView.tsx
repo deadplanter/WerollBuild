@@ -63,6 +63,8 @@ import {
   PlaceAlbumPhoto,
   ZoneMapRecord,
   VisualQueueItem,
+  DLCPackageRecord,
+  ChronicleEntryType,
 } from '../../types/dnd';
 import {
   rollDiceExpression,
@@ -78,6 +80,7 @@ import {
   getReturnToParentButtonLabel,
   enqueueVisualItem,
   removeVisualFromQueue,
+  canAccessArcaneOracle,
 } from '../../utils/dnd-math';
 import { soundFx } from '../../utils/audio';
 import { FolderManagerModal } from './FolderManagerModal';
@@ -120,6 +123,8 @@ interface DMScreenViewProps {
     characterId: string,
     updates: { hpDelta?: number; setHp?: number; gpDelta?: number }
   ) => void;
+  currentUserRole?: 'client' | 'moderator' | 'creator' | 'admin' | string | null;
+  currentUserEmail?: string;
 }
 
 export const DMScreenView: React.FC<DMScreenViewProps> = ({
@@ -148,7 +153,129 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   onToggleOnlineSession: onToggleOnlineSessionProp,
   onOpenTableMapView,
   onDmAdjustPlayer,
+  currentUserRole = 'client',
+  currentUserEmail = '',
 }) => {
+  const isOracleAllowed = canAccessArcaneOracle(currentUserRole);
+  const [isFolderManagerOpen, setIsFolderManagerOpen] = useState<boolean>(false);
+  const [isDmTableSettingsModalOpen, setIsDmTableSettingsModalOpen] = useState<boolean>(false);
+  const [availableDlcs, setAvailableDlcs] = useState<DLCPackageRecord[]>([]);
+  const [ownedDlcIds, setOwnedDlcIds] = useState<string[]>(['dlc-srd-5e-oficial']);
+  const [dlcRedeemCodeInput, setDlcRedeemCodeInput] = useState<string>('');
+
+  React.useEffect(() => {
+    let active = true;
+    const loadDlcs = async () => {
+      try {
+        const q = currentUserEmail ? `?email=${encodeURIComponent(currentUserEmail)}` : '';
+        const res = await fetch(`/api/creator/catalog${q}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!active) return;
+        if (Array.isArray(data.dlcs)) setAvailableDlcs(data.dlcs);
+        if (Array.isArray(data.ownedDlcIds)) setOwnedDlcIds(data.ownedDlcIds);
+      } catch {
+        // ignore
+      }
+    };
+    loadDlcs();
+    return () => {
+      active = false;
+    };
+  }, [currentUserEmail, isDmTableSettingsModalOpen]);
+
+  const installedDlcIds = workspace.installedDlcIds || ['dlc-srd-5e-oficial'];
+
+  const handleToggleWorkspaceDlc = (dlc: DLCPackageRecord) => {
+    const isInstalled = installedDlcIds.includes(dlc.id);
+    if (isInstalled) {
+      // Remove DLC id and any entities explicitly tagged with dlcSourceId === dlc.id
+      const nextInstalled = installedDlcIds.filter((id) => id !== dlc.id);
+      onUpdateWorkspace({
+        ...workspace,
+        installedDlcIds: nextInstalled,
+        monsters: (workspace.monsters || []).filter((m) => m.dlcSourceId !== dlc.id),
+        npcs: (workspace.npcs || []).filter((n) => n.dlcSourceId !== dlc.id),
+        customItemsAndSpells: (workspace.customItemsAndSpells || []).filter(
+          (i) => i.dlcSourceId !== dlc.id
+        ),
+        locations: (workspace.locations || []).filter((l) => l.dlcSourceId !== dlc.id),
+        placeAlbumPhotos: (workspace.placeAlbumPhotos || []).filter(
+          (p) => p.dlcSourceId !== dlc.id
+        ),
+      });
+      setLiveMapToast(`📦 DLC "${dlc.name}" desactivado de esta mesa`);
+      setTimeout(() => setLiveMapToast(''), 2800);
+    } else {
+      // Inject DLC content into workspace
+      const nextInstalled = Array.from(new Set([...installedDlcIds, dlc.id]));
+      const existingMonsterIds = new Set((workspace.monsters || []).map((m) => m.id));
+      const existingNpcIds = new Set((workspace.npcs || []).map((n) => n.id));
+      const existingItemIds = new Set((workspace.customItemsAndSpells || []).map((i) => i.id));
+      const existingLocIds = new Set((workspace.locations || []).map((l) => l.id));
+      const existingPhotoIds = new Set((workspace.placeAlbumPhotos || []).map((p) => p.id));
+
+      const injectedMonsters = (dlc.monsters || [])
+        .filter((m) => !existingMonsterIds.has(m.id))
+        .map((m) => ({ ...m, dlcSourceId: dlc.id }));
+      const injectedNpcs = (dlc.npcs || [])
+        .filter((n) => !existingNpcIds.has(n.id))
+        .map((n) => ({ ...n, dlcSourceId: dlc.id }));
+      const injectedItems = (dlc.itemsAndSpells || [])
+        .filter((i) => !existingItemIds.has(i.id))
+        .map((i) => ({ ...i, dlcSourceId: dlc.id }));
+      const injectedLocations = (dlc.locations || [])
+        .filter((l) => !existingLocIds.has(l.id))
+        .map((l) => ({ ...l, dlcSourceId: dlc.id }));
+      const injectedPhotos = (dlc.albumPhotos || [])
+        .filter((p) => !existingPhotoIds.has(p.id))
+        .map((p) => ({ ...p, dlcSourceId: dlc.id }));
+      const nextFolders = Array.from(
+        new Set([
+          ...(workspace.folders || []),
+          ...injectedLocations.map((l) => l.folder).filter(Boolean),
+        ])
+      );
+
+      onUpdateWorkspace({
+        ...workspace,
+        installedDlcIds: nextInstalled,
+        folders: nextFolders,
+        monsters: [...(workspace.monsters || []), ...injectedMonsters],
+        npcs: [...(workspace.npcs || []), ...injectedNpcs],
+        customItemsAndSpells: [...(workspace.customItemsAndSpells || []), ...injectedItems],
+        locations: [...(workspace.locations || []), ...injectedLocations],
+        placeAlbumPhotos: [...(workspace.placeAlbumPhotos || []), ...injectedPhotos],
+      });
+      setLiveMapToast(`✨ DLC "${dlc.name}" inyectado y activado en tu campaña`);
+      setTimeout(() => setLiveMapToast(''), 2800);
+    }
+  };
+
+  const handleRedeemDlcInSettings = async () => {
+    if (!dlcRedeemCodeInput.trim()) return;
+    try {
+      const res = await fetch('/api/creator/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: currentUserEmail || 'invitado@willroll.local',
+          code: dlcRedeemCodeInput.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        if (Array.isArray(data.ownedDlcIds)) setOwnedDlcIds(data.ownedDlcIds);
+        setDlcRedeemCodeInput('');
+        setLiveMapToast(`🎁 ${data.message || 'DLC desbloqueado en tu cuenta'}`);
+      } else {
+        setLiveMapToast(`⚠️ ${data.error || 'Código no válido'}`);
+      }
+      setTimeout(() => setLiveMapToast(''), 3000);
+    } catch {
+      // ignore
+    }
+  };
   const isOnlineSession = isOnlineSessionProp !== undefined ? isOnlineSessionProp : !isOfflineMode;
   const onToggleOnlineSession =
     onToggleOnlineSessionProp ||
@@ -201,8 +328,6 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
           : workspace.activeLiveVisual,
     });
   };
-  const [isFolderManagerOpen, setIsFolderManagerOpen] = useState<boolean>(false);
-  const [isDmTableSettingsModalOpen, setIsDmTableSettingsModalOpen] = useState<boolean>(false);
   const [settingsNameDraft, setSettingsNameDraft] = useState<string>(worldName || 'Campaña');
   const [settingsCodeDraft, setSettingsCodeDraft] = useState<string>(roomCode || 'MESA-1');
   const [settingsPasswordDraft, setSettingsPasswordDraft] = useState<string>(roomPassword || '');
@@ -1561,6 +1686,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
     setEditingLogId(null);
     setLogForm({
       sessionNumber: (workspace.campaignLogs?.length || 0) + 1,
+      entryType: 'session',
       title: '',
       date: 'Día de Aventura',
       summary: '',
@@ -1739,12 +1865,15 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                 <button
                   type="button"
                   data-testid="btn-open-tactical-maps"
-                  onClick={() => setIsTacticalMapsModalOpen(true)}
-                  className="px-3 py-1.5 rounded-lg bg-[#181b26] hover:bg-[#232738] border border-[#c8a45c]/65 text-[#f5e4be] text-xs font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
-                  title="Ver, crear, editar o poner en cola Mapas Tácticos con cuadrícula para esta zona"
+                  disabled
+                  className="px-3 py-1.5 rounded-lg bg-stone-900/80 border border-stone-700 text-stone-400 text-xs font-cinzel font-bold flex items-center gap-1.5 opacity-65 cursor-not-allowed shadow"
+                  title="Los Mapas Tácticos están actualmente en proceso de desarrollo"
                 >
-                  <Layers className="w-3.5 h-3.5 text-[#e2c275]" />
-                  <span>Mapas Tácticos ({filteredLocations.length})</span>
+                  <Layers className="w-3.5 h-3.5 text-stone-500" />
+                  <span>Mapas Tácticos</span>
+                  <span className="px-1.5 py-0.2 rounded bg-amber-950/90 border border-amber-500/60 text-[9px] text-amber-300 uppercase tracking-wider">
+                    En Proceso
+                  </span>
                 </button>
 
                 <button
@@ -2293,10 +2422,10 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                             >
                               <div className="relative h-18 w-full rounded-lg overflow-hidden bg-[#1b1316] border border-red-900/40 flex items-center justify-center">
                                 <EntityAvatar
-                                  avatarType={mon.avatarType}
-                                  avatarCustomUrl={mon.avatarCustomUrl}
+                                  avatarType={mon.imageUrl ? 'custom' : mon.avatarType}
+                                  avatarCustomUrl={mon.imageUrl || mon.avatarCustomUrl}
                                   avatarIcon={mon.avatarIcon}
-                                  legacyAvatarUrl={mon.avatarUrl}
+                                  legacyAvatarUrl={mon.imageUrl || mon.avatarUrl}
                                   name={mon.name}
                                   category="monster"
                                   size="lg"
@@ -2354,8 +2483,16 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                               title="Haz clic para desdoblar la carta del Objeto/Conjuro y entregarlo a un jugador"
                             >
                               <div className="relative h-18 w-full rounded-lg overflow-hidden bg-[#181422] border border-purple-900/40 flex flex-col items-center justify-center p-2">
-                                <Crown className="w-7 h-7 text-[#e2c275] mb-1" />
-                                <span className="px-1.5 py-0.5 rounded bg-purple-950/90 border border-purple-500/50 text-[8px] font-cinzel font-bold text-purple-200 truncate max-w-full">
+                                {item.imageUrl ? (
+                                  <img
+                                    src={item.imageUrl}
+                                    alt={item.name}
+                                    className="absolute inset-0 w-full h-full object-cover opacity-85"
+                                  />
+                                ) : (
+                                  <Crown className="w-7 h-7 text-[#e2c275] mb-1" />
+                                )}
+                                <span className="relative z-10 px-1.5 py-0.5 rounded bg-purple-950/90 border border-purple-500/50 text-[8px] font-cinzel font-bold text-purple-200 truncate max-w-full">
                                   {item.rarity || 'Raro'}
                                 </span>
                               </div>
@@ -2440,21 +2577,39 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                   MUNDO, TRAMA Y CRÓNICAS
                 </h3>
 
-                {/* Subtle, Small Purple Campaign Brain Button */}
+                {/* Subtle, Small Purple Campaign Brain Button (Gated by Role: moderator, creator, admin) */}
                 <button
                   type="button"
                   data-testid="btn-open-campaign-brain"
-                  onClick={() =>
+                  onClick={() => {
+                    if (!isOracleAllowed) {
+                      setLiveMapToast('🔒 Sabio Arcano en desarrollo para cuentas de cliente');
+                      setTimeout(() => setLiveMapToast(''), 3000);
+                      return;
+                    }
                     onOpenAIOracle(
                       '¿Qué secretos o ganchos de trama tengo listos para mi sesión de hoy?',
                       true
-                    )
+                    );
+                  }}
+                  className={`px-2.5 py-1 rounded-lg border text-[10px] font-cinzel font-bold flex items-center gap-1.5 transition shrink-0 ${
+                    isOracleAllowed
+                      ? 'bg-[#211730] hover:bg-[#2e1f44] border-purple-400/60 text-purple-200 shadow-[0_0_12px_rgba(168,85,247,0.25)] cursor-pointer'
+                      : 'bg-stone-900/80 border-stone-700 text-stone-400 opacity-65 cursor-not-allowed'
+                  }`}
+                  title={
+                    isOracleAllowed
+                      ? 'Abrir Sabio Arcano / Cerebro de Campaña (Oráculo IA del DM)'
+                      : 'Sabio Arcano en desarrollo para clientes (Disponible para Moderadores, Creadores y Admins)'
                   }
-                  className="px-2.5 py-1 rounded-lg bg-[#211730] hover:bg-[#2e1f44] border border-purple-400/60 text-purple-200 text-[10px] font-cinzel font-bold flex items-center gap-1.5 transition shadow-[0_0_12px_rgba(168,85,247,0.25)] cursor-pointer shrink-0"
-                  title="Abrir Cerebro de Campaña (Oráculo IA confidencial del DM)"
                 >
-                  <Wand2 className="w-3.5 h-3.5 text-purple-300" />
-                  <span>Cerebro IA</span>
+                  <Wand2 className={`w-3.5 h-3.5 ${isOracleAllowed ? 'text-purple-300' : 'text-stone-500'}`} />
+                  <span>Sabio Arcano</span>
+                  {!isOracleAllowed && (
+                    <span className="px-1 py-0.2 rounded bg-stone-800 border border-stone-600 text-[8px] text-amber-300 uppercase">
+                      En desarrollo
+                    </span>
+                  )}
                 </button>
               </div>
 
@@ -2591,10 +2746,22 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                   JUGADORES CONECTADOS ({partyMembers.length})
                 </h3>
               </div>
-              <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                En Línea
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  En Línea
+                </span>
+                <button
+                  type="button"
+                  data-testid="btn-dm-table-settings"
+                  onClick={openDmTableSettingsModal}
+                  className="px-2 py-0.5 rounded-lg bg-[#191c28] hover:bg-[#232738] border border-[#c8a45c]/75 text-[#f5e4be] font-cinzel font-bold text-[10px] flex items-center gap-1 shadow transition cursor-pointer"
+                  title="Ajustes de la Mesa (Nombre, Contraseña, Online/Offline y Auto-Sync)"
+                >
+                  <Sliders className="w-3 h-3 text-[#e2c275]" />
+                  <span>Ajustes</span>
+                </button>
+              </div>
             </div>
 
             {partyMembers.length === 0 ? (
@@ -3093,142 +3260,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
         </div>
       </div>
 
-      {/* =================================================================== */}
-      {/* BOTTOM BAR: LOBBY/CLOUD BUTTONS + MENSAJE EN VIVO + MAPA EN VIVO    */}
-      {/* =================================================================== */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-stretch">
-        {/* Left: Stacked Lobby & Cloud Save Buttons */}
-        <div className="lg:col-span-3 flex flex-col justify-between gap-1.5">
-          <button
-            type="button"
-            data-testid="btn-dm-return-lobby"
-            onClick={onSaveAndReturnToLobby}
-            className="w-full py-2 px-3 rounded-xl bg-[#161822] hover:bg-[#222534] border border-[#c8a45c]/65 text-[#f5e4be] font-cinzel font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition cursor-pointer"
-          >
-            <ArrowLeft className="w-3.5 h-3.5 text-[#e2c275]" />
-            <span>GUARDAR Y REGRESAR AL LOBBY</span>
-          </button>
-
-          <div className="grid grid-cols-2 gap-1.5">
-            <button
-              type="button"
-              data-testid="btn-dm-save-cloud"
-              onClick={onSaveToCloud}
-              className="w-full py-2 px-2.5 rounded-xl bg-gradient-to-r from-emerald-950 via-emerald-900/90 to-emerald-950 hover:from-emerald-900 hover:to-emerald-800 border border-emerald-400/75 text-emerald-100 font-cinzel font-bold text-xs flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.25)] transition cursor-pointer"
-              title="Guardar en la Nube"
-            >
-              <Upload className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-              <span>GUARDAR</span>
-            </button>
-
-            <button
-              type="button"
-              data-testid="btn-dm-table-settings"
-              onClick={openDmTableSettingsModal}
-              className="w-full py-2 px-2.5 rounded-xl bg-[#191c28] hover:bg-[#232738] border border-[#c8a45c]/75 text-[#f5e4be] font-cinzel font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg transition cursor-pointer"
-              title="Ajustes de la Mesa (Nombre, Contraseña, Online/Offline y Auto-Sync)"
-            >
-              <Sliders className="w-3.5 h-3.5 text-[#e2c275] shrink-0" />
-              <span>AJUSTES</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Center: MENSAJE EN VIVO Banner (with Clickable DM Portrait Medallion) */}
-        <div className="lg:col-span-7 rounded-2xl bg-[#14161f] border-2 border-[#c8a45c]/75 px-3.5 py-2 flex items-center gap-3 shadow-[0_0_25px_rgba(0,0,0,0.85)]">
-          {/* Customizable DM Portrait / Heraldic Crest */}
-          <button
-            type="button"
-            onClick={openDmAvatarCustomizer}
-            className="relative w-11 h-11 rounded-xl bg-gradient-to-b from-amber-900/80 to-stone-950 border-2 border-[#e2c275] flex items-center justify-center shrink-0 shadow-md group cursor-pointer overflow-hidden"
-            title="Cambiar imagen de retrato del Dungeon Master"
-          >
-            <EntityAvatar
-              avatarType={workspace.dmAvatarType || 'icon'}
-              customUrl={workspace.dmAvatarUrl}
-              iconId={workspace.dmAvatarIcon || 'crown'}
-              category="character"
-              size="md"
-              className="w-full h-full"
-            />
-            <span className="absolute inset-0 bg-black/55 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[9px] font-cinzel font-bold text-amber-200 transition">
-              Editar
-            </span>
-          </button>
-
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <span className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] tracking-wider uppercase flex items-center gap-1.5">
-                <span>MENSAJE EN VIVO</span>
-                {liveMessageSentAlert && (
-                  <span className="text-[10px] text-emerald-400 font-sans font-bold">
-                    ✓ ¡Transmitido a la mesa!
-                  </span>
-                )}
-              </span>
-
-              {onOpenRollFeed && (
-                <button
-                  type="button"
-                  onClick={onOpenRollFeed}
-                  className="px-2 py-0.5 rounded-lg bg-[#1d202d] hover:bg-[#282c3e] border border-[#c8a45c]/50 text-[#e2c275] text-[10px] font-cinzel font-bold flex items-center gap-1 cursor-pointer"
-                >
-                  <Dices className="w-3 h-3" />
-                  <span>Tiradas ({recentRollsCount})</span>
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={liveMessageInput}
-                onChange={(e) => setLiveMessageInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSendDmLiveMessage()}
-                placeholder="¡Aventureros en posición! Prepárense..."
-                className="flex-1 bg-[#0f1118] border border-stone-700/90 rounded-xl px-3 py-1.5 text-xs text-stone-100 focus:outline-none focus:border-[#c8a45c]"
-              />
-              <button
-                type="button"
-                data-testid="btn-send-dm-live-message"
-                onClick={handleSendDmLiveMessage}
-                className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-700 to-emerald-600 hover:from-emerald-600 hover:to-emerald-500 border border-emerald-400/80 text-white font-cinzel font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer shrink-0"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Enviar</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Right: MAPA / UBICACIÓN EN VIVO Button (Launches TableMapView) */}
-        <div className="lg:col-span-2 flex">
-          <button
-            type="button"
-            data-testid="btn-dm-live-map"
-            onClick={() => {
-              if (onOpenTableMapView) {
-                onOpenTableMapView();
-              } else {
-                setIsLivePreviewModalOpen(true);
-              }
-            }}
-            className="w-full min-h-[64px] rounded-2xl bg-gradient-to-b from-[#231e17] to-[#14161f] hover:from-[#2d261d] border-2 border-[#c8a45c]/80 p-2 flex flex-col items-center justify-center text-center shadow-lg transition cursor-pointer relative overflow-hidden"
-            title="Ir a la Vista de Mapa de la Mesa"
-          >
-            <div className="flex items-center gap-1.5 font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase z-10 max-w-full">
-              <Compass className="w-4 h-4 text-[#e2c275] shrink-0" />
-              <span className="truncate">MAPA • {currentPlaceShortName}</span>
-            </div>
-            <span className="text-[10px] text-emerald-300 font-medium truncate max-w-full mt-0.5 flex items-center gap-1 z-10">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block shrink-0" />
-              <span className="truncate">
-                Viendo: {activeLiveVisualDisplay.title}
-              </span>
-            </span>
-          </button>
-        </div>
-      </div>
+      {/* La barra de sesión (Regresar al Lobby, Guardar, Estandarte del DM y Ubicación/Mapa) está integrada en la barra superior */}
 
       {/* Floating Toast for Live Map / Projection */}
       {liveMapToast && (
@@ -3769,9 +3801,25 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                     className="bg-[#13151d] border border-[#c8a45c]/40 rounded-2xl p-4 space-y-2"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-0.5 rounded bg-amber-950 text-amber-300 font-cinzel font-bold text-xs border border-amber-700">
-                          Sesión {log.sessionNumber}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className={`px-2.5 py-0.5 rounded font-cinzel font-bold text-xs border ${
+                            log.entryType === 'chapter'
+                              ? 'bg-purple-950 text-purple-200 border-purple-600'
+                              : log.entryType === 'summary'
+                              ? 'bg-emerald-950 text-emerald-200 border-emerald-600'
+                              : log.entryType === 'prologue'
+                              ? 'bg-cyan-950 text-cyan-200 border-cyan-600'
+                              : 'bg-amber-950 text-amber-300 border-amber-700'
+                          }`}
+                        >
+                          {log.entryType === 'chapter'
+                            ? `🏛️ Capítulo ${log.sessionNumber}`
+                            : log.entryType === 'summary'
+                            ? `📜 Resumen #${log.sessionNumber}`
+                            : log.entryType === 'prologue'
+                            ? `⏳ Prólogo`
+                            : `📖 Sesión ${log.sessionNumber}`}
                         </span>
                         <h4 className="font-cinzel font-bold text-[#f5e4be] text-base">
                           {log.title}
@@ -3973,6 +4021,11 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                 onGiveItemToPlayer={onGiveItemToPlayer}
                 roomCode={roomCode}
                 partyMembers={partyMembers}
+                hasSrdDlcEnabled={installedDlcIds.includes('dlc-srd-5e-oficial')}
+                onOpenDlcSettings={() => {
+                  setIsItemsCompendiumModalOpen(false);
+                  openDmTableSettingsModal();
+                }}
               />
             </div>
           </div>
@@ -4564,6 +4617,76 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
               />
             </div>
 
+            {/* Monster Image Upload / URL */}
+            <div className="p-3 rounded-xl bg-[#13141a] border border-stone-800 mb-3 space-y-2">
+              <span className="text-xs font-cinzel font-bold text-amber-300 flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                <span>Imagen del Monstruo / Criatura (Opcional):</span>
+              </span>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {(monsterForm.imageUrl || monsterForm.avatarCustomUrl) && (
+                  <div className="relative">
+                    <img
+                      src={monsterForm.imageUrl || monsterForm.avatarCustomUrl}
+                      alt="Monstruo"
+                      className="w-12 h-12 rounded-lg object-cover border border-red-500/60"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMonsterForm({
+                          ...monsterForm,
+                          imageUrl: '',
+                          avatarCustomUrl: '',
+                        })
+                      }
+                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white flex items-center justify-center text-[9px]"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+                <label className="px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-700 text-amber-200 text-xs font-cinzel font-bold cursor-pointer flex items-center gap-1.5">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Subir Imagen</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const dataUrl = await compressImageFileToDataUrl(file, 360, 0.82);
+                        setMonsterForm((prev) => ({
+                          ...prev,
+                          imageUrl: dataUrl,
+                          avatarCustomUrl: dataUrl,
+                          avatarType: 'custom',
+                        }));
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                  />
+                </label>
+                <input
+                  type="text"
+                  value={monsterForm.imageUrl || monsterForm.avatarCustomUrl || ''}
+                  onChange={(e) =>
+                    setMonsterForm({
+                      ...monsterForm,
+                      imageUrl: e.target.value,
+                      avatarCustomUrl: e.target.value,
+                      avatarType: e.target.value.trim() ? 'custom' : monsterForm.avatarType,
+                    })
+                  }
+                  placeholder="O pega URL de imagen (https://...)"
+                  className="flex-1 min-w-[180px] bg-[#121316] border border-stone-700 rounded-lg px-3 py-1.5 text-xs text-stone-100"
+                />
+              </div>
+            </div>
+
             {/* Attacks builder */}
             <div className="bg-[#13141a] border border-stone-800 rounded-xl p-3 mb-3">
               <span className="text-xs font-cinzel font-bold text-amber-300 block mb-2">
@@ -4694,6 +4817,13 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                       actions: monsterForm.actions || [],
                       folder: monsterForm.folder || 'General',
                       notes: monsterForm.notes || '',
+                      imageUrl: monsterForm.imageUrl?.trim() || undefined,
+                      avatarCustomUrl:
+                        monsterForm.imageUrl?.trim() || monsterForm.avatarCustomUrl?.trim() || undefined,
+                      avatarType:
+                        monsterForm.imageUrl?.trim() || monsterForm.avatarCustomUrl?.trim()
+                          ? 'custom'
+                          : monsterForm.avatarType,
                     };
                     onUpdateWorkspace({
                       ...workspace,
@@ -4913,10 +5043,26 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
             <h3 className="text-base font-cinzel font-bold text-amber-300 mb-3">
               {editingLogId ? 'Editar Entrada de Crónica' : 'Nueva Entrada de Crónica'}
             </h3>
-            <div className="grid grid-cols-3 gap-3 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
+              <select
+                data-testid="select-chronicle-entry-type"
+                value={logForm.entryType || 'session'}
+                onChange={(e) =>
+                  setLogForm({
+                    ...logForm,
+                    entryType: e.target.value as ChronicleEntryType,
+                  })
+                }
+                className="bg-[#121316] border border-amber-700/70 rounded-lg px-3 py-2 text-xs font-cinzel font-bold text-amber-200"
+              >
+                <option value="session">📖 Entrada de Sesión</option>
+                <option value="chapter">🏛️ Capítulo</option>
+                <option value="summary">📜 Resumen de Sesiones</option>
+                <option value="prologue">⏳ Prólogo / Historia Previa</option>
+              </select>
               <input
                 type="number"
-                placeholder="Sesión #"
+                placeholder="Número #"
                 value={logForm.sessionNumber || 1}
                 onChange={(e) =>
                   setLogForm({ ...logForm, sessionNumber: parseInt(e.target.value, 10) || 1 })
@@ -4925,10 +5071,10 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
               />
               <input
                 type="text"
-                placeholder="Título de la Sesión"
+                placeholder="Título (ej. Capítulo I: El Despertar)"
                 value={logForm.title || ''}
                 onChange={(e) => setLogForm({ ...logForm, title: e.target.value })}
-                className="bg-[#121316] border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100 col-span-2"
+                className="bg-[#121316] border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100 sm:col-span-2"
               />
             </div>
             <div className="grid grid-cols-2 gap-3 mb-3">
@@ -4996,6 +5142,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                     const newEntry: CampaignLogEntry = {
                       id: `log-${Date.now()}`,
                       sessionNumber: logForm.sessionNumber || 1,
+                      entryType: logForm.entryType || 'session',
                       title: logForm.title.trim(),
                       date: logForm.date || 'Día de Aventura',
                       summary: logForm.summary || '',
@@ -6325,6 +6472,107 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                   className="w-4 h-4 accent-amber-500 shrink-0"
                 />
               </label>
+
+              {/* APARTADO DE DLCs E INYECCIÓN DE CONTENIDO (SRD 5E & EXPANSIONES) */}
+              <div
+                data-testid="dm-settings-dlc-section"
+                className="p-3.5 rounded-xl bg-[#191c28] border border-amber-500/50 space-y-2.5"
+              >
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <div className="text-xs font-cinzel font-black text-amber-300 uppercase flex items-center gap-1.5">
+                      <Gift className="w-4 h-4 text-amber-400" />
+                      <span>DLCs e Inyección de Contenido en esta Mesa</span>
+                    </div>
+                    <p className="text-[11px] text-stone-400">
+                      Activa los paquetes DLC que posees en tu cuenta para inyectar sus objetos SRD, monstruos, NPCs, lugares e imágenes en este mundo.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Quick Code Redeemer for DLCs */}
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    data-testid="input-dm-settings-redeem-dlc"
+                    value={dlcRedeemCodeInput}
+                    onChange={(e) => setDlcRedeemCodeInput(e.target.value.toUpperCase())}
+                    placeholder="Código de DLC (ej. SRD-5E-OFICIAL, NAVIDAD-2026-DLC)"
+                    className="flex-1 bg-[#11131a] border border-stone-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-amber-200"
+                  />
+                  <button
+                    type="button"
+                    data-testid="btn-dm-settings-redeem-dlc"
+                    onClick={handleRedeemDlcInSettings}
+                    className="px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-600 text-white font-cinzel font-bold text-[11px] cursor-pointer shrink-0"
+                  >
+                    Canjear Código
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {availableDlcs
+                    .filter((dlc) => ownedDlcIds.includes(dlc.id) || dlc.isOfficialSrd)
+                    .map((dlc) => {
+                      const isActive = installedDlcIds.includes(dlc.id);
+                      return (
+                        <div
+                          key={dlc.id}
+                          data-testid={`dm-dlc-row-${dlc.id}`}
+                          className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 ${
+                            isActive
+                              ? 'bg-emerald-950/35 border-emerald-500/60'
+                              : 'bg-[#12141c] border-stone-800'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-cinzel font-bold text-xs text-[#f5e4be]">
+                                {dlc.name}
+                              </span>
+                              {dlc.isOfficialSrd && (
+                                <span className="px-1.5 py-0.2 rounded bg-amber-950 border border-amber-600/60 text-[9px] font-mono text-amber-300">
+                                  SRD 5E Stock
+                                </span>
+                              )}
+                              {dlc.seasonTag && (
+                                <span className="px-1.5 py-0.2 rounded bg-purple-950 border border-purple-600/60 text-[9px] font-mono text-purple-200">
+                                  {dlc.seasonTag}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-stone-400 truncate">{dlc.description}</p>
+                            {!dlc.hideCreatorCredit &&
+                              (dlc.editorCreditName || !dlc.createdByAdmin) && (
+                                <div className="text-[10px] font-cinzel text-amber-300 mt-0.5">
+                                  ✨ Créditos del Creador:{' '}
+                                  <strong>{dlc.editorCreditName || dlc.authorName}</strong>
+                                  {dlc.customCreditDescription
+                                    ? ` — ${dlc.customCreditDescription}`
+                                    : ''}
+                                </div>
+                              )}
+                            <div className="text-[9px] font-mono text-amber-300/90 mt-0.5">
+                              Incluye: {(dlc.monsters || []).length} Monstruos • {(dlc.npcs || []).length} NPCs • {(dlc.itemsAndSpells || []).length} Objetos • {(dlc.locations || []).length} Lugares • {(dlc.albumPhotos || []).length} Imágenes
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            data-testid={`btn-toggle-dlc-${dlc.id}`}
+                            onClick={() => handleToggleWorkspaceDlc(dlc)}
+                            className={`px-3 py-1.5 rounded-lg font-cinzel font-bold text-[11px] border transition cursor-pointer shrink-0 ${
+                              isActive
+                                ? 'bg-emerald-700 hover:bg-emerald-600 border-emerald-400 text-white'
+                                : 'bg-stone-800 hover:bg-amber-700 border-stone-600 text-stone-200'
+                            }`}
+                          >
+                            {isActive ? '✓ DLC Activo' : '+ Inyectar DLC'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">

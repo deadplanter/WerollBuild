@@ -129,12 +129,50 @@ apiRouter.get('/health', (req, res) => {
 });
 
 // ==========================================
-// AUTHENTICATION & USER MANAGEMENT
+// AUTHENTICATION & USER MANAGEMENT (WITH OTP FOR NEW ACCOUNTS)
 // ==========================================
+
+apiRouter.post('/auth/send-otp', (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const result = dataStore.generateRegistrationOtp(email);
+    if (result.alreadyRegistered) {
+      return res.json({
+        success: true,
+        alreadyRegistered: true,
+        message: 'Este correo ya está registrado y verificado en el servidor.',
+      });
+    }
+    res.json({
+      success: true,
+      alreadyRegistered: false,
+      otpPreviewCode: result.code,
+      expiresAt: result.expiresAt,
+      message: `Código de verificación OTP de 6 dígitos generado para ${result.email}.`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'No se pudo generar el código OTP.' });
+  }
+});
+
+apiRouter.post('/auth/verify-otp', (req, res) => {
+  try {
+    const { email, code } = req.body || {};
+    const result = dataStore.verifyRegistrationOtp(email, code);
+    res.json({
+      success: true,
+      verified: result.verified,
+      alreadyRegistered: result.alreadyRegistered,
+      message: '¡Correo electrónico verificado correctamente con código OTP!',
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Código OTP inválido o expirado.' });
+  }
+});
 
 // Register a new user account (starts as PENDING for DM & Player)
 apiRouter.post('/auth/register', (req, res) => {
-  const { email, displayName, userTagId, password, requestedRole } = req.body;
+  const { email, displayName, userTagId, password, requestedRole, otpCode } = req.body;
   if (!email || !password || !displayName) {
     return res.status(400).json({ error: 'Faltan campos requeridos: correo, nombre o contraseña.' });
   }
@@ -142,6 +180,15 @@ apiRouter.post('/auth/register', (req, res) => {
   const existing = dataStore.findUserByEmail(email);
   if (existing) {
     return res.status(400).json({ error: 'Ya existe una cuenta con este correo electrónico.' });
+  }
+
+  // If otpCode is provided during registration, verify it
+  if (otpCode) {
+    try {
+      dataStore.verifyRegistrationOtp(email, otpCode);
+    } catch (otpErr: any) {
+      return res.status(400).json({ error: otpErr.message || 'Código OTP inválido.' });
+    }
   }
 
   const cleanedTag = (userTagId || '').replace(/^@+/, '').trim().slice(0, 3);
@@ -272,6 +319,8 @@ apiRouter.post('/auth/login', (req, res) => {
       canPostInForum: user.appRole === 'admin' || user.appRole === 'creator' || user.appRole === 'moderator' ? true : Boolean(user.canPostInForum),
       forumPermissionsRequested: Boolean(user.forumPermissionsRequested),
       status: user.status,
+      ownedDlcIds: Array.from(new Set(['dlc-srd-5e-oficial', ...(user.ownedDlcIds || [])])),
+      ownedSkinIds: Array.from(new Set(['skin-app-default', 'skin-player-default', 'skin-dm-default', ...(user.ownedSkinIds || [])])),
     },
   });
 });
@@ -284,7 +333,7 @@ apiRouter.get('/auth/me', (req, res) => {
   }
   const user = dataStore.findUserByEmail(email);
   if (!user) {
-    return res.status(404).json({ error: 'Usuario no encontrado.' });
+    return res.status(200).json({ found: false, email });
   }
   // Corroborate user uniqueness on every /auth/me check and record presence
   dataStore.corroborateUniqueUsers();
@@ -315,6 +364,8 @@ apiRouter.get('/auth/me', (req, res) => {
     status: freshUser.status,
     lastActiveAt: freshUser.lastActiveAt,
     passwordResetRequested: freshUser.passwordResetRequested,
+    ownedDlcIds: Array.from(new Set(['dlc-srd-5e-oficial', ...(freshUser.ownedDlcIds || [])])),
+    ownedSkinIds: Array.from(new Set(['skin-app-default', 'skin-player-default', 'skin-dm-default', ...(freshUser.ownedSkinIds || [])])),
   });
 });
 
@@ -330,7 +381,14 @@ apiRouter.post('/users/heartbeat', (req, res) => {
     activity,
   });
   if (!updated) {
-    return res.status(404).json({ error: 'Usuario no encontrado.' });
+    const syncMeta = dataStore.getSyncMetadata();
+    return res.status(200).json({
+      success: false,
+      found: false,
+      unreadFriendMessages: 0,
+      incomingRequestsCount: 0,
+      vaultRevision: syncMeta.revision,
+    });
   }
   const msgSignal = dataStore.getFriendMessageSignal(updated.id);
   const reqs = dataStore.getFriendRequestsForUser(updated.id);
@@ -515,7 +573,15 @@ apiRouter.get('/friends', (req, res) => {
     (email ? dataStore.findUserByEmail(email) : undefined);
 
   if (!user) {
-    return res.status(404).json({ error: 'Usuario no encontrado.' });
+    return res.status(200).json({
+      userId: userId || 'local',
+      displayName: email.split('@')[0] || 'Aventurero',
+      userTagId: '123',
+      fullTag: `${email.split('@')[0] || 'Aventurero'}@123`,
+      friends: [],
+      incomingRequests: [],
+      outgoingRequests: [],
+    });
   }
 
   const friends = dataStore.getFriendsForUser(user.id);
@@ -738,22 +804,376 @@ apiRouter.get('/vault/deltas', (req, res) => {
 });
 
 // ==========================================
+// CREATOR STUDIO & CLOUD ENTITLEMENT ENDPOINTS
+// ==========================================
+
+apiRouter.get('/creator/catalog', (req, res) => {
+  const email = ((req.query.email as string) || '').trim().toLowerCase();
+  const catalog = dataStore.getCreatorStudioCatalog(email || undefined);
+  res.json({
+    success: true,
+    catalog,
+    ...catalog,
+  });
+});
+
+apiRouter.post('/creator/item', (req, res) => {
+  try {
+    const { kind, item, actorEmail } = req.body || {};
+    if (!kind || !item) {
+      return res.status(400).json({ error: 'Se requiere kind e item.' });
+    }
+    const saved = dataStore.saveCreatorStudioItem(kind, item, actorEmail);
+    const catalog = dataStore.getCreatorStudioCatalog(actorEmail);
+    broadcastRealtimeEvent('creator:updated', { kind, itemId: saved.id });
+    res.json({
+      success: true,
+      item: saved,
+      catalog,
+      ...catalog,
+      message:
+        saved.reviewStatus === 'pending_review'
+          ? `¡"${saved.name || saved.id}" enviado a la Cola de Revisión del Administrador!`
+          : `¡Elemento "${saved.name || saved.id}" guardado y publicado en la nube del Panel de Creador!`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al guardar en el Panel de Creador.' });
+  }
+});
+
+// Unified /creator/skins POST endpoint (used by CreatorStudioPanel)
+apiRouter.post('/creator/skins', (req, res) => {
+  try {
+    const skinPayload = req.body?.skin || req.body || {};
+    const actorEmail =
+      req.body?.actorEmail ||
+      skinPayload.authorEmail ||
+      (req.query.email as string) ||
+      'admin@weroll.app';
+    const scope = skinPayload.scope || skinPayload.target || 'app';
+    const kind =
+      scope === 'player'
+        ? 'creator_skin_player'
+        : scope === 'dm'
+        ? 'creator_skin_dm'
+        : 'creator_skin_app';
+
+    const saved = dataStore.saveCreatorStudioItem(kind, skinPayload, actorEmail);
+    const catalog = dataStore.getCreatorStudioCatalog(actorEmail);
+    broadcastRealtimeEvent('creator:updated', { kind, itemId: saved.id });
+    res.json({
+      success: true,
+      skin: saved,
+      item: saved,
+      catalog,
+      ...catalog,
+      message:
+        saved.reviewStatus === 'pending_review'
+          ? `¡Skin "${saved.name}" enviada a revisión del Administrador antes de hacerse pública!`
+          : `¡Skin "${saved.name}" guardada exitosamente en la nube!`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al guardar la Skin.' });
+  }
+});
+
+// Unified /creator/skins/:id DELETE endpoint
+apiRouter.delete('/creator/skins/:id', (req, res) => {
+  try {
+    const id = req.params.id;
+    const actorEmail = (req.query.email as string) || req.body?.actorEmail || undefined;
+    const vault = dataStore.getCreatorStudioVault();
+    const kind = vault.creator_skin_player.some((s: any) => s.id === id)
+      ? 'creator_skin_player'
+      : vault.creator_skin_dm.some((s: any) => s.id === id)
+      ? 'creator_skin_dm'
+      : 'creator_skin_app';
+
+    dataStore.deleteCreatorStudioItem(kind, id, actorEmail);
+    const catalog = dataStore.getCreatorStudioCatalog(actorEmail);
+    broadcastRealtimeEvent('creator:deleted', { kind, itemId: id });
+    res.json({
+      success: true,
+      catalog,
+      ...catalog,
+      message: 'Skin eliminada del Panel de Creador.',
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'No se pudo eliminar la skin.' });
+  }
+});
+
+// Unified /creator/dlcs POST endpoint (used by CreatorStudioPanel)
+apiRouter.post('/creator/dlcs', (req, res) => {
+  try {
+    const dlcPayload = req.body?.dlc || req.body || {};
+    const actorEmail =
+      req.body?.actorEmail ||
+      dlcPayload.authorEmail ||
+      (req.query.email as string) ||
+      'admin@weroll.app';
+    const saved = dataStore.saveCreatorStudioItem('creator_dlc', dlcPayload, actorEmail);
+    const catalog = dataStore.getCreatorStudioCatalog(actorEmail);
+    broadcastRealtimeEvent('creator:updated', { kind: 'creator_dlc', itemId: saved.id });
+    res.json({
+      success: true,
+      dlc: saved,
+      item: saved,
+      catalog,
+      ...catalog,
+      message:
+        saved.reviewStatus === 'pending_review'
+          ? `¡Paquete DLC "${saved.name}" enviado a la Cola de Revisión del Administrador!`
+          : `¡Paquete DLC "${saved.name}" guardado y publicado en la nube!`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al guardar el paquete DLC.' });
+  }
+});
+
+// Unified /creator/dlcs/:id DELETE endpoint
+apiRouter.delete('/creator/dlcs/:id', (req, res) => {
+  try {
+    const id = req.params.id;
+    const actorEmail = (req.query.email as string) || req.body?.actorEmail || undefined;
+    dataStore.deleteCreatorStudioItem('creator_dlc', id, actorEmail);
+    const catalog = dataStore.getCreatorStudioCatalog(actorEmail);
+    broadcastRealtimeEvent('creator:deleted', { kind: 'creator_dlc', itemId: id });
+    res.json({
+      success: true,
+      catalog,
+      ...catalog,
+      message: 'Paquete DLC eliminado del Panel de Creador.',
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'No se pudo eliminar el paquete DLC.' });
+  }
+});
+
+apiRouter.delete('/creator/item/:kind/:id', (req, res) => {
+  try {
+    const kind = req.params.kind as any;
+    const id = req.params.id;
+    const actorEmail = (req.query.email as string) || undefined;
+    dataStore.deleteCreatorStudioItem(kind, id, actorEmail);
+    const catalog = dataStore.getCreatorStudioCatalog(actorEmail);
+    broadcastRealtimeEvent('creator:deleted', { kind, itemId: id });
+    res.json({
+      success: true,
+      catalog,
+      ...catalog,
+      message: 'Elemento eliminado del Panel de Creador.',
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'No se pudo eliminar el elemento.' });
+  }
+});
+
+const handleActivateOnlineSkin = (req: any, res: any) => {
+  try {
+    const { skinId, actorEmail, scope } = req.body || {};
+    if (!skinId) {
+      return res.status(400).json({ error: 'Se requiere skinId.' });
+    }
+    const active = dataStore.setActiveOnlineAppSkin(skinId, actorEmail, scope);
+    const catalog = dataStore.getCreatorStudioCatalog(actorEmail);
+    broadcastRealtimeEvent('appskin:activated', { skinId: active.id, skin: active, scope });
+    res.json({
+      success: true,
+      onlineAppSkin: active,
+      catalog,
+      ...catalog,
+      message: `¡"${active.name}" ahora está publicada como la Skin Online Default (${
+        scope === 'player' ? 'Jugador' : scope === 'dm' ? 'Dungeon Master' : 'Lobby / App'
+      }) para todos los usuarios!`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'No se pudo activar la Skin Online.' });
+  }
+};
+
+apiRouter.post('/creator/app-skin/activate', handleActivateOnlineSkin);
+apiRouter.post('/creator/skins/set-online-default', handleActivateOnlineSkin);
+
+const handlePromoteSkin = (req: any, res: any) => {
+  try {
+    const {
+      appSkinId,
+      skinId,
+      targetKind,
+      targetScope,
+      customName,
+      newName,
+      claimCode,
+      seasonTag,
+      seasonLabel,
+      availableFrom,
+      availableUntil,
+      editorCreditName,
+      customCreditDescription,
+      hideCreatorCredit,
+      actorEmail,
+    } = req.body || {};
+
+    const resolvedSourceId = appSkinId || skinId;
+    const resolvedTargetKind: 'creator_skin_player' | 'creator_skin_dm' =
+      targetKind ||
+      (targetScope === 'dm' ? 'creator_skin_dm' : 'creator_skin_player');
+
+    if (!resolvedSourceId) {
+      return res.status(400).json({ error: 'Se requiere el ID de la skin de origen.' });
+    }
+
+    const promoted = dataStore.promoteAppSkinToTarget({
+      appSkinId: resolvedSourceId,
+      targetKind: resolvedTargetKind,
+      customName: customName || newName,
+      claimCode,
+      seasonTag: seasonTag || seasonLabel,
+      availableFrom,
+      availableUntil,
+      editorCreditName,
+      customCreditDescription,
+      hideCreatorCredit,
+      actorEmail,
+    });
+    const catalog = dataStore.getCreatorStudioCatalog(actorEmail);
+    res.json({
+      success: true,
+      promoted,
+      catalog,
+      ...catalog,
+      message: `¡Skin convertida exitosamente a ${
+        resolvedTargetKind === 'creator_skin_player'
+          ? 'Skin Permanente de Jugador'
+          : 'Skin Permanente de Dungeon Master'
+      }: "${promoted.name}" (Código: ${promoted.claimCode})!`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al convertir la skin.' });
+  }
+};
+
+apiRouter.post('/creator/app-skin/promote', handlePromoteSkin);
+apiRouter.post('/creator/skins/convert-to-permanent', handlePromoteSkin);
+
+// Admin Review Queue Approve / Reject Endpoint
+apiRouter.post('/creator/review', (req, res) => {
+  try {
+    const { kind, id, decision, reviewNotes, adminEmail } = req.body || {};
+    if (!kind || !id || !decision) {
+      return res.status(400).json({ error: 'Se requiere kind, id y decision (approve/reject).' });
+    }
+    const reviewed = dataStore.reviewCreatorStudioItem({
+      kind,
+      id,
+      decision: decision === 'reject' ? 'reject' : 'approve',
+      reviewNotes,
+      adminEmail,
+    });
+    const catalog = dataStore.getCreatorStudioCatalog(adminEmail);
+    broadcastRealtimeEvent('creator:reviewed', { kind, itemId: id, decision });
+    res.json({
+      success: true,
+      reviewed,
+      catalog,
+      ...catalog,
+      message:
+        decision === 'reject'
+          ? `Revisión de "${reviewed.name}" rechazada.`
+          : `¡"${reviewed.name}" aprobada y publicada! Se ha enviado una notificación automática a los poseedores.`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al procesar la revisión.' });
+  }
+});
+
+const handleEntitlementChange = (defaultAction: 'grant' | 'revoke') => (req: any, res: any) => {
+  try {
+    const {
+      targetEmail,
+      email,
+      itemId,
+      dlcId,
+      skinId,
+      itemType,
+      action,
+      actorEmail,
+    } = req.body || {};
+
+    const resolvedEmail = targetEmail || email;
+    const resolvedItemId = itemId || dlcId || skinId;
+    const resolvedItemType: 'dlc' | 'skin' =
+      itemType || (dlcId ? 'dlc' : 'skin');
+    const resolvedAction: 'grant' | 'revoke' =
+      action === 'revoke' || defaultAction === 'revoke' ? 'revoke' : 'grant';
+
+    if (!resolvedEmail || !resolvedItemId) {
+      return res.status(400).json({ error: 'Faltan datos (correo o ID) para gestionar la licencia en la nube.' });
+    }
+
+    const result = dataStore.grantOrRevokeEntitlement({
+      targetEmail: resolvedEmail,
+      itemId: resolvedItemId,
+      itemType: resolvedItemType,
+      action: resolvedAction,
+      actorEmail,
+    });
+    const catalog = dataStore.getCreatorStudioCatalog(actorEmail || resolvedEmail);
+    res.json({
+      success: true,
+      result,
+      catalog,
+      ...catalog,
+      message:
+        resolvedAction === 'revoke'
+          ? `Licencia retirada de la cuenta ${result.email}.`
+          : `¡Licencia verificada y asignada en la nube para la cuenta ${result.email}!`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al gestionar licencia.' });
+  }
+};
+
+apiRouter.post('/creator/entitlements/grant', handleEntitlementChange('grant'));
+apiRouter.post('/creator/entitlements/revoke', handleEntitlementChange('revoke'));
+
+apiRouter.post('/creator/entitlements/claim', (req, res) => {
+  try {
+    const { userEmail, code } = req.body || {};
+    const claimed = dataStore.claimEntitlementByCode({ userEmail, code });
+    const catalog = dataStore.getCreatorStudioCatalog(userEmail);
+    res.json({
+      success: true,
+      claimed,
+      catalog,
+      ...catalog,
+      message: `¡Código canjeado con éxito! "${claimed.item.name}" ha quedado registrado permanentemente en tu cuenta (${claimed.email}).`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Código inválido o expirado.' });
+  }
+});
+
+// ==========================================
 // ADMINISTRATOR ENDPOINTS
 // ==========================================
 
 // Server Statistics & Live User Activity Map (for Admin Panel)
 apiRouter.get('/admin/server-stats', (_req, res) => {
-  const stats = dataStore.getServerStatistics();
+  const stats = dataStore.getServerStatistics(Object.keys(rooms).length);
   res.json(stats);
 });
 
-// Read-Only Technical Inspector: Delta Sync Log, Separated Images/Assets, Write-Behind Queue & 4-Module Creator Studio
+// Read-Only Technical Inspector: Delta Sync Log, Separated Images/Assets, Write-Behind Queue, OTP, Offline Queue & Creator Studio
 apiRouter.get('/admin/architecture-status', (_req, res) => {
   const syncMeta = dataStore.getSyncMetadata();
   const hostSettings = dataStore.getHostSettings();
   const deltas = dataStore.getDeltaSyncLog().slice(0, 40);
   const assetsCatalog = dataStore.getSeparatedAssetsCatalog();
   const creatorStudio = dataStore.getCreatorStudioArchitecturePreview();
+  const otpSecurity = dataStore.getOtpArchitectureSummary();
+  const catalog = dataStore.getCreatorStudioCatalog();
   const autoBackup = hostSettings.autoBackup;
 
   res.json({
@@ -762,6 +1182,20 @@ apiRouter.get('/admin/architecture-status', (_req, res) => {
     lastMutationReason: syncMeta.lastMutationReason || 'Estado inicial sincronizado',
     contentHash: syncMeta.contentHash || '',
     activeSseClientsCount: sseClients.size,
+    otpSecurity,
+    offlineEventQueueEngine: {
+      storageKey: 'weroll_local_event_queue_v1',
+      batchEndpoint: 'POST /api/session/room/:roomCode/batch-events',
+      supportedEvents: ['ROLL', 'HP_ADJUST', 'GOLD_ADJUST', 'SHEET_DELTA', 'PLAYER_MESSAGE'],
+      antiKickProtection: 'Tolerancia a micro-desconexiones (requiere cierre explícito del DM o >=3 confirmaciones antes de volver al Lobby)',
+      antiFlickerMode: 'Bloqueo optimista de 6s + versión monotónica en PG, oro y proyección de mapas',
+    },
+    onlineDefaultSkinsStatus: {
+      activeOnlineLobbySkinId: catalog.activeOnlineLobbySkinId,
+      activeOnlinePlayerSkinId: catalog.activeOnlinePlayerSkinId,
+      activeOnlineDmSkinId: catalog.activeOnlineDmSkinId,
+      pendingCreatorReviewsCount: (catalog.pendingReviews || []).length,
+    },
     writeBehindQueue: {
       mode: 'Write-Behind Asíncrono (Desacoplado en 2º Plano)',
       localWriteLatencyMs: 2,
@@ -814,6 +1248,8 @@ apiRouter.get('/admin/users', (req, res) => {
     passwordResetRequested: u.passwordResetRequested,
     passwordResetRequestedAt: u.passwordResetRequestedAt,
     passwordResetNote: u.passwordResetNote,
+    ownedDlcIds: Array.from(new Set(['dlc-srd-5e-oficial', ...(u.ownedDlcIds || [])])),
+    ownedSkinIds: Array.from(new Set(['skin-app-default', 'skin-player-default', 'skin-dm-default', ...(u.ownedSkinIds || [])])),
   }));
   res.json({ users });
 });
@@ -1443,6 +1879,7 @@ apiRouter.post('/rooms/create', (req, res) => {
     });
 
     const room = getOrCreateRoom(normCode);
+    explicitlyClosedRooms.delete(normCode);
     room.dmConnected = true;
     room.dmLastPing = Date.now();
     room.lastUpdated = Date.now();
@@ -1454,6 +1891,8 @@ apiRouter.post('/rooms/create', (req, res) => {
     });
   }
 });
+
+const explicitlyClosedRooms = new Map<string, number>();
 
 // Validate if a room name / code is available across DMs
 apiRouter.post('/rooms/validate-name', (req, res) => {
@@ -1508,6 +1947,8 @@ apiRouter.post('/rooms/verify', (req, res) => {
     }
   }
 
+  explicitlyClosedRooms.delete(normCode);
+
   res.json({
     valid: true,
     room: {
@@ -1526,25 +1967,48 @@ apiRouter.post('/rooms/close', (req, res) => {
   }
 
   const normCode = roomCode.trim().toUpperCase();
+  explicitlyClosedRooms.set(normCode, Date.now());
   dataStore.closeRoom(normCode);
   if (rooms[normCode]) {
     delete rooms[normCode];
   }
 
-  res.json({ success: true, message: 'Mesa cerrada correctamente.' });
+  res.json({ success: true, explicitlyClosedByDm: true, message: 'Mesa cerrada correctamente.' });
 });
 
-// 2. Room State Sync (Get full room status with AFK Presence)
+// 2. Room State Sync (Get full room status with AFK Presence & Anti-Micro-Disconnection Re-hydration)
 apiRouter.get('/session/room/:roomCode', (req, res) => {
   const normCode = req.params.roomCode.trim().toUpperCase();
-  const roomRecord = dataStore.getRoom(normCode);
+  let roomRecord = dataStore.getRoom(normCode);
   const inMemoryRoom = rooms[normCode];
+  const wasExplicitlyClosed = explicitlyClosedRooms.has(normCode);
+
+  // Auto-rehydrate from WorldSheet if not explicitly closed by DM (protects players during micro-disconnects or server hot-reloads)
+  if (!roomRecord && !wasExplicitlyClosed) {
+    const matchingWorld = dataStore
+      .getWorldSheets()
+      .find((w) => normalizeRoomIdentifier(w.roomCode || w.name) === normalizeRoomIdentifier(normCode));
+    if (matchingWorld) {
+      roomRecord = {
+        roomCode: normCode,
+        name: matchingWorld.name || normCode,
+        dmEmail: matchingWorld.ownerEmail || 'dm@weroll.app',
+        dmDisplayName: 'Dungeon Master',
+        password: matchingWorld.roomPassword,
+        worldSheetId: matchingWorld.id,
+        createdAt: Date.now(),
+        lastUpdated: Date.now(),
+      };
+      dataStore.setRoom(roomRecord);
+    }
+  }
 
   // If room does not exist in dataStore AND has no active DM in memory, return closed flag with 200 status
   if (!roomRecord && (!inMemoryRoom || !inMemoryRoom.dmConnected)) {
     return res.status(200).json({
       roomCode: normCode,
       closed: true,
+      explicitlyClosedByDm: wasExplicitlyClosed,
       error: 'La mesa no existe o ha sido cerrada por el Dungeon Master.',
     });
   }
@@ -1609,6 +2073,67 @@ apiRouter.get('/session/room/:roomCode', (req, res) => {
     pendingOffers: (room.pendingOffers || []).slice(-30),
     playerMessages: (room.playerMessages || []).slice(0, 100),
   });
+});
+
+// 2-batch. Flush Offline Event Queue (Replays rolls, HP/gold changes, and messages buffered during micro-disconnects)
+apiRouter.post('/session/room/:roomCode/batch-events', (req, res) => {
+  const normCode = req.params.roomCode.trim().toUpperCase();
+  const room = getOrCreateRoom(normCode);
+  const events = Array.isArray(req.body?.events) ? req.body.events : [];
+  const processedIds: string[] = [];
+
+  for (const ev of events) {
+    if (!ev || !ev.id) continue;
+    try {
+      if (ev.type === 'ROLL' && ev.payload?.roll) {
+        const rollEntry = {
+          ...ev.payload.roll,
+          id: ev.payload.roll.id || `roll-${ev.id}`,
+          timestamp: ev.payload.roll.timestamp || ev.createdAt || Date.now(),
+        };
+        if (!room.rollFeed.some((r) => r.id === rollEntry.id)) {
+          room.rollFeed.push(rollEntry);
+          if (room.rollFeed.length > 60) room.rollFeed.shift();
+        }
+      } else if (ev.type === 'HP_ADJUST' && ev.characterId && ev.payload) {
+        const member = room.party[ev.characterId];
+        if (member) {
+          if (typeof ev.payload.currentHp === 'number') member.currentHp = ev.payload.currentHp;
+          if (typeof ev.payload.maxHp === 'number') member.maxHp = ev.payload.maxHp;
+          member.lastPing = Date.now();
+        }
+      } else if (ev.type === 'GOLD_ADJUST' && ev.characterId && ev.payload) {
+        const member = room.party[ev.characterId];
+        if (member && typeof ev.payload.gold === 'number') {
+          member.lastPing = Date.now();
+        }
+      } else if (ev.type === 'PLAYER_MESSAGE' && ev.payload?.text) {
+        const msgId = ev.payload.id || `msg-${ev.id}`;
+        if (!room.playerMessages.some((m) => m.id === msgId)) {
+          const built = buildPlayerMessageToDM({
+            roomCode: normCode,
+            characterId: ev.characterId || 'unknown',
+            characterName: ev.payload.characterName || 'Aventurero',
+            playerName: ev.payload.playerName || 'Jugador',
+            playerTagId: 'rol',
+            title: ev.payload.title || 'Mensaje de Jugador',
+            description: String(ev.payload.text),
+          });
+          room.playerMessages.unshift({
+            ...built,
+            id: msgId,
+          });
+        }
+      }
+      processedIds.push(String(ev.id));
+    } catch {
+      // Ignore individual malformed event and continue processing batch
+      processedIds.push(String(ev.id));
+    }
+  }
+
+  room.lastUpdated = Date.now();
+  res.json({ success: true, processedIds, count: processedIds.length });
 });
 
 // 2a-bis. DM Shares an Item, Spell, or Ability with a Player in the SAME Room (Creates Pending Offer)
