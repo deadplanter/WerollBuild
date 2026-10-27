@@ -798,3 +798,296 @@ test('deriveAllCharacterActions aggregates both weapon attacks and custom item a
   assert.equal(actions[1].isSpecialAction, true);
 });
 
+test('buildDeduplicatedPlayerSkillCards prevents duplicate SRD and custom skill cards and preserves descriptions/images', async () => {
+  const { buildDeduplicatedPlayerSkillCards } = await import('./dnd-math.ts');
+
+  const srdCatalog = [
+    { key: 'intimidation', nameEs: 'Intimidación', ability: 'cha' as const, description: 'Influir mediante amenazas.' },
+    { key: 'perception', nameEs: 'Percepción', ability: 'wis' as const, description: 'Detectar presencias.' },
+    { key: 'stealth', nameEs: 'Sigilo', ability: 'dex' as const, description: 'Ocultarse en las sombras.' },
+  ];
+
+  // Simulate the exact bug scenario: character has intimidation in character.skills AND in character.customSkills
+  const cards = buildDeduplicatedPlayerSkillCards(
+    {
+      level: 1, // profBonus = +2
+      abilities: {
+        str: { score: 10 },
+        dex: { score: 14 },
+        con: { score: 10 },
+        int: { score: 10 },
+        wis: { score: 12 },
+        cha: { score: 16 }, // +3
+      },
+      skills: {
+        intimidation: 'proficient',
+        perception: 'none',
+        stealth: 'none',
+      },
+      customSkills: [
+        {
+          id: 'cskill-intim-1',
+          srdKey: 'intimidation',
+          name: 'Intimidación',
+          ability: 'cha',
+          proficiency: 'proficient',
+          description: 'Mirada aterradora del Norte (+Descripción personalizada)',
+          imageUrl: 'data:image/webp;base64,AAA',
+        },
+        {
+          id: 'cskill-intim-dup',
+          name: 'intimidacion', // accent-insensitive duplicate
+          ability: 'cha',
+          proficiency: 'proficient',
+          description: 'Duplicado que debe filtrarse',
+        },
+        {
+          id: 'cskill-forge',
+          name: 'Herrería Rúnica',
+          ability: 'str',
+          proficiency: 'expertise',
+          description: 'Forjar runas antiguas en armas.',
+          imageUrl: 'data:image/webp;base64,BBB',
+        },
+      ],
+    },
+    srdCatalog
+  );
+
+  // Should contain exactly 2 cards: Intimidación (1 time!) and Herrería Rúnica (1 time!)
+  assert.equal(cards.length, 2);
+  assert.equal(cards[0].name, 'Intimidación');
+  assert.equal(cards[0].totalBonus, 5); // CHA +3 + Prof +2
+  assert.equal(cards[0].description, 'Mirada aterradora del Norte (+Descripción personalizada)');
+  assert.equal(cards[0].imageUrl, 'data:image/webp;base64,AAA');
+
+  assert.equal(cards[1].name, 'Herrería Rúnica');
+  assert.equal(cards[1].totalBonus, 4); // STR +0 + Expertise +4
+  assert.equal(cards[1].description, 'Forjar runas antiguas en armas.');
+  assert.equal(cards[1].imageUrl, 'data:image/webp;base64,BBB');
+});
+
+test('canAccessArcaneOracle and getHeaderRoleButtonsVisibility enforce strict role hierarchy', async () => {
+  const { canAccessArcaneOracle, getHeaderRoleButtonsVisibility, clampPortraitGallery } = await import('./dnd-math.ts');
+
+  // Sabio Arcano access: false for clients/players/DMs, true for moderator/creator/admin
+  assert.equal(canAccessArcaneOracle('client', 'player'), false);
+  assert.equal(canAccessArcaneOracle('client', 'dm'), false);
+  assert.equal(canAccessArcaneOracle(undefined, 'both'), false);
+  assert.equal(canAccessArcaneOracle('moderator', 'both'), true);
+  assert.equal(canAccessArcaneOracle('creator', 'dm'), true);
+  assert.equal(canAccessArcaneOracle('admin', 'admin'), true);
+
+  // Header Role Buttons
+  const clientVis = getHeaderRoleButtonsVisibility('client', 'player');
+  assert.equal(clientVis.showAdminPanel, false);
+  assert.equal(clientVis.showCreatorPanel, false);
+  assert.equal(clientVis.showModerationPanel, false);
+  assert.equal(clientVis.showClientFeedbackOnly, true);
+
+  const modVis = getHeaderRoleButtonsVisibility('moderator', 'moderator');
+  assert.equal(modVis.showAdminPanel, false);
+  assert.equal(modVis.showCreatorPanel, false);
+  assert.equal(modVis.showModerationPanel, true);
+  assert.equal(modVis.showClientFeedbackOnly, false);
+
+  const creatorVis = getHeaderRoleButtonsVisibility('creator', 'creator');
+  assert.equal(creatorVis.showAdminPanel, false);
+  assert.equal(creatorVis.showCreatorPanel, true);
+  assert.equal(creatorVis.showModerationPanel, true);
+  assert.equal(creatorVis.showClientFeedbackOnly, false);
+
+  const adminVis = getHeaderRoleButtonsVisibility('admin', 'admin');
+  assert.equal(adminVis.showAdminPanel, true);
+  assert.equal(adminVis.showCreatorPanel, true);
+  assert.equal(adminVis.showModerationPanel, true);
+  assert.equal(adminVis.showClientFeedbackOnly, false);
+
+  // Portrait Gallery clamped to max 4 unique images
+  const clamped = clampPortraitGallery(['img1', 'img2', 'img1', 'img3', 'img4', 'img5']);
+  assert.deepEqual(clamped, ['img1', 'img2', 'img3', 'img4']);
+});
+
+test('evaluateRoomClosureResilience protects players from premature lobby kick during micro-disconnections', async () => {
+  const { evaluateRoomClosureResilience } = await import('./offlineEventQueue.ts');
+
+  // 1. Transient network error (status 0 / 502) never increments closed count and keeps player in table
+  const netErr = evaluateRoomClosureResilience({
+    httpStatus: 0,
+    explicitlyClosedByDm: false,
+    previousConsecutiveClosedCount: 0,
+  });
+  assert.equal(netErr.shouldKickToLobby, false);
+  assert.equal(netErr.isReconnecting, true);
+
+  // 2. Single 404 without explicit DM closure does NOT kick immediately (requires 3 consecutive checks)
+  const first404 = evaluateRoomClosureResilience({
+    httpStatus: 404,
+    explicitlyClosedByDm: false,
+    previousConsecutiveClosedCount: 0,
+  });
+  assert.equal(first404.shouldKickToLobby, false);
+  assert.equal(first404.nextConsecutiveClosedCount, 1);
+
+  const second404 = evaluateRoomClosureResilience({
+    httpStatus: 404,
+    explicitlyClosedByDm: false,
+    previousConsecutiveClosedCount: 1,
+  });
+  assert.equal(second404.shouldKickToLobby, false);
+  assert.equal(second404.nextConsecutiveClosedCount, 2);
+
+  const third404 = evaluateRoomClosureResilience({
+    httpStatus: 404,
+    explicitlyClosedByDm: false,
+    previousConsecutiveClosedCount: 2,
+  });
+  assert.equal(third404.shouldKickToLobby, true);
+  assert.equal(third404.nextConsecutiveClosedCount, 3);
+
+  // 3. Explicit DM closure (explicitlyClosedByDm: true) kicks immediately
+  const dmClosed = evaluateRoomClosureResilience({
+    httpStatus: 404,
+    explicitlyClosedByDm: true,
+    previousConsecutiveClosedCount: 0,
+  });
+  assert.equal(dmClosed.shouldKickToLobby, true);
+});
+
+test('deriveEquippedWeaponAttacks and deriveAllCharacterActions resolve per-attack and per-action custom imageUrl with item fallback', async () => {
+  const { deriveAllCharacterActions, formatCompactRollDieBadge } = await import('./dnd-math.ts');
+
+  const inventory = [
+    {
+      id: 'sword-1',
+      name: 'Hoja Gemela',
+      category: 'Arma',
+      equipped: true,
+      imageUrl: 'https://example.com/sword-default.png',
+      weaponAttacks: [
+        {
+          id: 'atk-slash',
+          name: 'Tajo Relámpago',
+          description: 'Corte veloz',
+          dice: '1d8',
+          bonus: 1,
+          damageType: 'Cortante',
+          imageUrl: 'https://example.com/slash-attack.png',
+        },
+        {
+          id: 'atk-thrust',
+          name: 'Estocada Profunda',
+          description: 'Usa la imagen base del arma si no tiene propia',
+          dice: '1d8',
+          bonus: 1,
+          damageType: 'Perforante',
+        },
+      ],
+      itemActions: [
+        {
+          id: 'act-parry',
+          name: 'Postura Defensiva',
+          actionType: 'Reacción' as const,
+          description: '+2 CA contra un ataque',
+          imageUrl: 'https://example.com/parry-action.png',
+        },
+        {
+          id: 'act-glow',
+          name: 'Luz de Guardia',
+          actionType: 'Acción Adicional' as const,
+          description: 'Emite luz en 20 pies',
+        },
+      ],
+    },
+  ];
+
+  const mockChar: any = {
+    id: 'c-1',
+    name: 'Valerius',
+    stats: { str: 16, dex: 14, con: 14, int: 10, wis: 12, cha: 10 },
+    proficiencyBonus: 2,
+    inventory,
+    spells: [],
+  };
+
+  const actions = deriveAllCharacterActions(mockChar);
+  const slash = actions.find((a) => a.actionName === 'Tajo Relámpago');
+  const thrust = actions.find((a) => a.actionName === 'Estocada Profunda');
+  const parry = actions.find((a) => a.actionName === 'Postura Defensiva');
+  const glow = actions.find((a) => a.actionName === 'Luz de Guardia');
+
+  assert.equal(slash?.imageUrl, 'https://example.com/slash-attack.png');
+  assert.equal(thrust?.imageUrl, 'https://example.com/sword-default.png');
+  assert.equal(parry?.imageUrl, 'https://example.com/parry-action.png');
+  assert.equal(glow?.imageUrl, 'https://example.com/sword-default.png');
+
+  // Verify formatCompactRollDieBadge
+  const badge2d4 = formatCompactRollDieBadge({
+    total: 6,
+    formula: '2d4+1',
+    diceType: 4,
+  });
+  assert.deepEqual(badge2d4, {
+    displayValue: 6,
+    diceLabel: '2d4',
+    sides: 4,
+    isCritSuccess: false,
+    isCritFail: false,
+  });
+
+  const badgeD20 = formatCompactRollDieBadge({
+    total: 24,
+    formula: '1d20+4',
+    isCritSuccess: true,
+  });
+  assert.deepEqual(badgeD20, {
+    displayValue: 24,
+    diceLabel: '1d20',
+    sides: 20,
+    isCritSuccess: true,
+    isCritFail: false,
+  });
+});
+
+test('resolveTarotCardAbilityScores returns total ability scores (e.g. 18 Fuerza for Valeros del Alba) for both Character5e and PartyMemberLive', async () => {
+  const { resolveTarotCardAbilityScores } = await import('./dnd-math.ts');
+
+  const valerosChar = {
+    abilities: {
+      str: { score: 18, baseScore: 16, extraScore: 0, itemScore: 2 },
+      dex: { score: 12, baseScore: 12, extraScore: 0 },
+      con: { score: 14, baseScore: 14, extraScore: 0 },
+      int: { score: 10, baseScore: 10, extraScore: 0 },
+      wis: { score: 13, baseScore: 12, extraScore: 1 },
+      cha: { score: 10, baseScore: 10, extraScore: 0 },
+    },
+    inventory: [
+      {
+        id: 'inv-1',
+        name: 'Armadura de Cuero Ligera',
+        equipped: true,
+        statModifiers: [{ id: 'm1', stat: 'dex', value: 1 }],
+      },
+    ],
+  };
+
+  const resolvedFromChar = resolveTarotCardAbilityScores(valerosChar, null);
+  assert.equal(resolvedFromChar.str.totalScore, 18);
+  assert.equal(resolvedFromChar.str.modifier, 4);
+  assert.equal(resolvedFromChar.dex.totalScore, 13);
+  assert.equal(resolvedFromChar.con.totalScore, 14);
+  assert.equal(resolvedFromChar.int.totalScore, 10);
+  assert.equal(resolvedFromChar.wis.totalScore, 13);
+  assert.equal(resolvedFromChar.cha.totalScore, 10);
+
+  const resolvedFromMember = resolveTarotCardAbilityScores(null, {
+    abilities: { str: 18, dex: 13, con: 14, int: 10, wis: 13, cha: 10 },
+  });
+  assert.equal(resolvedFromMember.str.totalScore, 18);
+  assert.equal(resolvedFromMember.dex.totalScore, 13);
+});
+
+
+
+
+

@@ -55,6 +55,10 @@ export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
   const [regPassword, setRegPassword] = useState<string>('');
   const [regRole, setRegRole] = useState<'player' | 'dm' | 'both'>('player');
   const [regAppRole, setRegAppRole] = useState<AppRole>('client');
+  const [regOtpCode, setRegOtpCode] = useState<string>('');
+  const [otpSentPreview, setOtpSentPreview] = useState<string>('');
+  const [otpVerified, setOtpVerified] = useState<boolean>(false);
+  const [otpSending, setOtpSending] = useState<boolean>(false);
 
   // Forgot password form state
   const [forgotEmail, setForgotEmail] = useState<string>('');
@@ -68,6 +72,65 @@ export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [pendingNotice, setPendingNotice] = useState<string>('');
   const [rejectedNotice, setRejectedNotice] = useState<{ message: string; customMessage?: string } | null>(null);
+
+  const handleSendOtpCode = async () => {
+    setErrorMessage('');
+    if (!regEmail.trim() || !regEmail.includes('@')) {
+      setErrorMessage('Ingresa un correo electrónico válido antes de solicitar el código OTP.');
+      return;
+    }
+    setOtpSending(true);
+    try {
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: regEmail.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMessage(data.error || 'No se pudo generar el código OTP.');
+      } else if (data.alreadyVerified) {
+        setOtpVerified(true);
+        setOtpSentPreview('');
+      } else {
+        setOtpVerified(false);
+        if (data.otpPreviewCode) {
+          setOtpSentPreview(String(data.otpPreviewCode));
+          setRegOtpCode(String(data.otpPreviewCode));
+        }
+      }
+    } catch {
+      setErrorMessage('Error de conexión al enviar el código OTP.');
+    } finally {
+      setOtpSending(false);
+    }
+  };
+
+  const handleVerifyOtpCode = async () => {
+    setErrorMessage('');
+    if (!regEmail.trim() || !regOtpCode.trim()) {
+      setErrorMessage('Ingresa el código OTP de 6 dígitos.');
+      return;
+    }
+    setOtpSending(true);
+    try {
+      const res = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: regEmail.trim(), code: regOtpCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMessage(data.error || 'Código OTP inválido.');
+      } else {
+        setOtpVerified(true);
+      }
+    } catch {
+      setErrorMessage('Error al verificar el código OTP.');
+    } finally {
+      setOtpSending(false);
+    }
+  };
 
   const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -188,6 +251,7 @@ export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
           requestedRole: regRole,
           playerType: regRole,
           appRole: regAppRole,
+          otpCode: regOtpCode.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -197,7 +261,7 @@ export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
       }
 
       setPendingNotice(
-        '¡Solicitud enviada con éxito! Tu cuenta está en estado PENDIENTE. El Administrador debe aprobarla antes de que puedas acceder a las mesas.'
+        '¡Solicitud enviada con éxito! Tu cuenta ha sido validada con OTP y está en estado PENDIENTE de aprobación por el Administrador.'
       );
       setAuthMode('login');
       setLoginEmail(regEmail);
@@ -370,19 +434,74 @@ export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
         {/* =================================================================== */}
         {authMode === 'register' && (
           <form onSubmit={handleRegisterSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-cinzel font-bold uppercase text-stone-400 mb-1">
-                Correo Electrónico
+            <div className="space-y-2">
+              <label className="block text-xs font-cinzel font-bold uppercase text-stone-400">
+                Correo Electrónico (Validación OTP para cuentas nuevas)
               </label>
-              <input
-                type="email"
-                value={regEmail}
-                onChange={(e) => setRegEmail(e.target.value)}
-                placeholder="tu@correo.com"
-                autoFocus
-                required
-                className="w-full bg-[#121316] border border-stone-700 focus:border-amber-500 rounded-xl px-3.5 py-2.5 text-stone-100 text-sm outline-none transition"
-              />
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="email"
+                  value={regEmail}
+                  onChange={(e) => {
+                    setRegEmail(e.target.value);
+                    setOtpVerified(false);
+                  }}
+                  placeholder="tu@correo.com"
+                  autoFocus
+                  required
+                  className="flex-1 bg-[#121316] border border-stone-700 focus:border-amber-500 rounded-xl px-3.5 py-2.5 text-stone-100 text-sm outline-none transition"
+                />
+                <button
+                  type="button"
+                  onClick={handleSendOtpCode}
+                  disabled={otpSending || !regEmail.trim()}
+                  className="px-3.5 py-2.5 rounded-xl bg-amber-950/80 hover:bg-amber-900 border border-amber-600/60 text-amber-200 font-cinzel font-bold text-xs transition shrink-0 disabled:opacity-50"
+                >
+                  {otpSending ? 'Enviando...' : otpSentPreview ? 'Reenviar OTP' : 'Enviar Código OTP'}
+                </button>
+              </div>
+
+              {(otpSentPreview || otpVerified || regOtpCode) && (
+                <div className="p-3 rounded-xl bg-[#121316] border border-amber-700/60 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-cinzel font-bold text-amber-300">
+                      Código OTP de 6 dígitos
+                    </span>
+                    {otpVerified ? (
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 text-[10px] font-bold flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Correo Verificado
+                      </span>
+                    ) : otpSentPreview ? (
+                      <span className="px-2 py-0.5 rounded-md bg-amber-950/80 border border-amber-600/50 text-amber-300 text-[10px] font-mono">
+                        Código enviado: <strong>{otpSentPreview}</strong>
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      maxLength={6}
+                      value={regOtpCode}
+                      onChange={(e) => setRegOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="123456"
+                      className="flex-1 bg-[#181920] border border-stone-700 focus:border-amber-400 rounded-lg px-3 py-1.5 text-amber-200 font-mono font-bold tracking-widest text-sm outline-none"
+                    />
+                    {!otpVerified && (
+                      <button
+                        type="button"
+                        onClick={handleVerifyOtpCode}
+                        disabled={otpSending || regOtpCode.length < 6}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-cinzel font-bold text-xs transition disabled:opacity-50"
+                      >
+                        Verificar OTP
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+              <p className="text-[10px] text-stone-500">
+                Las cuentas ya registradas anteriormente están verificadas y no requieren código OTP para iniciar sesión.
+              </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

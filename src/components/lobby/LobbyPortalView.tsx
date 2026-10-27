@@ -68,6 +68,7 @@ import {
   PlayerType,
   AppRole,
   LiveBroadcastPopup,
+  AppSkinRecord,
 } from '../../types/dnd';
 import { AuthSessionUser } from '../auth/RoleSelectionModal';
 import { SAMPLE_CHARACTER, SAMPLE_DM_WORKSPACE } from '../../data/srd';
@@ -82,7 +83,13 @@ import { CharacterTarotCard } from '../character/CharacterTarotCard';
 import { ForumView } from '../forum/ForumView';
 import { FriendDirectChatModal, FRIEND_CHAT_BROADCAST_CHANNEL } from '../friends/FriendDirectChatModal';
 import { ModeratorPanelModal } from '../admin/ModeratorPanelModal';
+import { CreatorStudioPanel } from '../creator/CreatorStudioPanel';
 import { UserSecurityModal } from '../auth/UserSecurityModal';
+import {
+  computeLobbyBlockContainerStyle,
+  computeLobbyInnerButtonStyle,
+  resolveLobbyPageLayout,
+} from '../../utils/lobbyPageLayout';
 
 interface LobbyPortalViewProps {
   authUser: AuthSessionUser | null;
@@ -117,6 +124,8 @@ interface LobbyPortalViewProps {
   onBroadcastLivePopup?: (popup: LiveBroadcastPopup) => void;
   localCharacters?: Character5e[];
   vaultSyncRevision?: number;
+  onlineAppSkin?: AppSkinRecord | null;
+  onCreatorCatalogUpdated?: (catalog: any) => void;
 }
 
 export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
@@ -152,6 +161,8 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   onBroadcastLivePopup,
   localCharacters = [],
   vaultSyncRevision = 0,
+  onlineAppSkin = null,
+  onCreatorCatalogUpdated,
 }) => {
   // Roles architecture: Player Type vs Application Role (admin > creator > moderator > client)
   const userAppRole: AppRole =
@@ -166,6 +177,9 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   const userPlayerType: PlayerType =
     authUser?.playerType ||
     (authUser?.role === 'dm' ? 'dm' : authUser?.role === 'player' ? 'player' : 'both');
+
+  const hasCustomLobbyLayout = Boolean(onlineAppSkin?.themeTokens?.lobbyPageLayout);
+  const liveLobbyLayout = resolveLobbyPageLayout(onlineAppSkin?.themeTokens);
 
   const isAdmin = userAppRole === 'admin' || authUser?.role === 'admin';
   const isCreatorRole = (userAppRole === 'creator' || authUser?.role === 'creator') && !isAdmin;
@@ -2065,6 +2079,11 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
 
     return (
       <div
+        style={
+          hasCustomLobbyLayout
+            ? computeLobbyBlockContainerStyle(liveLobbyLayout.blocks.admin_greeting)
+            : undefined
+        }
         className={`w-full rounded-2xl p-4.5 border shadow-xl flex items-start justify-between gap-4 animate-in fade-in transition ${
           isMaintenance
             ? 'bg-gradient-to-r from-amber-950/90 via-stone-900 to-amber-950/90 border-amber-500/80 text-amber-200'
@@ -2287,6 +2306,11 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       {/* =================================================================== */}
       <div
         data-testid="lobby-welcome-banner"
+        style={
+          hasCustomLobbyLayout
+            ? computeLobbyBlockContainerStyle(liveLobbyLayout.blocks.welcome_banner)
+            : undefined
+        }
         className="relative bg-gradient-to-r from-[#131520] via-[#191c2a] to-[#131520] border-2 border-[#c8a45c]/75 rounded-2xl px-4 sm:px-6 py-3.5 shadow-[0_0_30px_rgba(0,0,0,0.85)] flex flex-col xl:flex-row items-center justify-between gap-4 overflow-hidden"
       >
         {/* Subtle top/bottom gold accent lines */}
@@ -2312,7 +2336,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
               />
             ) : (
               <span className="font-cinzel font-black text-base sm:text-lg text-[#f5e4be]">
-                {authUser.displayName.slice(0, 2).toUpperCase()}
+                {(authUser.displayName || (authUser as any).username || 'AV').slice(0, 2).toUpperCase()}
               </span>
             )}
           </button>
@@ -2320,10 +2344,10 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           <div className="min-w-0">
             <div className="flex items-baseline gap-2 flex-wrap">
               <span className="font-cinzel font-bold text-base sm:text-xl text-[#f5e4be] tracking-wide">
-                Bienvenido, <strong className="text-white font-black">{authUser.displayName}</strong>
+                Bienvenido, <strong className="text-white font-black">{authUser.displayName || (authUser as any).username || 'Aventurero'}</strong>
               </span>
               <span className="font-mono font-bold text-xs sm:text-sm text-[#e2c275]">
-                #{authUser.userTagId || '123'}
+                #{authUser.userTagId || (authUser as any).discriminator || '123'}
               </span>
             </div>
             <p className="text-xs text-stone-400 font-mono truncate">
@@ -2383,6 +2407,13 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           <button
             type="button"
             data-testid="btn-lobby-security"
+            style={
+              hasCustomLobbyLayout
+                ? computeLobbyInnerButtonStyle(
+                    liveLobbyLayout.blocks.welcome_banner?.innerButtonsConfig?.security
+                  )
+                : undefined
+            }
             onClick={() => {
               if (onOpenSecurityModal) onOpenSecurityModal();
               else setIsSecurityModalOpen(true);
@@ -2391,10 +2422,13 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
             className="px-3.5 py-2 rounded-xl bg-[#1f1b16] hover:bg-[#2b251d] border border-[#c8a45c]/70 text-[#f5e4be] transition shadow flex items-center gap-1.5 text-xs font-cinzel font-bold uppercase cursor-pointer"
           >
             <Wrench className="w-3.5 h-3.5 text-[#e2c275]" />
-            <span>Seguridad</span>
+            <span>
+              {liveLobbyLayout.blocks.welcome_banner?.innerButtonsConfig?.security?.label ||
+                'Seguridad'}
+            </span>
           </button>
 
-          {/* Button: Panel Admin (Full Page) */}
+          {/* Button: Panel Admin (Full Page - Solo Admin) */}
           {isAdmin && (
             <button
               type="button"
@@ -2414,21 +2448,41 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
             </button>
           )}
 
-          {/* Button: Moderación (Full Page - incluye Estudio de Creador si el usuario es Creador o Admin) */}
+          {/* Button: Panel de Creador de Contenido (Full Page Separado - Creador y Admin) */}
+          {isCreatorOrAbove && (
+            <button
+              type="button"
+              data-testid="btn-lobby-creator-page"
+              onClick={() =>
+                setLobbyPage(currentLobbyPage === 'creator' ? 'portal' : 'creator')
+              }
+              title="Abrir Panel de Creador de Contenido (DLCs y Skins)"
+              className={`px-3.5 py-2 rounded-xl border transition shadow flex items-center gap-1.5 text-xs font-cinzel font-bold uppercase cursor-pointer ${
+                currentLobbyPage === 'creator'
+                  ? 'bg-amber-600 border-amber-300 text-stone-950 ring-2 ring-amber-400/50'
+                  : 'bg-[#2a1f10] hover:bg-[#3a2b16] border-amber-500/70 text-amber-200'
+              }`}
+            >
+              <Palette className="w-3.5 h-3.5 text-amber-300" />
+              <span>Creador de Contenido</span>
+            </button>
+          )}
+
+          {/* Button: Moderación (Full Page Separado - Moderador, Creador y Admin) */}
           {isModerator && (
             <button
               type="button"
               data-testid="btn-lobby-moderator-page"
               onClick={() =>
                 setLobbyPage(
-                  currentLobbyPage === 'moderator' || currentLobbyPage === 'creator'
+                  currentLobbyPage === 'moderator'
                     ? 'portal'
                     : 'moderator'
                 )
               }
               title="Abrir Página de Moderación"
               className={`px-3.5 py-2 rounded-xl border transition shadow flex items-center gap-1.5 text-xs font-cinzel font-bold uppercase cursor-pointer ${
-                currentLobbyPage === 'moderator' || currentLobbyPage === 'creator'
+                currentLobbyPage === 'moderator'
                   ? 'bg-purple-700 border-purple-300 text-white ring-2 ring-purple-400/50'
                   : 'bg-[#241634] hover:bg-[#311d47] border-purple-500/70 text-purple-200'
               }`}
@@ -2442,6 +2496,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           {!isModerator && (
             <button
               type="button"
+              data-testid="btn-lobby-feedback"
               onClick={() => {
                 if (onOpenFeedback) onOpenFeedback();
               }}
@@ -2466,9 +2521,37 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       </div>
 
       {/* =================================================================== */}
-      {/* DEDICATED FULL PAGE: MODERACIÓN (Y ESTUDIO DE CREADOR SI APLICA)    */}
+      {/* DEDICATED FULL PAGE: PANEL DE CREADOR DE CONTENIDO (DLCs & SKINS)   */}
       {/* =================================================================== */}
-      {(currentLobbyPage === 'moderator' || currentLobbyPage === 'creator') && isModerator && (
+      {currentLobbyPage === 'creator' && isCreatorOrAbove && (
+        <div className="space-y-3 animate-in fade-in">
+          <div className="flex items-center justify-between bg-[#141622] border border-amber-500/40 rounded-2xl px-4 py-2.5">
+            <span className="text-xs font-cinzel font-bold text-amber-300 flex items-center gap-2">
+              <Palette className="w-4 h-4 text-amber-400" />
+              <span>Estudio de Creación de Contenido Independiente</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setLobbyPage('portal')}
+              className="px-3.5 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-600 text-stone-200 text-xs font-cinzel font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Volver al Lobby</span>
+            </button>
+          </div>
+          <CreatorStudioPanel
+            currentUserEmail={authUser.email}
+            currentUserName={authUser.displayName}
+            currentUserRole={userAppRole}
+            onCatalogUpdated={onCreatorCatalogUpdated}
+          />
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* DEDICATED FULL PAGE: MODERACIÓN                                     */}
+      {/* =================================================================== */}
+      {currentLobbyPage === 'moderator' && isModerator && (
         <ModeratorPanelModal
           isOpen={true}
           asPage={true}
@@ -2489,7 +2572,15 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
         {/* Left Column (col-span-12 lg:col-span-5 xl:col-span-4 2xl:col-span-4 space-y-6) */}
         <div className="lg:col-span-5 xl:col-span-4 2xl:col-span-4 space-y-6">
           {/* Card 1: Fichas de Jugador / World Sheets */}
-          <div className="bg-[#14151b] border border-amber-900/60 rounded-3xl p-5 shadow-xl space-y-4">
+          <div
+            data-testid="lobby-characters-container"
+            style={
+              hasCustomLobbyLayout
+                ? computeLobbyBlockContainerStyle(liveLobbyLayout.blocks.characters_box)
+                : undefined
+            }
+            className={`${onlineAppSkin?.themeTokens?.charactersSectionBg || 'bg-[#14151b]'} border ${onlineAppSkin?.themeTokens?.charactersSectionBorder || 'border-amber-900/60'} rounded-3xl p-5 shadow-xl space-y-4 transition-colors`}
+          >
             {/* Dual Role Selector: Personajes vs World Sheets */}
             {canPlay && canDm && (
               <div className="flex items-center gap-1.5 p-1 bg-[#101116] border border-stone-800 rounded-2xl mb-2">
@@ -2990,7 +3081,15 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           </div>
 
           {/* Single Unified Amigos Card */}
-          <div className="bg-[#14151b] border border-emerald-900/60 rounded-3xl p-5 shadow-xl space-y-4">
+          <div
+            data-testid="lobby-friends-container"
+            style={
+              hasCustomLobbyLayout
+                ? computeLobbyBlockContainerStyle(liveLobbyLayout.blocks.friends_box)
+                : undefined
+            }
+            className={`${onlineAppSkin?.themeTokens?.friendsSectionBg || 'bg-[#14151b]'} border ${onlineAppSkin?.themeTokens?.friendsSectionBorder || 'border-emerald-900/60'} rounded-3xl p-5 shadow-xl space-y-4 transition-colors`}
+          >
             {/* Panel Header */}
             <div className="flex items-center justify-between border-b border-stone-800/80 pb-3">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -3106,7 +3205,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            reqUser.displayName.slice(0, 2).toUpperCase()
+                            (reqUser.displayName || (reqUser as any).username || 'AM').slice(0, 2).toUpperCase()
                           )}
                         </div>
                         <div className="min-w-0">
@@ -3219,7 +3318,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                                   className="w-full h-full object-cover"
                                 />
                               ) : (
-                                friend.displayName.slice(0, 2).toUpperCase()
+                                (friend.displayName || (friend as any).username || 'AM').slice(0, 2).toUpperCase()
                               )}
                             </div>
                             <span
@@ -3318,7 +3417,19 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       </div>
 
         {/* Right Column: COMPACT OFFICIAL ADMIN NOTICE + FORUM (2/3 of the screen width) */}
-        <div className="lg:col-span-7 xl:col-span-8 2xl:col-span-8 min-w-0 space-y-4">
+        <div
+          data-testid="lobby-forum-container"
+          style={
+            hasCustomLobbyLayout
+              ? computeLobbyBlockContainerStyle(liveLobbyLayout.blocks.forum_box)
+              : undefined
+          }
+          className={`lg:col-span-7 xl:col-span-8 2xl:col-span-8 min-w-0 space-y-4 ${
+            onlineAppSkin?.themeTokens?.forumCardBg
+              ? `${onlineAppSkin.themeTokens.forumCardBg} border ${onlineAppSkin.themeTokens.forumBorderColor || 'border-stone-800'} rounded-3xl p-3`
+              : ''
+          }`}
+        >
           {renderAdminGreetingBanner()}
 
           <ForumView
@@ -3611,7 +3722,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                       Página de Administración WeRoll
                     </h3>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 border border-blue-700/60 text-blue-300 font-bold">
-                      v1.1 Beta
+                      v1.4 Beta
                     </span>
                   </div>
                   <p className="text-xs text-stone-400">
@@ -6402,6 +6513,51 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
                     </div>
                     <p className="text-xs text-stone-300 leading-relaxed">
                       <strong>¿Cómo funciona?</strong> El navegador guarda las fichas, mundos y recursos en `IndexedDB` (`weroll_indexed_vault_v1`). Al abrir la app, carga instantáneamente desde la caché local y compara su `vaultRevision` con el servidor. Además, todos los archivos se mantienen dentro de rutas relativas estándar y en el JSON Maestro universal, por lo que pueden pasar el código a <strong>GitHub</strong> y abrirlo o desplegarlo desde <strong>cualquier otra cuenta de AI Studio</strong> del equipo sin errores de rutas ni dependencias externas.
+                    </p>
+                  </div>
+
+                  {/* Pilar 5: Cola de Eventos Local Anti-Microdesconexiones */}
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-amber-600/50 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-cinzel font-bold text-xs text-amber-300">
+                        🛡️ E. Cola de Eventos Local & Escudo Anti-Microdesconexiones
+                      </span>
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-700/60">
+                        {architectureStatus?.offlineEventQueueEngine?.batchEndpoint || 'POST /batch-events'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-300 leading-relaxed">
+                      <strong>¿Cómo funciona?</strong> Si un jugador sufre una microdesconexión durante la sesión, las tiradas de dados, cambios de vida (`HP_ADJUST`), oro (`GOLD_ADJUST`) y mensajes se almacenan en la cola local persistente (`weroll_local_event_queue_v1`) y se reenvían en lote apenas vuelve la red. Además, <strong>jamás regresa al jugador al Lobby por un fallo de red transitorio</strong> a menos que el DM haya cerrado explícitamente la mesa (`explicitlyClosedByDm`).
+                    </p>
+                  </div>
+
+                  {/* Pilar 6: Seguridad OTP para Cuentas Nuevas */}
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-emerald-600/50 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-cinzel font-bold text-xs text-emerald-300">
+                        🔐 F. Validación de Correo por Código OTP (Exención de Cuentas Registradas)
+                      </span>
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60">
+                        {architectureStatus?.otpSecurity?.existingVerifiedAccountsCount ?? adminUsers.length} cuentas exentas
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-300 leading-relaxed">
+                      <strong>¿Cómo funciona?</strong> Las cuentas nuevas pueden validar su correo con un código OTP de 6 dígitos (`POST /api/auth/send-otp` y `/verify-otp`). Todas las cuentas ya registradas anteriormente ({architectureStatus?.otpSecurity?.existingVerifiedAccountsCount ?? adminUsers.length} cuentas) están marcadas como verificadas y <strong>no requieren OTP</strong> para iniciar sesión.
+                    </p>
+                  </div>
+
+                  {/* Pilar 7: Las 3 Skins Online Activas & Motor Anti-Flicker */}
+                  <div className="p-4 rounded-2xl bg-[#121318] border border-cyan-600/50 space-y-2 md:col-span-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="font-cinzel font-bold text-xs text-cyan-300">
+                        🎨 G. Las 3 Skins Online Activas (Lobby, Jugador y DM) & Motor Anti-Flicker
+                      </span>
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-700/60">
+                        Ventana Optimista: {architectureStatus?.antiFlickerEngine?.optimisticMutationWindowMs ?? 3500} ms
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-300 leading-relaxed">
+                      <strong>Skins Online Activas:</strong> Lobby: <code>{architectureStatus?.onlineDefaultSkinsStatus?.activeOnlineLobbySkinId || 'skin-app-online-default'}</code> • Jugador: <code>{architectureStatus?.onlineDefaultSkinsStatus?.activeOnlinePlayerSkinId || 'skin-player-classic-gold'}</code> • DM: <code>{architectureStatus?.onlineDefaultSkinsStatus?.activeOnlineDmSkinId || 'skin-dm-obsidian-throne'}</code>. El motor Anti-Flicker protege los cambios de vida, oro y mapas durante 3.5s para eliminar cualquier parpadeo entre el valor anterior y el nuevo.
                     </p>
                   </div>
                 </div>

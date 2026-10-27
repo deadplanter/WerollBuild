@@ -317,6 +317,20 @@ export const SKILL_METADATA: Record<SkillKey, { nameEs: string; ability: Ability
   },
 };
 
+export const SKILLS_5E: Array<{
+  key: SkillKey;
+  nameEs: string;
+  ability: AbilityKey;
+  description: string;
+  dcExamples: string;
+}> = (Object.keys(SKILL_METADATA) as SkillKey[]).map((key) => ({
+  key,
+  nameEs: SKILL_METADATA[key].nameEs,
+  ability: SKILL_METADATA[key].ability,
+  description: SKILL_METADATA[key].description,
+  dcExamples: SKILL_METADATA[key].dcExamples,
+}));
+
 export const ABILITY_LABELS: Record<AbilityKey, { nameEs: string; abbr: string }> = {
   str: { nameEs: 'Fuerza', abbr: 'FUE' },
   dex: { nameEs: 'Destreza', abbr: 'DES' },
@@ -609,7 +623,7 @@ export const SAMPLE_CHARACTER: Character5e = {
   deathSaves: { successes: 0, failures: 0 },
   inspiration: true,
   abilities: {
-    str: { score: 16, baseScore: 15, extraScore: 1, proficientSave: true },
+    str: { score: 18, baseScore: 16, extraScore: 0, itemScore: 2, proficientSave: true },
     dex: { score: 13, baseScore: 12, extraScore: 0, proficientSave: false },
     con: { score: 14, baseScore: 14, extraScore: 0, proficientSave: true },
     int: { score: 10, baseScore: 10, extraScore: 0, proficientSave: false },

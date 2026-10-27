@@ -395,6 +395,7 @@ export interface DerivedEquippedAttack {
   attackBonus: number;
   toHitBonus: number;
   range?: string;
+  imageUrl?: string;
 }
 
 export function deriveEquippedWeaponAttacks(
@@ -405,6 +406,7 @@ export function deriveEquippedWeaponAttacks(
     category?: string;
     equipped?: boolean;
     description?: string;
+    imageUrl?: string;
     weaponAttacks?: {
       id: string;
       name: string;
@@ -416,6 +418,7 @@ export function deriveEquippedWeaponAttacks(
       damageType: string;
       attackType?: 'melee' | 'ranged' | 'spell';
       range?: string;
+      imageUrl?: string;
     }[];
   }[],
   strScore: number = 10,
@@ -461,6 +464,7 @@ export function deriveEquippedWeaponAttacks(
           attackBonus: statMod + pot,
           toHitBonus: profBonus + statMod + pot,
           range: atk.range,
+          imageUrl: atk.imageUrl || item.imageUrl,
         });
       });
     } else {
@@ -496,6 +500,7 @@ export function deriveEquippedWeaponAttacks(
         attackType: aType,
         attackBonus: statMod + parsedBonus,
         toHitBonus: profBonus + statMod + parsedBonus,
+        imageUrl: item.imageUrl,
       });
     }
   }
@@ -606,6 +611,7 @@ export interface DerivedCharacterAction {
   usesLeft?: number;
   recharge?: string;
   isSpecialAction?: boolean;
+  imageUrl?: string;
 }
 
 export function deriveAllCharacterActions(
@@ -618,6 +624,7 @@ export function deriveAllCharacterActions(
           category?: string;
           equipped?: boolean;
           description?: string;
+          imageUrl?: string;
           weaponAttacks?: {
             id: string;
             name: string;
@@ -629,6 +636,7 @@ export function deriveAllCharacterActions(
             damageType: string;
             attackType?: 'melee' | 'ranged' | 'spell';
             range?: string;
+            imageUrl?: string;
           }[];
           itemActions?: {
             id: string;
@@ -644,6 +652,7 @@ export function deriveAllCharacterActions(
             usesMax?: number;
             usesLeft?: number;
             recharge?: string;
+            imageUrl?: string;
           }[];
         }[];
         spells?: {
@@ -651,6 +660,7 @@ export function deriveAllCharacterActions(
           name: string;
           description?: string;
           prepared?: boolean;
+          imageUrl?: string;
           itemActions?: {
             id: string;
             name: string;
@@ -660,12 +670,14 @@ export function deriveAllCharacterActions(
             potenciador?: number;
             damageType: string;
             range?: string;
+            imageUrl?: string;
           }[];
         }[];
         features?: {
           id: string;
           name: string;
           description?: string;
+          imageUrl?: string;
           itemActions?: {
             id: string;
             name: string;
@@ -675,6 +687,7 @@ export function deriveAllCharacterActions(
             potenciador?: number;
             damageType: string;
             range?: string;
+            imageUrl?: string;
           }[];
         }[];
         strScore?: number;
@@ -725,6 +738,7 @@ export function deriveAllCharacterActions(
       damageDice: wa.formula || wa.dice,
       actionType: wa.attackType,
       isSpecialAction: false,
+      imageUrl: wa.imageUrl,
     });
   }
 
@@ -763,6 +777,7 @@ export function deriveAllCharacterActions(
           usesLeft: act.usesLeft,
           recharge: act.recharge,
           isSpecialAction: true,
+          imageUrl: act.imageUrl || item.imageUrl,
         });
       });
     }
@@ -772,7 +787,7 @@ export function deriveAllCharacterActions(
   for (const sp of spells) {
     if (sp.prepared === false) continue;
     if (Array.isArray(sp.itemActions) && sp.itemActions.length > 0) {
-      sp.itemActions.forEach((act, idx) => {
+      sp.itemActions.forEach((act: any, idx: number) => {
         const cleanDice = String(act.dice || '1d8').trim();
         const pot = Number(act.bonus ?? act.potenciador) || 0;
         const dmgFormula = formatWeaponAttackFormula(cleanDice, pot);
@@ -795,6 +810,7 @@ export function deriveAllCharacterActions(
           toHitBonus: profBonus + pot,
           range: act.range || '60 pies',
           isSpecialAction: true,
+          imageUrl: act.imageUrl || sp.imageUrl,
         });
       });
     }
@@ -803,7 +819,7 @@ export function deriveAllCharacterActions(
   // 4. Features with special actions
   for (const feat of features) {
     if (Array.isArray(feat.itemActions) && feat.itemActions.length > 0) {
-      feat.itemActions.forEach((act, idx) => {
+      feat.itemActions.forEach((act: any, idx: number) => {
         const cleanDice = String(act.dice || '1d6').trim();
         const pot = Number(act.bonus ?? act.potenciador) || 0;
         const dmgFormula = formatWeaponAttackFormula(cleanDice, pot);
@@ -820,18 +836,55 @@ export function deriveAllCharacterActions(
           potenciador: pot,
           formula: dmgFormula,
           damageFormula: dmgFormula,
-          damageType: act.damageType || 'Fuerza',
-          actionType: 'special',
+          damageType: act.damageType || 'Especial',
+          actionType: 'action',
           attackBonus: pot,
           toHitBonus: profBonus + pot,
           range: act.range || 'Personal',
           isSpecialAction: true,
+          imageUrl: act.imageUrl || feat.imageUrl,
         });
       });
     }
   }
 
   return result;
+}
+
+export function formatCompactRollDieBadge(
+  roll?: {
+    total?: number;
+    chosenRoll?: number;
+    diceType?: number;
+    formula?: string;
+    isCritSuccess?: boolean;
+    isCritFail?: boolean;
+  } | null
+): {
+  displayValue: number;
+  diceLabel: string;
+  sides: 4 | 6 | 8 | 10 | 12 | 20 | 100;
+  isCritSuccess: boolean;
+  isCritFail: boolean;
+} | null {
+  if (!roll) return null;
+  const displayValue = Number(roll.total ?? roll.chosenRoll ?? 0);
+  const rawFormula = String(roll.formula || '').trim();
+  const diceMatch = rawFormula.match(/(\d+d\d+)/i);
+  const fallbackSides = Number(roll.diceType) || 20;
+  const diceLabel = diceMatch ? diceMatch[1].toLowerCase() : `1d${fallbackSides}`;
+  const sidesMatch = diceLabel.match(/d(\d+)/i);
+  const parsedSides = sidesMatch ? parseInt(sidesMatch[1], 10) : fallbackSides;
+  const validSides: (4 | 6 | 8 | 10 | 12 | 20 | 100)[] = [4, 6, 8, 10, 12, 20, 100];
+  const sides = (validSides.includes(parsedSides as any) ? parsedSides : 20) as 4 | 6 | 8 | 10 | 12 | 20 | 100;
+
+  return {
+    displayValue,
+    diceLabel,
+    sides,
+    isCritSuccess: Boolean(roll.isCritSuccess),
+    isCritFail: Boolean(roll.isCritFail),
+  };
 }
 
 export function normalizeRoomIdentifier(raw?: string): string {
@@ -1565,4 +1618,305 @@ export function buildLiveProjectionFromWorkspace(
     })),
   };
 }
+
+export interface DeduplicatedSkillCard {
+  id: string;
+  srdKey?: string;
+  name: string;
+  ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+  proficiency: 'none' | 'proficient' | 'expertise';
+  totalBonus: number;
+  description: string;
+  imageUrl?: string;
+  isCustom: boolean;
+}
+
+export function buildDeduplicatedPlayerSkillCards(
+  character: {
+    level?: number;
+    abilities?: Record<string, any>;
+    skills?: Record<string, 'none' | 'proficient' | 'expertise'>;
+    customSkills?: Array<{
+      id: string;
+      srdKey?: string;
+      skillKey?: string;
+      name: string;
+      ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+      proficiency: 'none' | 'proficient' | 'expertise';
+      description?: string;
+      imageUrl?: string;
+    }>;
+    skillDescriptions?: Record<string, string | undefined>;
+    skillImages?: Record<string, string | undefined>;
+  },
+  srdCatalog: Array<{
+    key: string;
+    nameEs: string;
+    ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+    description?: string;
+  }>,
+  effectiveAbilityModFn?: (abilityKey: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha') => number
+): DeduplicatedSkillCard[] {
+  const profBonus = calculateProficiencyBonus(character?.level || 1);
+  const getMod = (ab: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha') => {
+    if (effectiveAbilityModFn) return effectiveAbilityModFn(ab);
+    return getEffectiveAbilityModifier(character?.abilities?.[ab]);
+  };
+
+  const normalizeName = (s: string) =>
+    String(s || '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+  const srdByKey = new Map(srdCatalog.map((sk) => [sk.key, sk]));
+  const srdByNormName = new Map(srdCatalog.map((sk) => [normalizeName(sk.nameEs), sk]));
+
+  const seenSrdKeys = new Set<string>();
+  const seenNormNames = new Set<string>();
+  const result: DeduplicatedSkillCard[] = [];
+
+  const customList = Array.isArray(character?.customSkills) ? character.customSkills : [];
+
+  // Build lookup of custom overrides for SRD skills
+  const customOverrideBySrdKey = new Map<
+    string,
+    {
+      id?: string;
+      proficiency?: 'none' | 'proficient' | 'expertise';
+      description?: string;
+      imageUrl?: string;
+      ability?: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+    }
+  >();
+
+  for (const c of customList) {
+    if (!c) continue;
+    const matchedSrd =
+      (c.srdKey && srdByKey.get(c.srdKey)) ||
+      (c.skillKey && srdByKey.get(c.skillKey)) ||
+      srdByNormName.get(normalizeName(c.name));
+    if (matchedSrd) {
+      const prev = customOverrideBySrdKey.get(matchedSrd.key);
+      customOverrideBySrdKey.set(matchedSrd.key, {
+        id: prev?.id || c.id,
+        proficiency:
+          prev?.proficiency && prev.proficiency !== 'none'
+            ? prev.proficiency
+            : c.proficiency && c.proficiency !== 'none'
+            ? c.proficiency
+            : prev?.proficiency || c.proficiency,
+        description: prev?.description || c.description?.trim(),
+        imageUrl: prev?.imageUrl || c.imageUrl?.trim(),
+        ability: prev?.ability || c.ability,
+      });
+    }
+  }
+
+  // 1. Add possessed SRD skills (from character.skills OR customOverrideBySrdKey) without duplicates
+  for (const sk of srdCatalog) {
+    const rawProf = character?.skills?.[sk.key] || 'none';
+    const override = customOverrideBySrdKey.get(sk.key);
+    const effectiveProf =
+      rawProf !== 'none'
+        ? rawProf
+        : override?.proficiency && override.proficiency !== 'none'
+        ? override.proficiency
+        : customOverrideBySrdKey.has(sk.key)
+        ? override?.proficiency || 'proficient'
+        : 'none';
+
+    if (effectiveProf === 'none' && !customOverrideBySrdKey.has(sk.key)) {
+      continue;
+    }
+
+    const ability = override?.ability || sk.ability;
+    const mod = getMod(ability);
+    const pBonus =
+      effectiveProf === 'expertise'
+        ? profBonus * 2
+        : effectiveProf === 'proficient'
+        ? profBonus
+        : 0;
+
+    const customDesc =
+      override?.description ||
+      character?.skillDescriptions?.[sk.key]?.trim() ||
+      sk.description ||
+      `Prueba de ${sk.nameEs}`;
+    const customImg =
+      override?.imageUrl || character?.skillImages?.[sk.key]?.trim() || undefined;
+
+    seenSrdKeys.add(sk.key);
+    seenNormNames.add(normalizeName(sk.nameEs));
+
+    result.push({
+      id: override?.id || `srd-skill-${sk.key}`,
+      srdKey: sk.key,
+      name: sk.nameEs,
+      ability,
+      proficiency: effectiveProf,
+      totalBonus: mod + pBonus,
+      description: customDesc,
+      imageUrl: customImg,
+      isCustom: false,
+    });
+  }
+
+  // 2. Add purely custom skills that do NOT duplicate any SRD skill or prior custom skill
+  for (const c of customList) {
+    if (!c || !c.name) continue;
+    const matchedSrd =
+      (c.srdKey && srdByKey.get(c.srdKey)) ||
+      (c.skillKey && srdByKey.get(c.skillKey)) ||
+      srdByNormName.get(normalizeName(c.name));
+    if (matchedSrd && seenSrdKeys.has(matchedSrd.key)) {
+      continue;
+    }
+    const norm = normalizeName(c.name);
+    if (!norm || seenNormNames.has(norm)) {
+      continue;
+    }
+    seenNormNames.add(norm);
+
+    const ability = c.ability || 'int';
+    const mod = getMod(ability);
+    const prof = c.proficiency || 'proficient';
+    const pBonus =
+      prof === 'expertise' ? profBonus * 2 : prof === 'proficient' ? profBonus : 0;
+
+    result.push({
+      id: c.id || `custom-skill-${norm}`,
+      srdKey: c.srdKey || c.skillKey,
+      name: c.name.trim(),
+      ability,
+      proficiency: prof,
+      totalBonus: mod + pBonus,
+      description: c.description?.trim() || 'Habilidad personalizada del personaje.',
+      imageUrl: c.imageUrl?.trim() || undefined,
+      isCustom: true,
+    });
+  }
+
+  return result;
+}
+
+export function canAccessArcaneOracle(
+  appRole?: string | null,
+  legacyRole?: string | null
+): boolean {
+  const r1 = String(appRole || '').trim().toLowerCase();
+  const r2 = String(legacyRole || '').trim().toLowerCase();
+  const allowed = new Set(['moderator', 'creator', 'content_creator', 'admin']);
+  return allowed.has(r1) || allowed.has(r2);
+}
+
+export function getHeaderRoleButtonsVisibility(
+  appRole?: string | null,
+  legacyRole?: string | null
+): {
+  resolvedAppRole: 'client' | 'moderator' | 'creator' | 'admin';
+  showAdminPanel: boolean;
+  showCreatorPanel: boolean;
+  showModerationPanel: boolean;
+  showClientFeedbackOnly: boolean;
+  showAdminButton: boolean;
+  showCreatorButton: boolean;
+  showModerationButton: boolean;
+  showFeedbackButton: boolean;
+} {
+  const r1 = String(appRole || '').trim().toLowerCase();
+  const r2 = String(legacyRole || '').trim().toLowerCase();
+
+  let resolvedAppRole: 'client' | 'moderator' | 'creator' | 'admin' = 'client';
+  if (r1 === 'admin' || r2 === 'admin') {
+    resolvedAppRole = 'admin';
+  } else if (r1 === 'creator' || r1 === 'content_creator' || r2 === 'creator') {
+    resolvedAppRole = 'creator';
+  } else if (r1 === 'moderator' || r2 === 'moderator') {
+    resolvedAppRole = 'moderator';
+  }
+
+  const showAdmin = resolvedAppRole === 'admin';
+  const showCreator = resolvedAppRole === 'admin' || resolvedAppRole === 'creator';
+  const showModeration =
+    resolvedAppRole === 'admin' ||
+    resolvedAppRole === 'creator' ||
+    resolvedAppRole === 'moderator';
+  const showFeedback = resolvedAppRole === 'client';
+
+  return {
+    resolvedAppRole,
+    showAdminPanel: showAdmin,
+    showCreatorPanel: showCreator,
+    showModerationPanel: showModeration,
+    showClientFeedbackOnly: showFeedback,
+    showAdminButton: showAdmin,
+    showCreatorButton: showCreator,
+    showModerationButton: showModeration,
+    showFeedbackButton: showFeedback,
+  };
+}
+
+export function clampPortraitGallery(
+  portraits: string[] | undefined | null,
+  maxSlots: number = 4
+): string[] {
+  if (!Array.isArray(portraits)) return [];
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const raw of portraits) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    cleaned.push(trimmed);
+    if (cleaned.length >= maxSlots) break;
+  }
+  return cleaned;
+}
+
+export function resolveTarotCardAbilityScores(
+  character?: {
+    abilities?: Record<string, any>;
+    inventory?: any[];
+  } | null,
+  member?: {
+    abilities?: Record<string, number>;
+  } | null
+): {
+  str: AbilityBreakdown;
+  dex: AbilityBreakdown;
+  con: AbilityBreakdown;
+  int: AbilityBreakdown;
+  wis: AbilityBreakdown;
+  cha: AbilityBreakdown;
+} {
+  const equippedBonuses =
+    character?.inventory && Array.isArray(character.inventory)
+      ? calculateEquippedItemStatBonuses(character.inventory)
+      : null;
+
+  const resolveKey = (key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha'): AbilityBreakdown => {
+    if (character?.abilities?.[key] !== undefined) {
+      return calculateTotalAbilityScore(
+        character.abilities[key],
+        equippedBonuses?.[key] ?? 0
+      );
+    }
+    const memberVal = member?.abilities?.[key] ?? 10;
+    return calculateTotalAbilityScore(memberVal, 0);
+  };
+
+  return {
+    str: resolveKey('str'),
+    dex: resolveKey('dex'),
+    con: resolveKey('con'),
+    int: resolveKey('int'),
+    wis: resolveKey('wis'),
+    cha: resolveKey('cha'),
+  };
+}
+
+
 

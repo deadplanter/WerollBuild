@@ -32,6 +32,7 @@ import {
   Skull,
   FolderPlus,
   Edit3,
+  Users,
 } from 'lucide-react';
 import { EntityAvatar } from '../common/EntityAvatar';
 import {
@@ -73,9 +74,10 @@ import {
   enqueueVisualItem,
   removeVisualFromQueue,
   moveTacticalTokenOnGrid,
+  buildDeduplicatedPlayerSkillCards,
 } from '../../utils/dnd-math';
 import { CharacterTarotCard } from '../character/CharacterTarotCard';
-import { ABILITY_LABELS, SKILL_METADATA } from '../../data/srd';
+import { ABILITY_LABELS, SKILL_METADATA, SKILLS_5E } from '../../data/srd';
 import { getFolderDepth } from '../../utils/storage';
 import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 import { soundFx } from '../../utils/audio';
@@ -208,6 +210,7 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
   // =========================================================================
   const [isLeftOverlayMinimized, setIsLeftOverlayMinimized] = useState<boolean>(false);
   const [isNotebookMinimized, setIsNotebookMinimized] = useState<boolean>(false);
+  const [isPlayersDeckOpen, setIsPlayersDeckOpen] = useState<boolean>(false);
 
   // Map Zoom & Pan Controls
   const [mapZoom, setMapZoom] = useState<number>(1);
@@ -579,14 +582,36 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
   // 3. PARTY PLAYER CARDS (SAME DESIGN AS PLAYER SHEET BOTTOM-RIGHT CARD)
   // =========================================================================
   const resolvedPlayerCards: PartyMemberLive[] = useMemo(() => {
+    const findLatestRollForMember = (
+      charName?: string,
+      pName?: string,
+      fallbackRoll?: DiceRollResult
+    ): DiceRollResult | undefined => {
+      for (let i = rollFeed.length - 1; i >= 0; i--) {
+        const r = rollFeed[i];
+        if (!r || !r.rollerName) continue;
+        const rLower = r.rollerName.toLowerCase().trim();
+        if (
+          (charName && rLower === charName.toLowerCase().trim()) ||
+          (pName && rLower === pName.toLowerCase().trim())
+        ) {
+          return r;
+        }
+      }
+      return fallbackRoll;
+    };
+
     const map = new Map<string, PartyMemberLive>();
     for (const p of partyMembers) {
       if (p && p.characterId) {
-        map.set(p.characterId, p);
+        map.set(p.characterId, {
+          ...p,
+          lastRoll: findLatestRollForMember(p.characterName, p.playerName, p.lastRoll),
+        });
       }
     }
-    // Ensure the active player's own character is always present and up to date
-    if (mode === 'player' && character) {
+    // Ensure the active player's own character (or fallback character in single-tab DM preview) is present and up to date
+    if ((mode === 'player' || map.size === 0) && character) {
       const prof = calculateProficiencyBonus(character.level);
       const equippedBonuses = character.inventory
         ? calculateEquippedItemStatBonuses(character.inventory)
@@ -604,6 +629,11 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
         character.skills.perception,
         prof
       );
+      const existingSelf = map.get(character.id);
+      const latestSelfRoll =
+        lastBoxRoll ||
+        findLatestRollForMember(character.name, character.playerName, existingSelf?.lastRoll);
+
       map.set(character.id, {
         characterId: character.id,
         characterName: character.name,
@@ -624,6 +654,7 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
         race: character.race,
         characterClass: `${character.race} ${character.characterClass}`,
         lastPing: Date.now(),
+        lastRoll: latestSelfRoll,
         abilities: {
           str: strScore,
           dex: dexScore,
@@ -636,7 +667,7 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
       });
     }
     return Array.from(map.values());
-  }, [partyMembers, mode, character]);
+  }, [partyMembers, mode, character, rollFeed, lastBoxRoll]);
 
   // =========================================================================
   // 4. ENEMY CARDS IN SALA EN VIVO
@@ -762,7 +793,10 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
   // =========================================================================
   const playerAttackCards = useMemo(() => {
     if (!character) return [];
-    const customAtks = character.attacks || [];
+    const customAtks = (character.attacks || []).map((a) => ({
+      ...a,
+      sourceName: a.range ? `Alcance: ${a.range}` : 'Ataque Base',
+    }));
     const profBonus = calculateProficiencyBonus(character.level);
     const derivedActions = deriveAllCharacterActions(
       character.inventory || [],
@@ -774,11 +808,13 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
     ).map((d) => ({
       id: d.id,
       name: d.name,
+      sourceName: d.sourceName || 'Arma / Objeto',
       attackBonus: d.attackBonus ?? d.potenciador ?? 0,
       damageDice: d.damageDice || d.dice || '1d6',
       damageType: d.damageType || '',
       type: (d.actionType === 'bonus' ? 'bonus' : d.actionType === 'reaction' ? 'reaction' : 'melee') as any,
       notes: d.description || '',
+      imageUrl: d.imageUrl,
     }));
     const existingNames = new Set(customAtks.map((a) => a.name.toLowerCase()));
     const combined = [
@@ -790,39 +826,15 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
 
   const playerSkillCards = useMemo(() => {
     if (!character) return [];
-    const profBonus = calculateProficiencyBonus(character.level);
-    const srdProficient = (Object.keys(SKILL_METADATA) as SkillKey[])
-      .filter((k) => character.skills[k] === 'proficient' || character.skills[k] === 'expertise')
-      .map((k) => {
-        const meta = SKILL_METADATA[k];
-        const abilMod = getEffectiveAbilityModifier(character.abilities[meta.ability]);
-        const totalMod =
-          abilMod + (character.skills[k] === 'expertise' ? profBonus * 2 : profBonus);
-        return {
-          id: `srd-${k}`,
-          name: meta.nameEs,
-          abilityAbbr: ABILITY_LABELS[meta.ability].abbr,
-          totalMod,
-          proficiency: character.skills[k],
-          description: meta.description,
-        };
-      });
-
-    const custom = (character.customSkills || []).map((cs) => {
-      const abilMod = getEffectiveAbilityModifier(character.abilities[cs.ability]);
-      const totalMod =
-        abilMod + (cs.proficiency === 'expertise' ? profBonus * 2 : profBonus);
-      return {
-        id: cs.id,
-        name: cs.name,
-        abilityAbbr: ABILITY_LABELS[cs.ability].abbr,
-        totalMod,
-        proficiency: cs.proficiency,
-        description: cs.description || 'Habilidad de personaje',
-      };
-    });
-
-    return [...srdProficient, ...custom];
+    return buildDeduplicatedPlayerSkillCards(character, SKILLS_5E).map((sk) => ({
+      id: sk.id,
+      name: sk.name,
+      abilityAbbr: ABILITY_LABELS[sk.ability].abbr,
+      totalMod: sk.totalBonus,
+      proficiency: sk.proficiency,
+      description: sk.description,
+      imageUrl: sk.imageUrl,
+    }));
   }, [character]);
 
   const playerSpellCards = useMemo(() => {
@@ -1423,58 +1435,13 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
       data-testid="table-map-view"
     >
       {/* =================================================================== */}
-      {/* MAIN 3-COLUMN TABLETOP MAP GRID (Full Viewport Width Utilized)      */}
+      {/* MAIN 2-COLUMN TABLETOP MAP GRID (Full Left Expansion + Right Column) */}
       {/* =================================================================== */}
-      <div className="grid grid-cols-1 lg:grid-cols-[385px_minmax(0,1fr)_325px] xl:grid-cols-[425px_minmax(0,1fr)_350px] gap-2.5 items-stretch">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_325px] xl:grid-cols-[minmax(0,1fr)_350px] gap-2.5 items-stretch">
         {/* ================================================================= */}
-        {/* LEFT COLUMN: CARTAS DE JUGADORES (2x2 COMPACT GRID - 4 FIT AT ONCE) */}
+        {/* LEFT/CENTER EXPANDED COLUMN: MAP VIEWPORT + MINIMIZABLE OVERLAYS  */}
         {/* ================================================================= */}
-        <div className="bg-gradient-to-b from-[#171820] via-[#13141b] to-[#0f1016] border-2 border-[#c8a45c]/75 rounded-2xl p-2.5 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.85)]">
-          <div>
-            <div className="flex items-center justify-between border-b border-[#c8a45c]/35 pb-1.5 mb-2">
-              <h2 className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] tracking-wider uppercase">
-                CARTAS DE JUGADORES
-              </h2>
-              <span className="text-[11px] font-mono text-[#e2c275]">
-                {resolvedPlayerCards.length} en Sala
-              </span>
-            </div>
-
-            {resolvedPlayerCards.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-[#c8a45c]/40 bg-[#12131a]/80 p-6 text-center space-y-2 my-4">
-                <Shield className="w-8 h-8 text-[#c8a45c]/60 mx-auto" />
-                <p className="font-cinzel font-bold text-xs text-[#f5e4be]">
-                  Sin aventureros conectados aún
-                </p>
-                <p className="text-[11px] text-stone-400">
-                  Cuando los jugadores entren a la sala <strong className="text-amber-300">{roomCode}</strong>, sus cartas aparecerán aquí en tiempo real.
-                </p>
-              </div>
-            ) : (
-              <div
-                data-testid="map-player-cards-grid"
-                className="grid grid-cols-2 gap-2 max-h-[650px] overflow-y-auto pr-0.5 custom-scrollbar"
-              >
-                {resolvedPlayerCards.map((member) => (
-                  <CharacterTarotCard
-                    key={member.characterId}
-                    member={member}
-                    isOnline={true}
-                    miniGrid={true}
-                    showDmControls={mode === 'dm'}
-                    onDmAdjustPlayer={onDmAdjustPlayer}
-                    dataTestId={`map-player-card-${member.characterId}`}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ================================================================= */}
-        {/* CENTER COLUMN: MAP VIEWPORT + MINIMIZABLE OVERLAYS                */}
-        {/* ================================================================= */}
-        <div className="flex flex-col gap-2.5 min-w-0">
+        <div className="flex flex-col gap-2 min-w-0">
           {/* DM-ONLY TOP LOCATION SWITCHER BAR ("Ruta de la Zona") */}
           {mode === 'dm' && workspace && (
             <div
@@ -1619,85 +1586,48 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
           )}
 
           {/* MAIN MAP / SCENE CANVAS CONTAINER */}
-          <div className="relative flex-1 min-h-[530px] rounded-2xl bg-[#11131a] border-2 border-[#c8a45c]/80 overflow-hidden shadow-[0_0_35px_rgba(0,0,0,0.9)] flex flex-col justify-between">
-            {/* Top Bar Inside Map Viewport: DM/Live Mode Toggle + Active Visual Badge + Zoom Controls */}
+          <div className="relative flex-1 min-h-[650px] rounded-2xl bg-[#11131a] border-2 border-[#c8a45c]/80 overflow-hidden shadow-[0_0_35px_rgba(0,0,0,0.9)] flex flex-col justify-between">
+            {/* Top Bar Inside Map Viewport: DM/Live Mode Toggle + Proyectar a Jugadores + Zoom Controls */}
             <div className="relative z-20 px-3.5 py-2 flex items-center justify-between gap-2 pointer-events-none flex-wrap">
               <div className="flex items-center gap-2 flex-wrap max-w-[84%] pointer-events-auto">
-                {/* DM Mode Toggle: Vista DM vs Vista en Vivo */}
+                {/* DM Mode Toggle: Vista DM vs Vista en Vivo + Proyectar a Jugadores ONLY */}
                 {mode === 'dm' && (
-                  <div
-                    data-testid="dm-viewport-mode-switcher"
-                    className="inline-flex items-center rounded-xl bg-black/85 border border-[#c8a45c]/75 p-0.5 shadow-lg"
-                  >
-                    <button
-                      type="button"
-                      data-testid="btn-toggle-dm-view-mode"
-                      onClick={() => setDmViewportMode('dm')}
-                      className={`px-2.5 py-1 rounded-lg font-cinzel font-bold text-[10px] flex items-center gap-1 transition cursor-pointer ${
-                        dmViewportMode === 'dm'
-                          ? 'bg-amber-600 text-stone-950 shadow'
-                          : 'text-stone-300 hover:text-white'
-                      }`}
-                      title="Modo Edición/Exploración del DM: revisa y modifica mapas sin afectar lo que ven los jugadores"
+                  <>
+                    <div
+                      data-testid="dm-viewport-mode-switcher"
+                      className="inline-flex items-center rounded-xl bg-black/85 border border-[#c8a45c]/75 p-0.5 shadow-lg"
                     >
-                      <Eye className="w-3 h-3" />
-                      <span>Vista DM</span>
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="btn-toggle-live-view-mode"
-                      onClick={() => setDmViewportMode('live')}
-                      className={`px-2.5 py-1 rounded-lg font-cinzel font-bold text-[10px] flex items-center gap-1 transition cursor-pointer ${
-                        dmViewportMode === 'live'
-                          ? 'bg-emerald-600 text-stone-950 shadow'
-                          : 'text-stone-300 hover:text-white'
-                      }`}
-                      title="Vista en Vivo: mira e interactúa exactamente con lo que les estás proyectando a los jugadores"
-                    >
-                      <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />
-                      <span>Vista en Vivo</span>
-                    </button>
-                  </div>
-                )}
+                      <button
+                        type="button"
+                        data-testid="btn-toggle-dm-view-mode"
+                        onClick={() => setDmViewportMode('dm')}
+                        className={`px-2.5 py-1 rounded-lg font-cinzel font-bold text-[10px] flex items-center gap-1 transition cursor-pointer ${
+                          dmViewportMode === 'dm'
+                            ? 'bg-amber-600 text-stone-950 shadow'
+                            : 'text-stone-300 hover:text-white'
+                        }`}
+                        title="Modo Edición/Exploración del DM: revisa y modifica mapas sin afectar lo que ven los jugadores"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>Vista DM</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="btn-toggle-live-view-mode"
+                        onClick={() => setDmViewportMode('live')}
+                        className={`px-2.5 py-1 rounded-lg font-cinzel font-bold text-[10px] flex items-center gap-1 transition cursor-pointer ${
+                          dmViewportMode === 'live'
+                            ? 'bg-emerald-600 text-stone-950 shadow'
+                            : 'text-stone-300 hover:text-white'
+                        }`}
+                        title="Vista en Vivo: mira e interactúa exactamente con lo que les estás proyectando a los jugadores"
+                      >
+                        <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />
+                        <span>Vista en Vivo</span>
+                      </button>
+                    </div>
 
-                <div
-                  data-testid="active-projected-visual-badge"
-                  className="px-2.5 py-1 rounded-xl bg-black/80 border border-[#c8a45c]/60 text-[#f5e4be] text-[11px] font-cinzel font-bold flex items-center gap-1.5 shadow-lg truncate"
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${
-                      mode === 'dm' && dmViewportMode === 'dm'
-                        ? 'bg-amber-400'
-                        : 'bg-emerald-400 animate-pulse'
-                    }`}
-                  />
-                  <span className="truncate">
-                    {mode === 'dm'
-                      ? dmViewportMode === 'live'
-                        ? `🟢 Vista en Vivo Jugadores: ${activeVisual.title}`
-                        : `👁️ Vista DM (${currentPlaceShortName}): ${activeVisual.title}`
-                      : activeVisual.kind === 'photo' || activeVisual.kind === 'album'
-                      ? `🖼️ Imagen en Vivo: ${activeVisual.title}`
-                      : activeVisual.kind === 'tactical'
-                      ? `⚔️ Mapa Táctico: ${activeVisual.title}`
-                      : `🗺️ ${activeVisual.title}`}
-                  </span>
-                </div>
-
-                {mode === 'dm' && workspace && (
-                  <div
-                    data-testid="dm-live-players-status-badge"
-                    className="px-2.5 py-1 rounded-xl bg-emerald-950/90 border border-emerald-400/70 text-emerald-200 text-[10px] font-cinzel font-bold flex items-center gap-1.5 shadow-lg"
-                  >
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                    <span className="truncate max-w-[230px]">
-                      En Vivo para Jugadores:{' '}
-                      {workspace.activeLiveVisual?.title ||
-                        liveProjectedToPlayers?.visualTitle ||
-                        'Mapa Inicial'}
-                    </span>
-                    {(workspace.activeLiveVisual?.imageUrl !== activeVisual.imageUrl ||
-                      workspace.activeLiveVisual?.title !== activeVisual.title) && (
+                    {workspace && (
                       <button
                         type="button"
                         data-testid="btn-dm-project-current-view-live"
@@ -1722,13 +1652,14 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                             },
                           });
                         }}
-                        className="ml-1 px-2 py-0.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black text-[9px] uppercase tracking-wider transition cursor-pointer shrink-0"
-                        title="Mandar este mapa o imagen actual a los jugadores ahora mismo"
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 border border-emerald-300/80 text-stone-950 font-cinzel font-black text-[10px] uppercase tracking-wider transition cursor-pointer shadow-lg flex items-center gap-1.5"
+                        title="Proyectar este mapa o imagen actual a los jugadores"
                       >
-                        Proyectar a Jugadores
+                        <span className="w-2 h-2 rounded-full bg-stone-950 animate-ping" />
+                        <span>Proyectar a Jugadores</span>
                       </button>
                     )}
-                  </div>
+                  </>
                 )}
               </div>
 
@@ -1943,230 +1874,322 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
             </div>
 
             {/* =============================================================== */}
-            {/* BOTTOM OVERLAYS ROW ON MAP:                                     */}
-            {/* Left: Player Cards OR DM Projection | Right: Open Notebook      */}
+            {/* BOTTOM OVERLAYS ON MAP:                                         */}
+            {/* Left (Mazos de Personaje / Proyección de Zona) + Right (Libreta)*/}
             {/* =============================================================== */}
-            <div className="relative z-20 p-3 flex flex-col xl:flex-row items-end justify-between gap-3 pointer-events-none mt-auto">
-              {/* ------------------------------------------------------------- */}
-              {/* BOTTOM-LEFT OVERLAY:                                          */}
-              {/* Player -> Read-Only Cards | DM -> Proyección de Zona          */}
-              {/* ------------------------------------------------------------- */}
-              <div className="w-full xl:w-[56%] pointer-events-auto">
-                {mode === 'player' ? (
-                  /* PLAYER MINIMIZABLE DECK OVERLAY (Ataques, Habilidades, Conjuros) */
-                  <div
-                    className="rounded-2xl bg-[#12131c]/95 backdrop-blur-md border-2 border-[#c8a45c]/85 shadow-[0_10px_30px_rgba(0,0,0,0.95)] overflow-hidden transition-all"
-                    data-testid="player-map-cards-overlay"
-                  >
-                    {/* Header with Minimize Toggle */}
-                    <div className="px-3 py-2 bg-gradient-to-r from-[#241c14] via-[#1a1510] to-[#14110d] border-b border-[#c8a45c]/40 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-[#e2c275]" />
-                        <span className="font-cinzel font-black text-xs text-[#f5e4be] uppercase tracking-wider">
-                          Mazos de {character?.name || 'Personaje'}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        data-testid="btn-toggle-player-cards-overlay"
-                        onClick={() => setIsLeftOverlayMinimized((prev) => !prev)}
-                        className="px-2.5 py-1 rounded-lg bg-black/50 hover:bg-black/80 border border-[#c8a45c]/50 text-[#e2c275] text-[10px] font-cinzel font-bold flex items-center gap-1 cursor-pointer"
-                      >
-                        {isLeftOverlayMinimized ? (
-                          <>
-                            <ChevronUp className="w-3.5 h-3.5" />
-                            <span>Abrir Cartas</span>
-                          </>
-                        ) : (
-                          <>
-                            <ChevronDown className="w-3.5 h-3.5" />
-                            <span>Minimizar</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    {!isLeftOverlayMinimized && (
-                      <div className="p-2.5 space-y-2">
-                        {/* 3 Deck Category Tabs (Ataques, Habilidades, Conjuros) */}
-                        <div className="grid grid-cols-3 gap-1.5">
+            <div className="relative z-20 p-3 flex flex-col gap-2.5 pointer-events-none mt-auto">
+              <div className="flex flex-col xl:flex-row items-end justify-between gap-2.5">
+                {/* ------------------------------------------------------------- */}
+                {/* BOTTOM-LEFT OVERLAY:                                          */}
+                {/* Player Action Decks OR DM Proyección de Zona                  */}
+                {/* ------------------------------------------------------------- */}
+                <div className="w-full xl:w-[58%] pointer-events-auto flex flex-col gap-2">
+                  {mode === 'player' ? (
+                    /* PLAYER MINIMIZABLE DECK OVERLAY (Ataques, Habilidades, Conjuros) */
+                    <div
+                      className="rounded-2xl bg-[#12131c]/95 backdrop-blur-md border-2 border-[#c8a45c]/85 shadow-[0_10px_30px_rgba(0,0,0,0.95)] overflow-hidden transition-all"
+                      data-testid="player-map-cards-overlay"
+                    >
+                      {/* Header with Minimize Toggle */}
+                      <div className="px-3 py-2 bg-gradient-to-r from-[#241c14] via-[#1a1510] to-[#14110d] border-b border-[#c8a45c]/40 flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <Layers className="w-4 h-4 text-[#e2c275]" />
+                          <span className="font-cinzel font-black text-xs text-[#f5e4be] uppercase tracking-wider">
+                            Mazos de {character?.name || 'Personaje'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => {
-                              setActivePlayerDeck('attacks');
-                              setPlayerDeckScrollIdx(0);
-                            }}
-                            className={`py-1.5 px-2 rounded-xl border font-cinzel font-bold text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                              activePlayerDeck === 'attacks'
-                                ? 'bg-gradient-to-b from-[#3b2919] to-[#1d140c] border-[#f5e4be] text-[#f5e4be] shadow'
-                                : 'bg-[#171923] border-[#c8a45c]/35 text-stone-300 hover:text-white'
-                            }`}
+                            data-testid="btn-toggle-player-cards-overlay"
+                            onClick={() => setIsLeftOverlayMinimized((prev) => !prev)}
+                            className="px-2.5 py-1 rounded-lg bg-black/50 hover:bg-black/80 border border-[#c8a45c]/50 text-[#e2c275] text-[10px] font-cinzel font-bold flex items-center gap-1 cursor-pointer"
                           >
-                            <Sword className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Ataques ({playerAttackCards.length})</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActivePlayerDeck('skills');
-                              setPlayerDeckScrollIdx(0);
-                            }}
-                            className={`py-1.5 px-2 rounded-xl border font-cinzel font-bold text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                              activePlayerDeck === 'skills'
-                                ? 'bg-gradient-to-b from-[#17303a] to-[#0f1c22] border-cyan-300 text-cyan-100 shadow'
-                                : 'bg-[#171923] border-[#c8a45c]/35 text-stone-300 hover:text-white'
-                            }`}
-                          >
-                            <Shield className="w-3.5 h-3.5 text-cyan-400" />
-                            <span>Habilidades ({playerSkillCards.length})</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActivePlayerDeck('spells');
-                              setPlayerDeckScrollIdx(0);
-                            }}
-                            className={`py-1.5 px-2 rounded-xl border font-cinzel font-bold text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                              activePlayerDeck === 'spells'
-                                ? 'bg-gradient-to-b from-[#2f1a42] to-[#180d22] border-purple-300 text-purple-100 shadow'
-                                : 'bg-[#171923] border-[#c8a45c]/35 text-stone-300 hover:text-white'
-                            }`}
-                          >
-                            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                            <span>Conjuros ({playerSpellCards.length})</span>
+                            {isLeftOverlayMinimized ? (
+                              <>
+                                <ChevronUp className="w-3.5 h-3.5" />
+                                <span>Abrir Cartas</span>
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown className="w-3.5 h-3.5" />
+                                <span>Minimizar</span>
+                              </>
+                            )}
                           </button>
                         </div>
+                      </div>
 
-                        {/* Cards Row with Scroll Arrows (Read-only, Click to Roll) */}
-                        <div className="flex items-center gap-1.5">
-                          {currentPlayerDeckCount > 3 && (
+                      {!isLeftOverlayMinimized && (
+                        <div className="p-2.5 space-y-2">
+                          {/* 3 Deck Category Tabs (Ataques, Habilidades, Conjuros) */}
+                          <div className="grid grid-cols-3 gap-1.5">
                             <button
                               type="button"
-                              disabled={safePlayerDeckScroll === 0}
-                              onClick={() =>
-                                setPlayerDeckScrollIdx(Math.max(0, safePlayerDeckScroll - 1))
-                              }
-                              className="w-6 h-24 rounded-xl bg-[#191c28] hover:bg-amber-950 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 cursor-pointer"
+                              onClick={() => {
+                                setActivePlayerDeck('attacks');
+                                setPlayerDeckScrollIdx(0);
+                              }}
+                              className={`py-1.5 px-2 rounded-xl border font-cinzel font-bold text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                                activePlayerDeck === 'attacks'
+                                  ? 'bg-gradient-to-b from-[#3b2919] to-[#1d140c] border-[#f5e4be] text-[#f5e4be] shadow'
+                                  : 'bg-[#171923] border-[#c8a45c]/35 text-stone-300 hover:text-white'
+                              }`}
                             >
-                              <ChevronLeft className="w-4 h-4" />
+                              <Sword className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Ataques ({playerAttackCards.length})</span>
                             </button>
-                          )}
 
-                          <div className="flex-1 grid grid-cols-3 gap-2 min-h-[104px]">
-                            {activePlayerDeck === 'attacks' &&
-                              playerAttackCards
-                                .slice(safePlayerDeckScroll, safePlayerDeckScroll + 3)
-                                .map((atk) => (
-                                  <button
-                                    key={atk.id}
-                                    type="button"
-                                    onClick={() =>
-                                      executeDiceRoll(20, 1, atk.attackBonus, `Ataque: ${atk.name}`)
-                                    }
-                                    className="rounded-xl bg-gradient-to-b from-[#251d15] to-[#13100c] border-2 border-[#c8a45c]/80 hover:border-[#f5e4be] p-2 flex flex-col justify-between text-left transition hover:-translate-y-0.5 cursor-pointer shadow"
-                                    title={`Clic para tirar impacto con ${atk.name} (${formatModifier(atk.attackBonus)})`}
-                                  >
-                                    <div className="flex items-center justify-between gap-1">
-                                      <Sword className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                      <span className="text-[10px] font-mono font-bold text-amber-300 px-1.5 py-0.2 rounded bg-black/60 border border-amber-500/40">
-                                        {formatModifier(atk.attackBonus)}
-                                      </span>
-                                    </div>
-                                    <div className="font-cinzel font-black text-[11px] text-[#f5e4be] uppercase truncate my-1">
-                                      {atk.name}
-                                    </div>
-                                    <div className="text-[10px] font-mono text-[#cbb692] truncate border-t border-[#c8a45c]/30 pt-1">
-                                      Daño: {atk.damageDice}
-                                    </div>
-                                  </button>
-                                ))}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActivePlayerDeck('skills');
+                                setPlayerDeckScrollIdx(0);
+                              }}
+                              className={`py-1.5 px-2 rounded-xl border font-cinzel font-bold text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                                activePlayerDeck === 'skills'
+                                  ? 'bg-gradient-to-b from-[#17303a] to-[#0f1c22] border-cyan-300 text-cyan-100 shadow'
+                                  : 'bg-[#171923] border-[#c8a45c]/35 text-stone-300 hover:text-white'
+                              }`}
+                            >
+                              <Shield className="w-3.5 h-3.5 text-cyan-400" />
+                              <span>Habilidades ({playerSkillCards.length})</span>
+                            </button>
 
-                            {activePlayerDeck === 'skills' &&
-                              playerSkillCards
-                                .slice(safePlayerDeckScroll, safePlayerDeckScroll + 3)
-                                .map((sk) => (
-                                  <button
-                                    key={sk.id}
-                                    type="button"
-                                    onClick={() =>
-                                      executeDiceRoll(20, 1, sk.totalMod, `Habilidad: ${sk.name}`)
-                                    }
-                                    className="rounded-xl bg-gradient-to-b from-[#162730] to-[#10181d] border-2 border-cyan-500/65 hover:border-cyan-300 p-2 flex flex-col justify-between text-left transition hover:-translate-y-0.5 cursor-pointer shadow"
-                                    title={`${sk.name}: ${sk.description}`}
-                                  >
-                                    <div className="flex items-center justify-between gap-1">
-                                      <span className="text-[9px] font-cinzel font-bold text-cyan-300">
-                                        {sk.abilityAbbr}
-                                      </span>
-                                      <span className="text-[10px] font-mono font-bold text-cyan-200 px-1.5 py-0.2 rounded bg-black/60 border border-cyan-500/40">
-                                        {formatModifier(sk.totalMod)}
-                                      </span>
-                                    </div>
-                                    <div className="font-cinzel font-black text-[11px] text-[#f5e4be] uppercase truncate my-1">
-                                      {sk.name}
-                                    </div>
-                                    <div className="text-[9px] text-cyan-200/80 truncate border-t border-cyan-500/30 pt-1">
-                                      {sk.proficiency === 'expertise' ? 'Pericia' : 'Competente'}
-                                    </div>
-                                  </button>
-                                ))}
-
-                            {activePlayerDeck === 'spells' &&
-                              playerSpellCards
-                                .slice(safePlayerDeckScroll, safePlayerDeckScroll + 3)
-                                .map((sp) => (
-                                  <button
-                                    key={sp.id}
-                                    type="button"
-                                    onClick={() =>
-                                      executeDiceRoll(20, 1, 0, `Conjuro: ${sp.name}`)
-                                    }
-                                    className="rounded-xl bg-gradient-to-b from-[#261736] to-[#130d1b] border-2 border-purple-400/70 hover:border-purple-200 p-2 flex flex-col justify-between text-left transition hover:-translate-y-0.5 cursor-pointer shadow"
-                                    title={sp.description}
-                                  >
-                                    <div className="flex items-center justify-between gap-1">
-                                      <Sparkles className="w-3.5 h-3.5 text-purple-300 shrink-0" />
-                                      <span className="text-[9px] font-mono font-bold text-purple-200 px-1.5 py-0.2 rounded bg-black/60 border border-purple-500/40">
-                                        {sp.level === 0 ? 'Truco' : `Niv ${sp.level}`}
-                                      </span>
-                                    </div>
-                                    <div className="font-cinzel font-black text-[11px] text-[#f5e4be] uppercase truncate my-1">
-                                      {sp.name}
-                                    </div>
-                                    <div className="text-[9px] text-purple-200/80 truncate border-t border-purple-500/30 pt-1">
-                                      {sp.castingTime || '1 Acción'}
-                                    </div>
-                                  </button>
-                                ))}
-
-                            {currentPlayerDeckCount === 0 && (
-                              <div className="col-span-3 rounded-xl border border-dashed border-[#c8a45c]/35 bg-black/40 flex items-center justify-center p-3 text-center text-[11px] text-stone-400 font-cinzel">
-                                Sin cartas preparadas en este mazo.
-                              </div>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActivePlayerDeck('spells');
+                                setPlayerDeckScrollIdx(0);
+                              }}
+                              className={`py-1.5 px-2 rounded-xl border font-cinzel font-bold text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                                activePlayerDeck === 'spells'
+                                  ? 'bg-gradient-to-b from-[#2f1a42] to-[#180d22] border-purple-300 text-purple-100 shadow'
+                                  : 'bg-[#171923] border-[#c8a45c]/35 text-stone-300 hover:text-white'
+                              }`}
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                              <span>Conjuros ({playerSpellCards.length})</span>
+                            </button>
                           </div>
 
-                          {currentPlayerDeckCount > 3 && (
-                            <button
-                              type="button"
-                              disabled={safePlayerDeckScroll >= maxPlayerDeckScroll}
-                              onClick={() =>
-                                setPlayerDeckScrollIdx(
-                                  Math.min(maxPlayerDeckScroll, safePlayerDeckScroll + 1)
-                                )
-                              }
-                              className="w-6 h-24 rounded-xl bg-[#191c28] hover:bg-amber-950 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 cursor-pointer"
-                            >
-                              <ChevronRight className="w-4 h-4" />
-                            </button>
-                          )}
+                          {/* Cards Row with Scroll Arrows (Read-only, Click to Roll, Illustrated + Adaptive Font) */}
+                          <div className="flex items-center gap-1.5">
+                            {currentPlayerDeckCount > 3 && (
+                              <button
+                                type="button"
+                                disabled={safePlayerDeckScroll === 0}
+                                onClick={() =>
+                                  setPlayerDeckScrollIdx(Math.max(0, safePlayerDeckScroll - 1))
+                                }
+                                className="w-6 h-28 rounded-xl bg-[#191c28] hover:bg-amber-950 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 cursor-pointer"
+                              >
+                                <ChevronLeft className="w-4 h-4" />
+                              </button>
+                            )}
+
+                            <div className="flex-1 grid grid-cols-3 gap-2 min-h-[118px]">
+                              {activePlayerDeck === 'attacks' &&
+                                playerAttackCards
+                                  .slice(safePlayerDeckScroll, safePlayerDeckScroll + 3)
+                                  .map((atk) => {
+                                    const isLongTitle = (atk.name || '').length > 18;
+                                    return (
+                                      <button
+                                        key={atk.id}
+                                        type="button"
+                                        onClick={() =>
+                                          executeDiceRoll(20, 1, atk.attackBonus, `Ataque: ${atk.name}`)
+                                        }
+                                        className="rounded-xl bg-gradient-to-b from-[#251d15] via-[#1a140f] to-[#120e0b] border-2 border-[#c8a45c]/80 hover:border-[#f5e4be] p-2 flex flex-col justify-between text-left transition hover:-translate-y-0.5 cursor-pointer shadow-lg group"
+                                        title={`Clic para tirar impacto con ${atk.name} (${formatModifier(atk.attackBonus)}) • Daño: ${atk.damageDice}`}
+                                      >
+                                        <div className="flex items-start gap-2">
+                                          <div className="w-9 h-9 rounded-lg overflow-hidden border border-[#e2c275]/75 bg-black/70 flex items-center justify-center shrink-0 shadow-inner">
+                                            {atk.imageUrl ? (
+                                              <img
+                                                src={atk.imageUrl}
+                                                alt={atk.name}
+                                                className="w-full h-full object-cover"
+                                              />
+                                            ) : (
+                                              <Sword className="w-4 h-4 text-amber-400" />
+                                            )}
+                                          </div>
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex items-center justify-between gap-1">
+                                              <span className="text-[8px] font-cinzel text-amber-300/85 truncate">
+                                                {(atk as any).sourceName || 'Arma'}
+                                              </span>
+                                              <span className="text-[9px] font-mono font-black text-amber-300 px-1 py-0.2 rounded bg-black/70 border border-amber-500/40 shrink-0">
+                                                {formatModifier(atk.attackBonus)}
+                                              </span>
+                                            </div>
+                                            <div
+                                              className={`font-cinzel font-black ${
+                                                isLongTitle ? 'text-[9px]' : 'text-[10px]'
+                                              } text-[#f5e4be] uppercase leading-tight line-clamp-2 break-words mt-0.5`}
+                                            >
+                                              {atk.name}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center justify-between gap-1 text-[9px] font-mono text-[#cbb692] border-t border-[#c8a45c]/30 pt-1 mt-1">
+                                          <span className="truncate font-bold text-amber-200">
+                                            🎲 {atk.damageDice}
+                                          </span>
+                                          {atk.damageType && (
+                                            <span className="text-[8px] text-stone-400 truncate">
+                                              {atk.damageType}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+
+                              {activePlayerDeck === 'skills' &&
+                                playerSkillCards
+                                  .slice(safePlayerDeckScroll, safePlayerDeckScroll + 3)
+                                  .map((sk) => {
+                                    const isLongTitle = (sk.name || '').length > 18;
+                                    return (
+                                      <button
+                                        key={sk.id}
+                                        type="button"
+                                        onClick={() =>
+                                          executeDiceRoll(20, 1, sk.totalMod, `Habilidad: ${sk.name}`)
+                                        }
+                                        className="rounded-xl bg-gradient-to-b from-[#162730] via-[#121f26] to-[#0d151a] border-2 border-cyan-500/65 hover:border-cyan-300 p-2 flex flex-col justify-between text-left transition hover:-translate-y-0.5 cursor-pointer shadow-lg"
+                                        title={`${sk.name}: ${sk.description}`}
+                                      >
+                                        <div className="flex items-start gap-2">
+                                          <div className="w-9 h-9 rounded-lg overflow-hidden border border-cyan-400/65 bg-black/70 flex items-center justify-center shrink-0 shadow-inner">
+                                            {sk.imageUrl ? (
+                                              <img
+                                                src={sk.imageUrl}
+                                                alt={sk.name}
+                                                className="w-full h-full object-cover"
+                                              />
+                                            ) : (
+                                              <Shield className="w-4 h-4 text-cyan-300" />
+                                            )}
+                                          </div>
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex items-center justify-between gap-1">
+                                              <span className="text-[8px] font-cinzel font-bold text-cyan-300">
+                                                {sk.abilityAbbr}
+                                              </span>
+                                              <span className="text-[9px] font-mono font-black text-cyan-200 px-1 py-0.2 rounded bg-black/70 border border-cyan-500/40 shrink-0">
+                                                {formatModifier(sk.totalMod)}
+                                              </span>
+                                            </div>
+                                            <div
+                                              className={`font-cinzel font-black ${
+                                                isLongTitle ? 'text-[9px]' : 'text-[10px]'
+                                              } text-[#f5e4be] uppercase leading-tight line-clamp-2 break-words mt-0.5`}
+                                            >
+                                              {sk.name}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center justify-between gap-1 text-[8px] text-cyan-200/85 border-t border-cyan-500/30 pt-1 mt-1">
+                                          <span className="truncate">
+                                            {sk.proficiency === 'expertise' ? '★ Pericia' : '● Competente'}
+                                          </span>
+                                          {sk.description && (
+                                            <span className="text-cyan-100/65 truncate max-w-[90px]">
+                                              {sk.description}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+
+                              {activePlayerDeck === 'spells' &&
+                                playerSpellCards
+                                  .slice(safePlayerDeckScroll, safePlayerDeckScroll + 3)
+                                  .map((sp) => {
+                                    const isLongTitle = (sp.name || '').length > 18;
+                                    return (
+                                      <button
+                                        key={sp.id}
+                                        type="button"
+                                        onClick={() =>
+                                          executeDiceRoll(20, 1, 0, `Conjuro: ${sp.name}`)
+                                        }
+                                        className="rounded-xl bg-gradient-to-b from-[#261736] via-[#1c1128] to-[#120b1a] border-2 border-purple-400/70 hover:border-purple-200 p-2 flex flex-col justify-between text-left transition hover:-translate-y-0.5 cursor-pointer shadow-lg"
+                                        title={sp.description}
+                                      >
+                                        <div className="flex items-start gap-2">
+                                          <div className="w-9 h-9 rounded-lg overflow-hidden border border-purple-400/65 bg-black/70 flex items-center justify-center shrink-0 shadow-inner">
+                                            {sp.imageUrl ? (
+                                              <img
+                                                src={sp.imageUrl}
+                                                alt={sp.name}
+                                                className="w-full h-full object-cover"
+                                              />
+                                            ) : (
+                                              <Sparkles className="w-4 h-4 text-purple-300" />
+                                            )}
+                                          </div>
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex items-center justify-between gap-1">
+                                              <span className="text-[8px] font-cinzel text-purple-300/85 truncate">
+                                                {sp.school || 'Magia'}
+                                              </span>
+                                              <span className="text-[9px] font-mono font-black text-purple-200 px-1 py-0.2 rounded bg-black/70 border border-purple-500/40 shrink-0">
+                                                {sp.level === 0 ? 'Truco' : `Niv ${sp.level}`}
+                                              </span>
+                                            </div>
+                                            <div
+                                              className={`font-cinzel font-black ${
+                                                isLongTitle ? 'text-[9px]' : 'text-[10px]'
+                                              } text-[#f5e4be] uppercase leading-tight line-clamp-2 break-words mt-0.5`}
+                                            >
+                                              {sp.name}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center justify-between gap-1 text-[8px] text-purple-200/85 border-t border-purple-500/30 pt-1 mt-1">
+                                          <span className="truncate">{sp.castingTime || '1 Acción'}</span>
+                                          {sp.damageOrHeal && (
+                                            <span className="font-mono font-bold text-purple-200 truncate">
+                                              {sp.damageOrHeal}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+
+                              {currentPlayerDeckCount === 0 && (
+                                <div className="col-span-3 rounded-xl border border-dashed border-[#c8a45c]/35 bg-black/40 flex items-center justify-center p-3 text-center text-[11px] text-stone-400 font-cinzel">
+                                  Sin cartas preparadas en este mazo.
+                                </div>
+                              )}
+                            </div>
+
+                            {currentPlayerDeckCount > 3 && (
+                              <button
+                                type="button"
+                                disabled={safePlayerDeckScroll >= maxPlayerDeckScroll}
+                                onClick={() =>
+                                  setPlayerDeckScrollIdx(
+                                    Math.min(maxPlayerDeckScroll, safePlayerDeckScroll + 1)
+                                  )
+                                }
+                                className="w-6 h-28 rounded-xl bg-[#191c28] hover:bg-amber-950 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 cursor-pointer"
+                              >
+                                <ChevronRight className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
+                      )}
+                    </div>
+                  ) : (
                   /* DM MINIMIZABLE PROJECTION PANEL ("Proyección de Zona") */
                   <div
                     className="rounded-2xl bg-[#12141d]/95 backdrop-blur-md border-2 border-[#c8a45c]/85 shadow-[0_10px_30px_rgba(0,0,0,0.95)] overflow-hidden transition-all"
@@ -2191,24 +2214,26 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                         </span>
                       </div>
 
-                      <button
-                        type="button"
-                        data-testid="btn-toggle-dm-projection-overlay"
-                        onClick={() => setIsLeftOverlayMinimized((prev) => !prev)}
-                        className="px-2.5 py-1 rounded-lg bg-black/50 hover:bg-black/80 border border-[#c8a45c]/50 text-[#e2c275] text-[10px] font-cinzel font-bold flex items-center gap-1 cursor-pointer shrink-0"
-                      >
-                        {isLeftOverlayMinimized ? (
-                          <>
-                            <ChevronUp className="w-3.5 h-3.5" />
-                            <span>Abrir Proyección</span>
-                          </>
-                        ) : (
-                          <>
-                            <ChevronDown className="w-3.5 h-3.5" />
-                            <span>Minimizar</span>
-                          </>
-                        )}
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          data-testid="btn-toggle-dm-projection-overlay"
+                          onClick={() => setIsLeftOverlayMinimized((prev) => !prev)}
+                          className="px-2.5 py-1 rounded-lg bg-black/50 hover:bg-black/80 border border-[#c8a45c]/50 text-[#e2c275] text-[10px] font-cinzel font-bold flex items-center gap-1 cursor-pointer shrink-0"
+                        >
+                          {isLeftOverlayMinimized ? (
+                            <>
+                              <ChevronUp className="w-3.5 h-3.5" />
+                              <span>Abrir Proyección</span>
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="w-3.5 h-3.5" />
+                              <span>Minimizar</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
 
                     {!isLeftOverlayMinimized && (
@@ -2315,14 +2340,14 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                           <button
                             type="button"
                             data-testid="tab-dm-projection-tactical"
-                            onClick={() => setDmProjectionTab('tactical')}
-                            className={`py-1.5 px-2 rounded-xl font-cinzel font-bold text-[11px] border transition cursor-pointer ${
-                              dmProjectionTab === 'tactical'
-                                ? 'bg-red-950/80 border-red-400 text-[#f5e4be]'
-                                : 'bg-[#181a24] border-stone-700 text-stone-400 hover:text-white'
-                            }`}
+                            disabled
+                            title="Los Mapas Tácticos interactivos están en desarrollo y próximamente disponibles."
+                            className="py-1.5 px-2 rounded-xl font-cinzel font-bold text-[10px] border bg-stone-900/70 border-stone-800 text-stone-500 opacity-60 cursor-not-allowed flex flex-col items-center justify-center gap-0.5"
                           >
-                            Mapas Tácticos ({filteredTacticalMaps.length})
+                            <span>Mapas Tácticos</span>
+                            <span className="text-[8px] px-1.5 py-0.2 rounded bg-amber-950/70 border border-amber-600/50 text-amber-300 uppercase tracking-wider">
+                              En Desarrollo
+                            </span>
                           </button>
                           <button
                             type="button"
@@ -3064,6 +3089,7 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                   )}
                 </div>
               </div>
+              </div>
             </div>
           </div>
         </div>
@@ -3390,128 +3416,58 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
       </div>
 
       {/* =================================================================== */}
-      {/* BOTTOM BAR: RETURN TO SHEET/WORLD + DM PURPLE FLAG + LOCATION BOX   */}
+      {/* BOTTOM BAR: MINIATURE PLAYER TAROT CARDS (BOTH DM AND PLAYERS)      */}
       {/* =================================================================== */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-stretch">
-        {/* Left 3 Cols: Return to Character Sheet / World Sheet & Save to Cloud */}
-        <div className="lg:col-span-3 flex flex-col justify-between gap-1.5">
-          <button
-            type="button"
-            data-testid="btn-map-return-sheet"
-            onClick={onReturnToSheet}
-            className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-[#23201c] to-[#191714] hover:from-[#302b25] border border-[#c8a45c]/75 text-[#f5e4be] font-cinzel font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg transition cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4 text-[#e2c275] shrink-0" />
-            <span>
-              {mode === 'dm'
-                ? 'Regresar a World Sheet'
-                : 'Regresar a Hoja de Personaje'}
+      <div
+        data-testid="map-bottom-player-cards-bar"
+        className="w-full rounded-2xl bg-gradient-to-r from-[#171822] via-[#13141c] to-[#171822] border-2 border-[#c8a45c]/80 p-3 shadow-2xl space-y-2.5"
+      >
+        <div className="flex items-center justify-between border-b border-[#c8a45c]/35 pb-1.5">
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-emerald-400" />
+            <span className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase tracking-wider">
+              Cartas de Jugadores en la Mesa ({resolvedPlayerCards.length})
             </span>
-          </button>
-
-          {onSaveToCloud && (
-            <button
-              type="button"
-              data-testid="btn-map-save-cloud"
-              onClick={onSaveToCloud}
-              className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-950 via-emerald-900/90 to-emerald-950 hover:from-emerald-900 hover:to-emerald-800 border border-emerald-400/75 text-emerald-100 font-cinzel font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow transition cursor-pointer"
-            >
-              <Upload className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-              <span>GUARDAR EN LA NUBE</span>
-            </button>
-          )}
+          </div>
+          <span className="text-[10px] font-cinzel text-[#cbb692]">
+            Sala: <strong className="text-amber-300 font-mono">{roomCode}</strong>
+          </span>
         </div>
 
-        {/* Center 7 Cols: DUNGEON MASTER Banner with Generic Purple Heraldic Flag */}
-        <div className="lg:col-span-7 bg-gradient-to-r from-[#1c1528] via-[#15121f] to-[#1c1528] border-2 border-[#c8a45c]/80 rounded-2xl px-4 py-2.5 flex items-center gap-3.5 shadow-2xl relative overflow-hidden">
-          {/* Generic Purple Heraldic Flag / Banner ("Estandarte Morado Genérico") */}
+        {resolvedPlayerCards.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-[#c8a45c]/40 bg-[#12131a]/80 p-4 text-center">
+            <p className="font-cinzel font-bold text-xs text-[#f5e4be]">
+              Sin aventureros conectados aún en la sala {roomCode}
+            </p>
+          </div>
+        ) : (
           <div
-            data-testid="dm-purple-banner-flag"
-            className="relative w-12 h-14 rounded-b-2xl rounded-t-md bg-gradient-to-b from-purple-700 via-purple-900 to-[#241038] border-2 border-[#e2c275] flex flex-col items-center justify-center shrink-0 shadow-[0_5px_15px_rgba(88,28,135,0.8)]"
-            title="Estandarte del Dungeon Master"
+            data-testid="map-player-cards-grid"
+            className="flex flex-wrap items-stretch justify-center sm:justify-start gap-3"
           >
-            <div className="w-full h-1 bg-[#e2c275]/80 absolute top-0.5" />
-            <Crown className="w-6 h-6 text-[#f5e4be] drop-shadow" />
-            <span className="text-[7px] font-cinzel font-bold text-purple-200 uppercase tracking-widest mt-0.5">
-              DM
-            </span>
-          </div>
-
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-cinzel font-black text-sm sm:text-base text-[#f5e4be] uppercase tracking-wider">
-                  DUNGEON MASTER
-                </span>
-                <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  En Línea • Mesa: {roomCode}
-                </span>
-                {dmMessageSentToast && (
-                  <span className="text-[10px] font-bold text-amber-300">
-                    ✓ Mensaje actualizado en mesa
-                  </span>
-                )}
-              </div>
-
-              {mode === 'player' && onSendPlayerMessageToDM && (
-                <button
-                  type="button"
-                  onClick={() => setIsWhisperModalOpen(true)}
-                  className="px-3 py-1 rounded-xl bg-purple-800/80 hover:bg-purple-700 border border-purple-400/60 text-white font-cinzel font-bold text-xs flex items-center gap-1.5 cursor-pointer"
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Susurrar al DM</span>
-                </button>
-              )}
-            </div>
-
-            {mode === 'dm' ? (
-              <div className="flex items-center gap-2 mt-1.5">
-                <input
-                  type="text"
-                  value={dmMessageInput}
-                  onChange={(e) => setDmMessageInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendLiveMessageFromDm()}
-                  placeholder="⚔️ ¡Aventureros en posición! Escribe un mensaje en vivo para la sala..."
-                  className="flex-1 bg-[#0e1017] border border-stone-700 focus:border-[#c8a45c] rounded-xl px-3 py-1.5 text-xs text-stone-100 focus:outline-none"
+            {resolvedPlayerCards.map((member) => (
+              <div
+                key={member.characterId}
+                className="w-full sm:w-[255px] md:w-[265px] shrink-0"
+              >
+                <CharacterTarotCard
+                  member={member}
+                  character={
+                    character && character.id === member.characterId ? character : undefined
+                  }
+                  isOnline={true}
+                  miniature={true}
+                  miniGrid={true}
+                  showLastRollInMap={true}
+                  lastRoll={member.lastRoll}
+                  showDmControls={mode === 'dm'}
+                  onDmAdjustPlayer={onDmAdjustPlayer}
+                  dataTestId={`map-player-card-${member.characterId}`}
                 />
-                <button
-                  type="button"
-                  onClick={handleSendLiveMessageFromDm}
-                  className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 font-cinzel font-black text-xs flex items-center gap-1.5 cursor-pointer shrink-0 shadow"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Enviar</span>
-                </button>
               </div>
-            ) : (
-              <p className="text-xs text-purple-100/95 truncate mt-1">
-                ⚔️{' '}
-                {dmLiveMessage ||
-                  '¡Aventureros en posición! El Dungeon Master guía la exploración de la zona.'}
-              </p>
-            )}
+            ))}
           </div>
-        </div>
-
-        {/* Right 2 Cols: CURRENT LOCATION BOX (Shows where the party is instead of "MAPA EN VIVO") */}
-        <div
-          data-testid="map-current-location-box"
-          className="lg:col-span-2 rounded-2xl bg-gradient-to-b from-[#231e17] to-[#14161f] border-2 border-[#e2c275] px-3 py-2 flex flex-col items-center justify-center text-center shadow-xl"
-        >
-          <span className="text-[9px] font-cinzel font-bold uppercase tracking-widest text-[#cbb692]">
-            Ubicación Actual
-          </span>
-          <div className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase truncate max-w-full mt-0.5 flex items-center gap-1">
-            <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-            <span className="truncate">{currentPlaceShortName}</span>
-          </div>
-          <span className="text-[10px] text-emerald-300 font-medium truncate max-w-full mt-0.5 flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block shrink-0" />
-            <span className="truncate">Viendo: {activeVisual.title}</span>
-          </span>
-        </div>
+        )}
       </div>
 
       {/* =================================================================== */}

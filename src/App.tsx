@@ -32,6 +32,11 @@ import {
   Check,
   Wrench,
   ShieldCheck,
+  Palette,
+  Compass,
+  MapPin,
+  MessageSquare,
+  Send,
 } from 'lucide-react';
 import {
   Character5e,
@@ -47,7 +52,12 @@ import {
   PlayerMessageToDM,
   LiveBroadcastPopup,
   LiveRoomProjection,
+  AppSkinRecord,
 } from './types/dnd';
+import {
+  computeLobbyBlockContainerStyle,
+  resolveLobbyPageLayout,
+} from './utils/lobbyPageLayout';
 import {
   loadCharacters,
   saveCharacters,
@@ -92,9 +102,18 @@ import {
   calculateProficiencyBonus,
   calculatePassivePerception,
   calculateModifier,
+  calculateEquippedItemStatBonuses,
+  resolveTarotCardAbilityScores,
   filterAlbumPhotosByPlace,
   buildLiveProjectionFromWorkspace as computeLiveProjectionFromWorkspace,
+  canAccessArcaneOracle,
+  getHeaderRoleButtonsVisibility,
 } from './utils/dnd-math';
+import {
+  enqueueOfflineTableEvent,
+  flushOfflineTableEvents,
+  evaluateRoomClosureResilience,
+} from './utils/offlineEventQueue';
 import { SAMPLE_DM_WORKSPACE } from './data/srd';
 
 export default function App() {
@@ -157,13 +176,34 @@ export default function App() {
   // Active Character
   const activeCharacter = characters.find((c) => c.id === activeCharId) || characters[0];
 
-  // Modals
+  // Modals & Creator Online Skin
   const [isCreatorOpen, setIsCreatorOpen] = useState<boolean>(false);
   const [isCompendiumOpen, setIsCompendiumOpen] = useState<boolean>(false);
   const [isOracleOpen, setIsOracleOpen] = useState<boolean>(false);
   const [oracleInitialPrompt, setOracleInitialPrompt] = useState<string>('');
+  const [oracleClientBlockedNotice, setOracleClientBlockedNotice] = useState<string>('');
   const [isRollFeedOpen, setIsRollFeedOpen] = useState<boolean>(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState<boolean>(false);
+  const [onlineAppSkin, setOnlineAppSkin] = useState<AppSkinRecord | null>(null);
+
+  // Optimistic mutation lock & debounce refs to prevent HP/Map flickering and 15-30 min table lag
+  const lastLocalPlayerMutationAtRef = useRef<number>(0);
+  const lastLocalDmMutationAtRef = useRef<number>(0);
+  const playerVaultSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const consecutiveClosedPollsRef = useRef<number>(0);
+  const [reconnectingNotice, setReconnectingNotice] = useState<string>('');
+
+  const effectiveAppRole =
+    authUser?.appRole ||
+    (authUser?.role === 'admin' || userRole === 'admin'
+      ? 'admin'
+      : authUser?.role === 'creator' || userRole === 'creator'
+      ? 'creator'
+      : authUser?.role === 'moderator' || userRole === 'moderator'
+      ? 'moderator'
+      : 'client');
+  const canUseArcaneOracle = canAccessArcaneOracle(effectiveAppRole);
+  const headerRoleVisibility = getHeaderRoleButtonsVisibility(effectiveAppRole);
 
   // App Total Backup Restore
   const appRestoreFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -248,6 +288,14 @@ export default function App() {
   });
   const [liveProjection, setLiveProjection] = useState<LiveRoomProjection | undefined>(undefined);
   const lastSeenDmModifiedAtRef = useRef<number>(0);
+
+  // Unified Top Session Bar DM Message & Player Whisper Modal State
+  const [topDmMessageInput, setTopDmMessageInput] = useState<string>('');
+  const [topDmMessageSentToast, setTopDmMessageSentToast] = useState<boolean>(false);
+  const [isTopWhisperModalOpen, setIsTopWhisperModalOpen] = useState<boolean>(false);
+  const [topWhisperTitle, setTopWhisperTitle] = useState<string>('');
+  const [topWhisperBody, setTopWhisperBody] = useState<string>('');
+  const [topWhisperStatus, setTopWhisperStatus] = useState<string>('');
 
   // DM -> Player Share Offer Notifications & Resolutions
   const [pendingPlayerOffers, setPendingPlayerOffers] = useState<PendingDmOffer[]>([]);
@@ -410,6 +458,31 @@ export default function App() {
     };
   }, []);
 
+  // Fetch active online App Skin from Creator Studio catalog
+  useEffect(() => {
+    let isMounted = true;
+    const fetchActiveSkin = async () => {
+      try {
+        const res = await fetch('/api/creator/catalog');
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          const cat = data?.catalog;
+          if (cat && Array.isArray(cat.appSkins)) {
+            const active =
+              cat.appSkins.find((s: AppSkinRecord) => s.id === cat.activeOnlineAppSkinId) ||
+              cat.appSkins.find((s: AppSkinRecord) => s.isOnlineActive) ||
+              cat.appSkins[0];
+            if (active) setOnlineAppSkin(active);
+          }
+        }
+      } catch {}
+    };
+    fetchActiveSkin();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Continuous Cloud & Mirror Backup Comparison (Archivo Base vs Latest Backup & Pre-Replace Archiving)
   useEffect(() => {
     let isMounted = true;
@@ -417,6 +490,10 @@ export default function App() {
 
     const runContinuousBackupComparison = async () => {
       if (!isMounted) return;
+      // Pause heavy full-vault JSON mirror comparison during active real-time table combat to prevent 15-30 min GC lag
+      if (appViewRef.current === 'player-session' || appViewRef.current === 'dm-session') {
+        return;
+      }
       try {
         let mirrorObj: any = null;
         try {
@@ -550,8 +627,12 @@ export default function App() {
     if (!target) return;
     try {
       const prof = calculateProficiencyBonus(target.level);
+      const equippedBonuses = target.inventory
+        ? calculateEquippedItemStatBonuses(target.inventory)
+        : null;
+      const totalAbilities = resolveTarotCardAbilityScores(target, null);
       const pp = calculatePassivePerception(
-        target.abilities.wis.score,
+        totalAbilities.wis.totalScore,
         target.skills.perception,
         prof
       );
@@ -574,24 +655,24 @@ export default function App() {
           avatarIcon: target.avatarIcon,
           avatarUrl: target.avatarUrl,
           currentHp: target.currentHp,
-          maxHp: target.maxHp,
-          ac: target.armorClass,
+          maxHp: target.maxHp + (equippedBonuses?.maxHp ?? 0),
+          ac: target.armorClass + (equippedBonuses?.ac ?? 0),
           passivePerception: pp,
           level: target.level,
           experience: target.experience ?? target.xp ?? 0,
           alignment: target.alignment,
-          speed: target.speed,
-          initiative: target.initiativeBonus,
+          speed: (target.speed ?? 30) + (equippedBonuses?.speed ?? 0),
+          initiative: (target.initiativeBonus ?? 0) + (equippedBonuses?.initiative ?? 0),
           race: target.race,
           characterClass: `${target.race} ${target.characterClass}`,
           lastRoll: recentRoll,
           abilities: {
-            str: target.abilities.str.score,
-            dex: target.abilities.dex.score,
-            con: target.abilities.con.score,
-            int: target.abilities.int.score,
-            wis: target.abilities.wis.score,
-            cha: target.abilities.cha.score,
+            str: totalAbilities.str.totalScore,
+            dex: totalAbilities.dex.totalScore,
+            con: totalAbilities.con.totalScore,
+            int: totalAbilities.int.totalScore,
+            wis: totalAbilities.wis.totalScore,
+            cha: totalAbilities.cha.totalScore,
           },
           currency: target.currency,
         }),
@@ -753,22 +834,81 @@ export default function App() {
 
         if (res.status === 404) {
           const data = await res.json().catch(() => ({}));
-          if (appView === 'player-session' && data.closed && !isPreviewSessionUrl) {
-            setRoomClosedAlert(data.error || 'La mesa ha sido cerrada por el Dungeon Master.');
-            setAppView('lobby');
-            return;
+          if (appView === 'player-session' && !isPreviewSessionUrl) {
+            const evalRes = evaluateRoomClosureResilience({
+              responseStatus: 404,
+              responseClosed: Boolean(data.closed),
+              explicitlyClosedByDm: Boolean(data.explicitlyClosedByDm),
+              consecutiveClosedCount: consecutiveClosedPollsRef.current,
+              isPreviewSessionUrl,
+            });
+            consecutiveClosedPollsRef.current = evalRes.nextConsecutiveClosedCount;
+            if (evalRes.shouldReturnToLobby) {
+              setReconnectingNotice('');
+              setRoomClosedAlert(data.error || 'La mesa ha sido cerrada por el Dungeon Master.');
+              setAppView('lobby');
+              return;
+            } else if (evalRes.showReconnectingNotice) {
+              setReconnectingNotice('Reconectando con la mesa...');
+              return;
+            }
           }
         }
 
         if (res.ok) {
           const data = await res.json();
-          if (data.closed && appView === 'player-session' && !isPreviewSessionUrl) {
-            setRoomClosedAlert(data.error || 'El Dungeon Master ha cerrado la mesa.');
-            setAppView('lobby');
-            return;
+          if (appView === 'player-session' && !isPreviewSessionUrl) {
+            const evalRes = evaluateRoomClosureResilience({
+              responseStatus: 200,
+              responseClosed: Boolean(data.closed),
+              explicitlyClosedByDm: Boolean(data.explicitlyClosedByDm),
+              consecutiveClosedCount: consecutiveClosedPollsRef.current,
+              isPreviewSessionUrl,
+            });
+            consecutiveClosedPollsRef.current = evalRes.nextConsecutiveClosedCount;
+            if (evalRes.shouldReturnToLobby) {
+              setReconnectingNotice('');
+              setRoomClosedAlert(data.error || 'El Dungeon Master ha cerrado la mesa.');
+              setAppView('lobby');
+              return;
+            } else if (evalRes.showReconnectingNotice) {
+              setReconnectingNotice('Reconectando con la mesa...');
+              return;
+            }
           }
 
-          setPartyMembers(data.party || []);
+          setReconnectingNotice('');
+          // Flush any locally queued events from a previous micro-disconnection
+          flushOfflineTableEvents(roomCode).catch(() => {});
+
+          // Protect against HP flickering: if player mutated HP locally within last 3.5s, keep local HP in party list unless DM explicitly adjusted it
+          const recentlyMutatedPlayerLocally =
+            Date.now() - lastLocalPlayerMutationAtRef.current < 3500;
+          const recentlyMutatedDmLocally =
+            Date.now() - lastLocalDmMutationAtRef.current < 3500;
+
+          if (Array.isArray(data.party)) {
+            setPartyMembers(
+              data.party.map((m: any) => {
+                if (
+                  appView === 'player-session' &&
+                  recentlyMutatedPlayerLocally &&
+                  activeCharacterRef.current &&
+                  m.characterId === activeCharacterRef.current.id &&
+                  (!m.dmModifiedAt || m.dmModifiedAt <= lastSeenDmModifiedAtRef.current)
+                ) {
+                  return {
+                    ...m,
+                    currentHp: activeCharacterRef.current.currentHp,
+                    maxHp: activeCharacterRef.current.maxHp,
+                    currency: activeCharacterRef.current.currency,
+                  };
+                }
+                return m;
+              })
+            );
+          }
+
           // If the DM adjusted this player's HP or gold, apply it to activeCharacter immediately
           if (appView === 'player-session' && activeCharacterRef.current && Array.isArray(data.party)) {
             const myEntry = data.party.find(
@@ -788,30 +928,31 @@ export default function App() {
                 currency: myEntry.currency || currentChar.currency,
               };
               activeCharacterRef.current = updatedChar;
-              setCharacters((prev) =>
-                prev.map((c) => (c.id === updatedChar.id ? updatedChar : c))
-              );
-              saveCharacters(
-                characters.map((c) => (c.id === updatedChar.id ? updatedChar : c))
-              );
+              setCharacters((prev) => {
+                const next = prev.map((c) => (c.id === updatedChar.id ? updatedChar : c));
+                saveCharacters(next);
+                return next;
+              });
             }
           }
           if (Array.isArray(data.rollFeed)) {
-            setRollFeed(data.rollFeed);
+            setRollFeed(data.rollFeed.slice(-35));
           }
           setServerDmConnected(Boolean(data.dmConnected));
           setServerDmLiveMessage(data.dmLiveMessage || '');
           if (data.dmLastRoll) {
             setServerDmLastRoll(data.dmLastRoll);
           }
-          if (data.showCombatantsOnTable !== undefined) {
-            setShowCombatantsOnTable(Boolean(data.showCombatantsOnTable));
-          }
-          if (Array.isArray(data.liveCombatants)) {
-            setLiveCombatants(data.liveCombatants);
-          }
-          if (data.liveProjection) {
-            setLiveProjection(data.liveProjection);
+          if (!recentlyMutatedDmLocally) {
+            if (data.showCombatantsOnTable !== undefined) {
+              setShowCombatantsOnTable(Boolean(data.showCombatantsOnTable));
+            }
+            if (Array.isArray(data.liveCombatants)) {
+              setLiveCombatants(data.liveCombatants);
+            }
+            if (data.liveProjection) {
+              setLiveProjection(data.liveProjection);
+            }
           }
           if (Array.isArray(data.playerMessages)) {
             setRoomPlayerMessages(data.playerMessages);
@@ -1366,6 +1507,7 @@ export default function App() {
 
   // Character updates
   const handleUpdateCharacter = (updated: Character5e) => {
+    lastLocalPlayerMutationAtRef.current = Date.now();
     activeCharacterRef.current = updated;
     const newChars = characters.some((c) => c.id === updated.id)
       ? characters.map((c) => (c.id === updated.id ? updated : c))
@@ -1374,15 +1516,21 @@ export default function App() {
     saveCharacters(newChars);
 
     if (authUser?.email) {
-      fetch('/api/vault/sheets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          character: updated,
-          ownerEmail: authUser.email,
-          reason: 'manual',
-        }),
-      }).catch(() => {});
+      if (playerVaultSaveTimeoutRef.current) {
+        clearTimeout(playerVaultSaveTimeoutRef.current);
+      }
+      const saveDelay = appView === 'player-session' ? 1200 : 250;
+      playerVaultSaveTimeoutRef.current = setTimeout(() => {
+        fetch('/api/vault/sheets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            character: activeCharacterRef.current || updated,
+            ownerEmail: authUser.email,
+            reason: 'manual',
+          }),
+        }).catch(() => {});
+      }, saveDelay);
     }
 
     if (appView === 'player-session') {
@@ -1457,12 +1605,25 @@ export default function App() {
 
     try {
       const isDmRoll = appView === 'dm-session';
-      await fetch(`/api/session/room/${roomCode}/roll?isDm=${isDmRoll}&characterId=${activeCharacter?.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(result),
+      const res = await fetch(
+        `/api/session/room/${roomCode}/roll?isDm=${isDmRoll}&characterId=${activeCharacter?.id}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(result),
+        }
+      );
+      if (!res.ok) throw new Error('Roll sync failed');
+    } catch (e) {
+      enqueueOfflineTableEvent({
+        roomCode,
+        type: 'ROLL',
+        characterId: activeCharacter?.id,
+        characterName: activeCharacter?.name,
+        playerName: activeCharacter?.playerName,
+        payload: { roll: result },
       });
-    } catch (e) {}
+    }
   };
 
   const handleBroadcastAnnouncement = (title: string, content: string) => {
@@ -1478,6 +1639,13 @@ export default function App() {
   };
 
   const handleOpenAIOracle = (initialPrompt?: string) => {
+    if (!canUseArcaneOracle) {
+      setOracleClientBlockedNotice(
+        '🔒 Sabio Arcano se encuentra en desarrollo (Disponible próximamente para clientes).'
+      );
+      setTimeout(() => setOracleClientBlockedNotice(''), 4500);
+      return;
+    }
     if (initialPrompt) setOracleInitialPrompt(initialPrompt);
     setIsOracleOpen(true);
   };
@@ -1510,22 +1678,79 @@ export default function App() {
     }
   };
 
+  const hasCustomAppLayout = Boolean(onlineAppSkin?.themeTokens?.lobbyPageLayout);
+  const liveAppLayout = resolveLobbyPageLayout(onlineAppSkin?.themeTokens);
+
   return (
-    <div className="min-h-screen bg-[#101115] text-[#e2d9cc] flex flex-col font-sans selection:bg-amber-700 selection:text-white">
+    <div
+      style={
+        onlineAppSkin?.themeTokens?.appBgColor
+          ? { backgroundColor: onlineAppSkin.themeTokens.appBgColor }
+          : undefined
+      }
+      className={`min-h-screen relative ${onlineAppSkin?.themeTokens?.appBgGradient || 'bg-[#101115]'} text-[#e2d9cc] flex flex-col font-sans selection:bg-amber-700 selection:text-white`}
+    >
+      {/* Optional Global Wallpaper & Custom Overlay from Lobby Page Builder */}
+      {liveAppLayout.wallpaperUrl && (
+        <div
+          style={{
+            backgroundImage: `url("${liveAppLayout.wallpaperUrl}")`,
+            opacity: liveAppLayout.wallpaperOpacity ?? 0.35,
+          }}
+          className="fixed inset-0 bg-cover bg-center pointer-events-none z-0"
+        />
+      )}
+      {liveAppLayout.customOverlayUrl && (
+        <div
+          style={{
+            backgroundImage: `url("${liveAppLayout.customOverlayUrl}")`,
+            opacity: liveAppLayout.customOverlayOpacity ?? 0.5,
+          }}
+          className="fixed inset-0 bg-repeat bg-center pointer-events-none z-10"
+        />
+      )}
+
       {/* =================================================================== */}
       {/* TOP COMPACT APPLICATION HEADER                                      */}
       {/* =================================================================== */}
-      <header className="sticky top-0 z-40 bg-[#12131a]/95 backdrop-blur-md border-b border-[#c8a45c]/40 shadow-xl">
-        <div className="max-w-[1650px] mx-auto px-4 h-16 flex items-center justify-between gap-4">
-          {/* Left: Branding + Clickable Version Badge (?) */}
-          <div className="flex items-center gap-3">
+      <header
+        style={
+          hasCustomAppLayout
+            ? computeLobbyBlockContainerStyle(liveAppLayout.blocks.top_header)
+            : undefined
+        }
+        className={`sticky top-0 z-40 ${onlineAppSkin?.themeTokens?.topHeaderBg || 'bg-[#12131a]/95'} backdrop-blur-md border-b ${onlineAppSkin?.themeTokens?.topHeaderBorder || 'border-[#c8a45c]/40'} shadow-xl`}
+      >
+        <div className="max-w-[1920px] mx-auto px-2.5 sm:px-4 min-h-[60px] py-1.5 flex items-center justify-between gap-2 flex-wrap xl:flex-nowrap">
+          {/* Left: Branding + Version + Session Return/Save Controls */}
+          <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={() => setAppView('lobby')}
-              className="flex items-center gap-2.5 text-left group transition cursor-pointer"
+              onClick={() => {
+                setIsSessionMapViewOpen(false);
+                setAppView('lobby');
+              }}
+              className="flex items-center gap-2 text-left group transition cursor-pointer shrink-0"
             >
               <BrandLogo hostSettings={hostSettings} size="md" className="group-hover:scale-105 transition" />
-              <span className="font-cinzel font-black text-xl sm:text-2xl text-[#f5e4be] tracking-wider uppercase leading-none group-hover:text-amber-300 transition">
-                {hostSettings.headerTitle || 'WEROLL'}
+              <span
+                style={
+                  hasCustomAppLayout && liveAppLayout.blocks.top_header?.titleColor
+                    ? {
+                        color: liveAppLayout.blocks.top_header.titleColor,
+                        fontSize: liveAppLayout.blocks.top_header.titleFontSizePx
+                          ? `${liveAppLayout.blocks.top_header.titleFontSizePx}px`
+                          : undefined,
+                      }
+                    : undefined
+                }
+                className={`font-cinzel font-black ${
+                  appView === 'lobby' ? 'text-xl sm:text-2xl' : 'text-base sm:text-lg'
+                } ${onlineAppSkin?.themeTokens?.titleColor || 'text-[#f5e4be]'} tracking-wider uppercase leading-none group-hover:text-amber-300 transition`}
+              >
+                {(hasCustomAppLayout && liveAppLayout.blocks.top_header?.titleText) ||
+                  onlineAppSkin?.themeTokens?.headerBrandText ||
+                  hostSettings.headerTitle ||
+                  'WEROLL'}
               </span>
             </button>
 
@@ -1533,66 +1758,337 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsChangelogOpen(true)}
-              className="px-2.5 py-1 rounded-full bg-[#1b1d28] hover:bg-[#252836] border border-[#c8a45c]/50 text-[#e2c275] text-[11px] font-cinzel font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
+              className="px-2 py-0.5 rounded-full bg-[#1b1d28] hover:bg-[#252836] border border-[#c8a45c]/50 text-[#e2c275] text-[10px] font-cinzel font-bold flex items-center gap-1 transition shadow cursor-pointer shrink-0"
               title="Ver historial de versiones y novedades"
             >
-              <span>v1.2 Beta</span>
-              <span className="w-4 h-4 rounded-full bg-[#c8a45c]/25 border border-[#e2c275] text-[#f5e4be] flex items-center justify-center text-[10px] font-black">
+              <span>v{hostSettings.changelog?.[0]?.version || '1.4 Beta'}</span>
+              <span className="w-3.5 h-3.5 rounded-full bg-[#c8a45c]/25 border border-[#e2c275] text-[#f5e4be] flex items-center justify-center text-[9px] font-black">
                 ?
               </span>
             </button>
+            {reconnectingNotice && (
+              <span className="px-2 py-0.5 rounded-full bg-amber-950/90 border border-amber-500/60 text-amber-300 text-[10px] font-cinzel font-bold animate-pulse">
+                ⚡ {reconnectingNotice}
+              </span>
+            )}
 
-            {appView === 'player-solo' && (
-              <div className="flex items-center gap-1.5 ml-2">
+            {/* Unified Return & Save Buttons in Top Bar when inside Sheet, DM Screen, or Map Mode */}
+            {appView !== 'lobby' && (
+              <div className="flex items-center gap-1.5 ml-1 pl-2 border-l border-[#c8a45c]/30">
+                {isSessionMapViewOpen ? (
+                  <button
+                    type="button"
+                    data-testid="btn-map-return-sheet"
+                    onClick={() => setIsSessionMapViewOpen(false)}
+                    className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-[#23201c] to-[#191714] hover:from-[#302b25] border border-[#c8a45c]/75 text-[#f5e4be] font-cinzel font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5 shadow transition cursor-pointer whitespace-nowrap"
+                    title={
+                      appView === 'dm-session'
+                        ? 'Regresar a World Sheet'
+                        : 'Regresar a Hoja de Personaje'
+                    }
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5 text-[#e2c275] shrink-0" />
+                    <span>
+                      {appView === 'dm-session'
+                        ? 'Regresar a World Sheet'
+                        : 'Regresar a Hoja de Personaje'}
+                    </span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid={
+                      appView === 'dm-session' ? 'btn-dm-return-lobby' : 'btn-player-return-lobby'
+                    }
+                    onClick={
+                      appView === 'dm-session'
+                        ? handleDmSaveAndReturnToLobby
+                        : handlePlayerReturnToLobby
+                    }
+                    className="px-2.5 py-1.5 rounded-xl bg-[#1b1d28] hover:bg-[#252836] text-[#f5e4be] font-cinzel font-bold text-[10px] uppercase tracking-wider transition flex items-center gap-1.5 border border-[#c8a45c]/65 shadow cursor-pointer whitespace-nowrap"
+                    title="Regresar al Lobby"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5 text-[#e2c275] shrink-0" />
+                    <span>Regresar al Lobby</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
-                  onClick={handlePlayerReturnToLobby}
-                  className="px-2.5 py-1 rounded-lg bg-[#1b1d28] hover:bg-[#252836] text-[#f5e4be] font-cinzel font-bold text-[11px] transition flex items-center gap-1 border border-[#c8a45c]/50 shadow cursor-pointer"
-                  title="Regresar al Lobby"
+                  data-testid={
+                    appView === 'dm-session' ? 'btn-dm-save-cloud' : 'btn-map-save-cloud'
+                  }
+                  onClick={
+                    appView === 'dm-session' ? handleDmSaveToCloud : handlePlayerSaveToCloud
+                  }
+                  className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-950 via-emerald-900/90 to-emerald-950 hover:from-emerald-900 hover:to-emerald-800 text-emerald-100 font-cinzel font-bold text-[10px] uppercase tracking-wider transition flex items-center gap-1.5 border border-emerald-400/75 shadow cursor-pointer whitespace-nowrap"
+                  title="Guardar en la Nube"
                 >
-                  <ArrowLeft className="w-3 h-3 text-[#e2c275]" />
-                  <span>Lobby</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePlayerSaveToCloud}
-                  className="px-2.5 py-1 rounded-lg bg-emerald-900/80 hover:bg-emerald-800 text-emerald-100 font-cinzel font-bold text-[11px] transition flex items-center gap-1 border border-emerald-500/50 shadow cursor-pointer"
-                  title="Guardar hoja en la nube"
-                >
-                  <Upload className="w-3 h-3 text-emerald-300" />
-                  <span className="hidden sm:inline">Guardar</span>
+                  <Upload className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                  <span>Guardar</span>
                 </button>
               </div>
             )}
           </div>
 
-          {/* Right: Icon-Above-Label Utilities */}
-          <div className="flex items-center gap-2">
+          {/* Center: Unified Dungeon Master Banner + Ubicación Actual / Mapa Button (in both Sheet & Map Mode) */}
+          {appView !== 'lobby' && (
+            <div
+              data-testid="top-session-unified-bar"
+              className="flex-1 flex items-center justify-center gap-2 min-w-0"
+            >
+              {/* Estandarte del Dungeon Master */}
+              <div className="flex-1 max-w-2xl bg-gradient-to-r from-[#1c1528] via-[#15121f] to-[#1c1528] border border-[#c8a45c]/75 rounded-xl px-2.5 py-1 flex items-center justify-between gap-2 shadow-lg min-w-0">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div
+                    data-testid="dm-purple-banner-flag"
+                    className="w-8 h-8 rounded-lg bg-gradient-to-b from-purple-700 via-purple-900 to-[#241038] border border-[#e2c275] flex flex-col items-center justify-center shrink-0 shadow"
+                    title="Estandarte del Dungeon Master"
+                  >
+                    <Crown className="w-4 h-4 text-[#f5e4be]" />
+                  </div>
+
+                  {appView === 'dm-session' ? (
+                    <div className="flex-1 flex items-center gap-1.5 min-w-0">
+                      <span className="font-cinzel font-black text-[10px] text-[#f5e4be] uppercase tracking-wider hidden sm:inline shrink-0">
+                        DM:
+                      </span>
+                      <input
+                        type="text"
+                        value={topDmMessageInput}
+                        onChange={(e) => setTopDmMessageInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const msg =
+                              topDmMessageInput.trim() ||
+                              dmWorkspace.dmLiveMessage ||
+                              '¡Aventureros en posición!';
+                            const updated = { ...dmWorkspace, dmLiveMessage: msg };
+                            lastLocalDmMutationAtRef.current = Date.now();
+                            dmWorkspaceRef.current = updated;
+                            setDmWorkspace(updated);
+                            saveDMWorkspace(updated);
+                            setServerDmLiveMessage(msg);
+                            if (broadcastChannelRef.current) {
+                              broadcastChannelRef.current.postMessage({
+                                type: 'DM_LIVE_MESSAGE',
+                                payload: msg,
+                              });
+                            }
+                            sendDmHeartbeat(updated);
+                            setTopDmMessageSentToast(true);
+                            setTimeout(() => setTopDmMessageSentToast(false), 2000);
+                          }
+                        }}
+                        placeholder={
+                          dmWorkspace.dmLiveMessage ||
+                          'Escribe mensaje en vivo para la sala...'
+                        }
+                        className="flex-1 min-w-[120px] bg-[#0e1017] border border-stone-700 focus:border-[#c8a45c] rounded-lg px-2.5 py-1 text-xs text-stone-100 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        data-testid="btn-send-dm-live-message"
+                        onClick={() => {
+                          const msg =
+                            topDmMessageInput.trim() ||
+                            dmWorkspace.dmLiveMessage ||
+                            '¡Aventureros en posición!';
+                          const updated = { ...dmWorkspace, dmLiveMessage: msg };
+                          lastLocalDmMutationAtRef.current = Date.now();
+                          dmWorkspaceRef.current = updated;
+                          setDmWorkspace(updated);
+                          saveDMWorkspace(updated);
+                          setServerDmLiveMessage(msg);
+                          if (broadcastChannelRef.current) {
+                            broadcastChannelRef.current.postMessage({
+                              type: 'DM_LIVE_MESSAGE',
+                              payload: msg,
+                            });
+                          }
+                          sendDmHeartbeat(updated);
+                          setTopDmMessageSentToast(true);
+                          setTimeout(() => setTopDmMessageSentToast(false), 2000);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-emerald-700 to-emerald-600 hover:from-emerald-600 hover:to-emerald-500 border border-emerald-400/80 text-white font-cinzel font-bold text-[10px] flex items-center gap-1 cursor-pointer shrink-0 shadow"
+                      >
+                        <Send className="w-3 h-3" />
+                        <span>{topDmMessageSentToast ? '¡Enviado!' : 'Enviar'}</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-cinzel font-black text-[10px] text-[#f5e4be] uppercase tracking-wider">
+                          DUNGEON MASTER
+                        </span>
+                        <span className="text-[9px] font-bold text-emerald-400 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          Mesa: {roomCode}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-purple-100/95 truncate">
+                        {serverDmLiveMessage ||
+                          dmWorkspace.dmLiveMessage ||
+                          'El Dungeon Master observa la mesa en silencio...'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsRollFeedOpen(true)}
+                    className="px-2 py-1 rounded-lg bg-black/55 hover:bg-black/80 border border-purple-400/40 text-purple-200 font-cinzel font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                    title="Ver historial de tiradas de la sala"
+                  >
+                    <Dices className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="hidden md:inline">Tiradas ({rollFeed.length})</span>
+                  </button>
+
+                  {appView !== 'dm-session' && (
+                    <button
+                      type="button"
+                      onClick={() => setIsTopWhisperModalOpen(true)}
+                      className="px-2.5 py-1 rounded-lg bg-purple-800/85 hover:bg-purple-700 border border-purple-400/60 text-white font-cinzel font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                      title="Susurrar mensaje privado al Dungeon Master"
+                    >
+                      <MessageSquare className="w-3 h-3" />
+                      <span>Susurrar al DM</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Botón de Ubicación Actual / Mapa (Same Position in Sheet and Map Mode) */}
+              {(() => {
+                const rawFolder =
+                  appView === 'dm-session'
+                    ? dmWorkspace.activeAtlasFolder ||
+                      dmWorkspace.activeLiveVisual?.folder ||
+                      'all'
+                    : liveProjection?.locationFolder || 'all';
+                const shortLocation =
+                  rawFolder === 'all'
+                    ? activeWorld?.name || 'Mundo Completo'
+                    : rawFolder.split('/').pop()?.trim() || rawFolder;
+                const visualTitle =
+                  appView === 'dm-session'
+                    ? dmWorkspace.activeLiveVisual?.title || shortLocation
+                    : liveProjection?.visualTitle ||
+                      liveProjection?.locationName ||
+                      shortLocation;
+
+                return (
+                  <button
+                    type="button"
+                    data-testid={
+                      isSessionMapViewOpen
+                        ? 'map-current-location-box'
+                        : appView === 'dm-session'
+                        ? 'btn-dm-live-map'
+                        : 'btn-player-open-map'
+                    }
+                    onClick={() => setIsSessionMapViewOpen((prev) => !prev)}
+                    className={`px-3 py-1 rounded-xl border-2 transition flex items-center gap-2 shrink-0 cursor-pointer shadow-lg ${
+                      isSessionMapViewOpen
+                        ? 'bg-gradient-to-b from-amber-950/90 to-[#181410] border-[#f5e4be] ring-1 ring-amber-400/40'
+                        : 'bg-gradient-to-b from-[#231e17] to-[#14161f] hover:from-[#2e261c] border-[#e2c275]'
+                    }`}
+                    title={
+                      isSessionMapViewOpen
+                        ? 'Ubicación Actual en Mapa (Clic para volver a Hoja)'
+                        : 'Ir a Modo Mapa de la Mesa'
+                    }
+                  >
+                    <Compass className="w-4 h-4 text-amber-300 shrink-0" />
+                    <div className="text-left min-w-0 max-w-[165px]">
+                      <div className="font-cinzel font-black text-[10px] text-[#f5e4be] uppercase truncate leading-tight">
+                        {isSessionMapViewOpen ? `📍 ${shortLocation}` : `MAPA • ${shortLocation}`}
+                      </div>
+                      <div className="text-[9px] text-emerald-300 truncate leading-tight flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0" />
+                        <span className="truncate">Viendo: {visualTitle}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* Right: Utilities (Full icon+text in Lobby, Compact icon-only with logos & colors in Sheet/Map Mode) */}
+          <div className="flex items-center gap-1.5 shrink-0">
             {/* Manual SRD 5E */}
             <button
               type="button"
               onClick={() => setIsCompendiumOpen(true)}
-              className="px-3 py-1.5 rounded-xl bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/45 text-[#f5e4be] transition flex flex-col items-center justify-center gap-0.5 min-w-[68px] cursor-pointer shadow-sm"
+              className={
+                appView === 'lobby'
+                  ? 'px-3 py-1.5 rounded-xl bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/45 text-[#f5e4be] transition flex flex-col items-center justify-center gap-0.5 min-w-[68px] cursor-pointer shadow-sm'
+                  : 'w-8 h-8 rounded-lg bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/60 text-[#e2c275] transition flex items-center justify-center cursor-pointer shadow-sm'
+              }
               title="Manual SRD 5E"
+              aria-label="Manual SRD 5E"
             >
               <BookOpen className="w-4 h-4 text-[#e2c275]" />
-              <span className="text-[10px] font-cinzel font-bold leading-none">Manual</span>
+              {appView === 'lobby' && (
+                <span className="text-[10px] font-cinzel font-bold leading-none">
+                  {onlineAppSkin?.themeTokens?.compendiumButtonLabel || 'Manual'}
+                </span>
+              )}
             </button>
 
-            {/* Saber Arcano IA */}
+            {/* Sabio Arcano */}
             <button
               type="button"
+              data-testid="btn-header-arcane-oracle"
+              aria-disabled={!canUseArcaneOracle}
               onClick={() => {
+                if (!canUseArcaneOracle) {
+                  setOracleClientBlockedNotice(
+                    '🔒 Sabio Arcano se encuentra en desarrollo (Disponible próximamente para clientes).'
+                  );
+                  setTimeout(() => setOracleClientBlockedNotice(''), 4500);
+                  return;
+                }
                 setOracleInitialPrompt('');
                 setIsOracleOpen(true);
               }}
-              className="px-3 py-1.5 rounded-xl bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/45 text-[#f5e4be] transition flex flex-col items-center justify-center gap-0.5 min-w-[86px] cursor-pointer shadow-sm"
-              title="Saber Arcano IA"
+              className={
+                appView === 'lobby'
+                  ? `relative px-3 py-1.5 rounded-xl border transition flex flex-col items-center justify-center gap-0.5 min-w-[92px] shadow-sm ${
+                      canUseArcaneOracle
+                        ? 'bg-[#181a24] hover:bg-[#222533] border-[#c8a45c]/45 text-[#f5e4be] cursor-pointer'
+                        : 'bg-stone-900/80 border-stone-700/80 text-stone-500 opacity-65 cursor-not-allowed'
+                    }`
+                  : `relative w-8 h-8 rounded-lg border transition flex items-center justify-center shadow-sm ${
+                      canUseArcaneOracle
+                        ? 'bg-[#181a24] hover:bg-[#222533] border-[#c8a45c]/60 text-[#e2c275] cursor-pointer'
+                        : 'bg-stone-900/80 border-stone-700/80 text-stone-500 opacity-65 cursor-not-allowed'
+                    }`
+              }
+              title={
+                canUseArcaneOracle
+                  ? 'Sabio Arcano'
+                  : 'Sabio Arcano (En desarrollo - Solo Moderadores, Creadores y Administradores)'
+              }
+              aria-label="Sabio Arcano"
             >
-              <Sparkles className="w-4 h-4 text-[#e2c275]" />
-              <span className="text-[10px] font-cinzel font-bold leading-none whitespace-nowrap">
-                Saber Arcano IA
-              </span>
+              <Sparkles className={`w-4 h-4 ${canUseArcaneOracle ? 'text-[#e2c275]' : 'text-stone-500'}`} />
+              {appView === 'lobby' && (
+                <>
+                  <span className="text-[10px] font-cinzel font-bold leading-none whitespace-nowrap">
+                    {onlineAppSkin?.themeTokens?.oracleButtonLabel || 'Sabio Arcano'}
+                  </span>
+                  {!canUseArcaneOracle && (
+                    <span className="text-[8px] font-cinzel font-black uppercase tracking-wider px-1.5 py-0.2 rounded bg-stone-800 border border-stone-600 text-amber-400/90 leading-tight mt-0.5">
+                      En desarrollo
+                    </span>
+                  )}
+                </>
+              )}
             </button>
 
             {/* Configuración de cuenta */}
@@ -1605,78 +2101,234 @@ export default function App() {
                   setIsRoleModalOpen(true);
                 }
               }}
-              className="px-3 py-1.5 rounded-xl bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/45 text-[#f5e4be] transition flex flex-col items-center justify-center gap-0.5 min-w-[96px] cursor-pointer shadow-sm"
+              className={
+                appView === 'lobby'
+                  ? 'px-3 py-1.5 rounded-xl bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/45 text-[#f5e4be] transition flex flex-col items-center justify-center gap-0.5 min-w-[96px] cursor-pointer shadow-sm'
+                  : 'w-8 h-8 rounded-lg bg-[#181a24] hover:bg-[#222533] border border-[#c8a45c]/60 text-[#e2c275] transition flex items-center justify-center cursor-pointer shadow-sm'
+              }
               title="Configuración de cuenta, @ID y seguridad"
+              aria-label="Configuración de cuenta"
             >
               <Settings className="w-4 h-4 text-[#e2c275]" />
-              <span className="text-[10px] font-cinzel font-bold leading-none whitespace-nowrap">
-                Configuración de cuenta
-              </span>
+              {appView === 'lobby' && (
+                <span className="text-[10px] font-cinzel font-bold leading-none whitespace-nowrap">
+                  Configuración de cuenta
+                </span>
+              )}
             </button>
 
-            {/* Role-Dependent Action Buttons: Admin, Moderación (open dedicated full pages) or Feedback */}
-            {(authUser?.appRole === 'admin' || authUser?.role === 'admin' || userRole === 'admin') && (
+            {/* Role-Dependent Action Buttons: Admin, Creador de Contenido, Moderación or Feedback */}
+            {headerRoleVisibility.showAdminButton && (
               <button
                 type="button"
+                data-testid="btn-header-admin"
                 onClick={() => {
+                  setIsSessionMapViewOpen(false);
                   setAppView('lobby');
                   setActiveLobbyPage('admin');
                 }}
-                className="px-3 py-1.5 rounded-xl bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/70 text-purple-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[68px] cursor-pointer shadow-md"
-                title="Página de Administrador"
+                className={
+                  appView === 'lobby'
+                    ? 'px-3 py-1.5 rounded-xl bg-gradient-to-b from-blue-800/90 to-blue-950 hover:from-blue-700 border border-blue-400/70 text-blue-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[68px] cursor-pointer shadow-md'
+                    : 'w-8 h-8 rounded-lg bg-gradient-to-b from-blue-800/90 to-blue-950 hover:from-blue-700 border border-blue-400/75 text-blue-100 transition flex items-center justify-center cursor-pointer shadow-md'
+                }
+                title="Panel de Administrador"
+                aria-label="Admin"
               >
-                <Shield className="w-4 h-4 text-purple-200" />
-                <span className="text-[10px] font-cinzel font-bold leading-none">Admin</span>
+                <Shield className="w-4 h-4 text-blue-200" />
+                {appView === 'lobby' && (
+                  <span className="text-[10px] font-cinzel font-bold leading-none">Admin</span>
+                )}
               </button>
             )}
 
-            {(authUser?.appRole === 'admin' ||
-              authUser?.role === 'admin' ||
-              userRole === 'admin' ||
-              authUser?.appRole === 'creator' ||
-              authUser?.role === 'creator' ||
-              userRole === 'creator' ||
-              authUser?.appRole === 'moderator' ||
-              authUser?.role === 'moderator' ||
-              userRole === 'moderator') && (
+            {headerRoleVisibility.showCreatorButton && (
               <button
                 type="button"
+                data-testid="btn-header-creator"
                 onClick={() => {
+                  setIsSessionMapViewOpen(false);
+                  setAppView('lobby');
+                  setActiveLobbyPage('creator');
+                }}
+                className={
+                  appView === 'lobby'
+                    ? 'px-3 py-1.5 rounded-xl bg-gradient-to-b from-amber-700/90 to-amber-950 hover:from-amber-600 border border-amber-400/70 text-amber-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[94px] cursor-pointer shadow-md'
+                    : 'w-8 h-8 rounded-lg bg-gradient-to-b from-amber-700/90 to-amber-950 hover:from-amber-600 border border-amber-400/75 text-amber-100 transition flex items-center justify-center cursor-pointer shadow-md'
+                }
+                title="Panel de Creador de Contenido (DLCs y Skins)"
+                aria-label="Creador de Contenido"
+              >
+                <Palette className="w-4 h-4 text-amber-200" />
+                {appView === 'lobby' && (
+                  <span className="text-[10px] font-cinzel font-bold leading-none whitespace-nowrap">
+                    Creador de Contenido
+                  </span>
+                )}
+              </button>
+            )}
+
+            {headerRoleVisibility.showModerationButton && (
+              <button
+                type="button"
+                data-testid="btn-header-moderator"
+                onClick={() => {
+                  setIsSessionMapViewOpen(false);
                   setAppView('lobby');
                   setActiveLobbyPage('moderator');
                 }}
-                className="px-3 py-1.5 rounded-xl bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/70 text-purple-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[74px] cursor-pointer shadow-md"
-                title="Página de Moderación"
+                className={
+                  appView === 'lobby'
+                    ? 'px-3 py-1.5 rounded-xl bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/70 text-purple-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[74px] cursor-pointer shadow-md'
+                    : 'w-8 h-8 rounded-lg bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/75 text-purple-100 transition flex items-center justify-center cursor-pointer shadow-md'
+                }
+                title="Panel de Moderación"
+                aria-label="Moderación"
               >
                 <ShieldCheck className="w-4 h-4 text-purple-200" />
-                <span className="text-[10px] font-cinzel font-bold leading-none">Moderación</span>
+                {appView === 'lobby' && (
+                  <span className="text-[10px] font-cinzel font-bold leading-none">Moderación</span>
+                )}
               </button>
             )}
 
-            {!(
-              authUser?.appRole === 'admin' ||
-              authUser?.role === 'admin' ||
-              userRole === 'admin' ||
-              authUser?.appRole === 'creator' ||
-              authUser?.role === 'creator' ||
-              userRole === 'creator' ||
-              authUser?.appRole === 'moderator' ||
-              authUser?.role === 'moderator' ||
-              userRole === 'moderator'
-            ) && (
+            {headerRoleVisibility.showFeedbackButton && (
               <button
                 type="button"
+                data-testid="btn-header-feedback"
                 onClick={() => setIsFeedbackOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/70 text-purple-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[74px] cursor-pointer shadow-md"
+                className={
+                  appView === 'lobby'
+                    ? 'px-3 py-1.5 rounded-xl bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/70 text-purple-100 transition flex flex-col items-center justify-center gap-0.5 min-w-[74px] cursor-pointer shadow-md'
+                    : 'w-8 h-8 rounded-lg bg-gradient-to-b from-purple-800/90 to-purple-950 hover:from-purple-700 border border-purple-400/75 text-purple-100 transition flex items-center justify-center cursor-pointer shadow-md'
+                }
                 title="Enviar Feedback o Sugerencia"
+                aria-label="Feedback"
               >
                 <MessageSquarePlus className="w-4 h-4 text-purple-200" />
-                <span className="text-[10px] font-cinzel font-bold leading-none">Feedback</span>
+                {appView === 'lobby' && (
+                  <span className="text-[10px] font-cinzel font-bold leading-none">Feedback</span>
+                )}
               </button>
             )}
           </div>
         </div>
+
+        {/* Client Blocked Notice Banner when clicking Sabio Arcano as a Client */}
+        {oracleClientBlockedNotice && (
+          <div
+            data-testid="oracle-client-blocked-banner"
+            className="bg-amber-950/95 border-t border-amber-500/60 px-4 py-2 text-center text-xs font-cinzel font-bold text-amber-200 flex items-center justify-center gap-2 animate-in fade-in"
+          >
+            <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span>{oracleClientBlockedNotice}</span>
+            <button
+              type="button"
+              onClick={() => setOracleClientBlockedNotice('')}
+              className="ml-2 text-amber-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </header>
+
+      {/* Top Bar Player Whisper to DM Modal */}
+      {isTopWhisperModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-[#161822] border-2 border-purple-500/80 p-5 text-stone-200 space-y-3 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-stone-800 pb-2.5">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-purple-400" />
+                <h3 className="font-cinzel font-black text-sm text-[#f5e4be] uppercase">
+                  Susurrar al Dungeon Master
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTopWhisperModalOpen(false)}
+                className="p-1 text-stone-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <input
+              type="text"
+              value={topWhisperTitle}
+              onChange={(e) => setTopWhisperTitle(e.target.value)}
+              placeholder="Asunto del susurro (ej. Acción Secreta)..."
+              className="w-full bg-[#0f1118] border border-stone-700 rounded-xl px-3 py-2 text-xs text-stone-100"
+            />
+            <textarea
+              rows={3}
+              value={topWhisperBody}
+              onChange={(e) => setTopWhisperBody(e.target.value)}
+              placeholder="Escribe tu mensaje privado para el DM..."
+              className="w-full bg-[#0f1118] border border-stone-700 rounded-xl px-3 py-2 text-xs text-stone-100 resize-none"
+            />
+            {topWhisperStatus && (
+              <p className="text-xs font-cinzel font-bold text-emerald-400">{topWhisperStatus}</p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsTopWhisperModalOpen(false)}
+                className="px-3 py-1.5 rounded-xl bg-stone-800 text-xs font-cinzel font-bold text-stone-300 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!topWhisperBody.trim()) return;
+                  const pName = activeCharacter?.playerName || authUser?.displayName || 'Jugador';
+                  const pTag = (authUser?.userTagId || '123').replace(/^@+/, '').trim() || '123';
+                  try {
+                    const res = await fetch(
+                      `/api/session/room/${encodeURIComponent(roomCode)}/player-message`,
+                      {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          characterId: activeCharacter?.id || 'char-live',
+                          characterName: activeCharacter?.name || 'Aventurero',
+                          playerName: pName,
+                          playerTagId: pTag,
+                          playerFullTag: `${pName}@${pTag}`,
+                          playerEmail: authUser?.email,
+                          title: topWhisperTitle.trim() || 'Susurro de Jugador',
+                          description: topWhisperBody.trim(),
+                        }),
+                      }
+                    );
+                    const data = await res.json().catch(() => ({}));
+                    if (res.ok) {
+                      setTopWhisperStatus('¡Susurro enviado al Dungeon Master!');
+                      setTopWhisperTitle('');
+                      setTopWhisperBody('');
+                      setTimeout(() => {
+                        setTopWhisperStatus('');
+                        setIsTopWhisperModalOpen(false);
+                      }, 1200);
+                    } else {
+                      setTopWhisperStatus(data.error || 'Error al enviar el susurro.');
+                    }
+                  } catch {
+                    setTopWhisperStatus('Error de conexión con la sala.');
+                  }
+                }}
+                className="px-4 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-600 text-white text-xs font-cinzel font-bold cursor-pointer"
+              >
+                Enviar Susurro
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* =================================================================== */}
       {/* MAIN CONTENT AREA (Extended Viewport - Anti Slop Layout)            */}
@@ -1781,6 +2433,16 @@ export default function App() {
             onCloseAdminModal={() => setIsAdminModalOpen(false)}
             activeLobbyPage={activeLobbyPage}
             onChangeLobbyPage={setActiveLobbyPage}
+            onlineAppSkin={onlineAppSkin}
+            onCreatorCatalogUpdated={(cat) => {
+              if (cat && Array.isArray(cat.appSkins)) {
+                const active =
+                  cat.appSkins.find((s: AppSkinRecord) => s.id === cat.activeOnlineAppSkinId) ||
+                  cat.appSkins.find((s: AppSkinRecord) => s.isOnlineActive) ||
+                  cat.appSkins[0];
+                if (active) setOnlineAppSkin(active);
+              }
+            }}
           />
         )}
 
@@ -1929,8 +2591,8 @@ export default function App() {
           </div>
         )}
 
-        {/* 3. TABLE MAP VIEW (Inside Active Session for Player or DM) */}
-        {(appView === 'player-session' || appView === 'dm-session') && isSessionMapViewOpen && (
+        {/* 3. TABLE MAP VIEW (Inside Active Session or Solo for Player or DM) */}
+        {appView !== 'lobby' && isSessionMapViewOpen && (
           <TableMapView
             mode={appView === 'dm-session' ? 'dm' : 'player'}
             roomCode={roomCode}
@@ -1939,6 +2601,7 @@ export default function App() {
             onUpdateCharacter={handleUpdateCharacter}
             workspace={dmWorkspace}
             onUpdateWorkspace={(updated) => {
+              lastLocalDmMutationAtRef.current = Date.now();
               dmWorkspaceRef.current = updated;
               setDmWorkspace(updated);
               saveDMWorkspace(updated);
@@ -2129,6 +2792,7 @@ export default function App() {
           <DMScreenView
             workspace={dmWorkspace}
             onUpdateWorkspace={(updated) => {
+              lastLocalDmMutationAtRef.current = Date.now();
               dmWorkspaceRef.current = updated;
               setDmWorkspace(updated);
               saveDMWorkspace(updated);
@@ -2234,6 +2898,8 @@ export default function App() {
             }}
             onOpenTableMapView={() => setIsSessionMapViewOpen(true)}
             onDmAdjustPlayer={handleDmAdjustPlayer}
+            currentUserRole={effectiveAppRole}
+            currentUserEmail={authUser?.email}
           />
         )}
       </main>
@@ -2378,7 +3044,7 @@ export default function App() {
           isOpen={isChangelogOpen}
           onClose={() => setIsChangelogOpen(false)}
           changelog={hostSettings.changelog || []}
-          currentVersion={hostSettings.headerSubtitle?.replace(/[^0-9.]/g, '') ? `${hostSettings.headerSubtitle.replace(/[^0-9.]/g, '')} Beta` : '1.1 Beta'}
+          currentVersion={hostSettings.headerSubtitle?.replace(/[^0-9.]/g, '') ? `${hostSettings.headerSubtitle.replace(/[^0-9.]/g, '')} Beta` : '1.4 Beta'}
         />
       )}
 

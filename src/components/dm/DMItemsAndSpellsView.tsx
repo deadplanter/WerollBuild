@@ -17,6 +17,9 @@ import {
   Gift,
   Lock,
   Zap,
+  Image as ImageIcon,
+  Upload,
+  X,
 } from 'lucide-react';
 import {
   DMCustomItemOrSpell,
@@ -44,6 +47,7 @@ import {
 } from '../../data/srd';
 import { folderMatchesFilter } from '../../utils/storage';
 import { formatWeaponAttackFormula, getSpanishAbilityLabel } from '../../utils/dnd-math';
+import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 
 interface DMItemsAndSpellsViewProps {
   customItemsAndSpells: DMCustomItemOrSpell[];
@@ -53,6 +57,8 @@ interface DMItemsAndSpellsViewProps {
   onGiveItemToPlayer?: (item: InventoryItem) => void;
   roomCode?: string;
   partyMembers?: PartyMemberLive[];
+  hasSrdDlcEnabled?: boolean;
+  onOpenDlcSettings?: () => void;
 }
 
 export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
@@ -63,6 +69,8 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
   onGiveItemToPlayer,
   roomCode = 'MESA-PRINCIPAL',
   partyMembers = [],
+  hasSrdDlcEnabled = true,
+  onOpenDlcSettings,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'custom' | 'srd_weapons' | 'srd_armors' | 'srd_spells'>('custom');
   const [filterType, setFilterType] = useState<'all' | 'item' | 'spell' | 'ability'>('all');
@@ -109,6 +117,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
     description: '',
     properties: '',
     dmSecrets: '',
+    imageUrl: '',
     folder: selectedFolder !== 'all' ? selectedFolder : 'General',
     weaponAttacks: [
       {
@@ -274,6 +283,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       description: '',
       properties: '',
       dmSecrets: '',
+      imageUrl: '',
       folder: selectedFolder !== 'all' ? selectedFolder : 'General',
       weight: 3,
       statModifiers: [],
@@ -366,6 +376,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
               weaponAttacks: effectiveAttacks,
               statModifiers: form.statModifiers && form.statModifiers.length > 0 ? form.statModifiers : undefined,
               itemActions: form.itemActions && form.itemActions.length > 0 ? form.itemActions : undefined,
+              imageUrl: form.imageUrl?.trim() || undefined,
             } as DMCustomItemOrSpell)
           : i
       );
@@ -386,6 +397,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
         description: form.description || '',
         properties: form.properties || '',
         dmSecrets: form.dmSecrets || '',
+        imageUrl: form.imageUrl?.trim() || undefined,
         folder: form.folder || (selectedFolder !== 'all' ? selectedFolder : 'General'),
         weight: safeWeight,
         weaponAttacks: effectiveAttacks,
@@ -591,6 +603,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       rarity: entry.rarity,
       description: `${entry.description}\n\nPropiedades: ${entry.properties || 'Sin propiedades'}${entry.whoHasIt ? `\nProcedencia: ${entry.whoHasIt}` : ''}`,
       equipped: false,
+      imageUrl: entry.imageUrl,
       weaponAttacks: entry.weaponAttacks,
       statModifiers: entry.statModifiers,
       itemActions: entry.itemActions,
@@ -773,24 +786,32 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                   <div>
                     {/* Header: Title, Kind, Rarity */}
                     <div className="flex items-start justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs border ${
-                            item.kind === 'spell'
-                              ? 'bg-purple-950/80 border-purple-600 text-purple-300'
-                              : item.kind === 'ability'
-                              ? 'bg-emerald-950/80 border-emerald-600 text-emerald-300'
-                              : 'bg-amber-950/80 border-amber-600 text-amber-300'
-                          }`}
-                        >
-                          {item.kind === 'spell' ? (
-                            <Wand2 className="w-4 h-4" />
-                          ) : item.kind === 'ability' ? (
-                            <Sparkles className="w-4 h-4" />
-                          ) : (
-                            <Sword className="w-4 h-4" />
-                          )}
-                        </div>
+                      <div className="flex items-center gap-2.5">
+                        {item.imageUrl ? (
+                          <img
+                            src={item.imageUrl}
+                            alt={item.name}
+                            className="w-10 h-10 rounded-lg object-cover border border-amber-500/60 shrink-0 shadow"
+                          />
+                        ) : (
+                          <div
+                            className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-xs border shrink-0 ${
+                              item.kind === 'spell'
+                                ? 'bg-purple-950/80 border-purple-600 text-purple-300'
+                                : item.kind === 'ability'
+                                ? 'bg-emerald-950/80 border-emerald-600 text-emerald-300'
+                                : 'bg-amber-950/80 border-amber-600 text-amber-300'
+                            }`}
+                          >
+                            {item.kind === 'spell' ? (
+                              <Wand2 className="w-4 h-4" />
+                            ) : item.kind === 'ability' ? (
+                              <Sparkles className="w-4 h-4" />
+                            ) : (
+                              <Sword className="w-4 h-4" />
+                            )}
+                          </div>
+                        )}
                         <div>
                           <h4 className="font-cinzel font-bold text-stone-100 text-sm">{item.name}</h4>
                           <span className="text-[10px] text-stone-400 font-mono">
@@ -991,11 +1012,42 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
         </div>
       )}
 
+      {/* DLC SRD 5E Status Notice when on SRD tabs */}
+      {activeSubTab !== 'custom' && !hasSrdDlcEnabled && (
+        <div
+          data-testid="srd-dlc-disabled-banner"
+          className="p-4 rounded-xl bg-amber-950/40 border border-amber-500/60 flex items-center justify-between gap-3 flex-wrap text-xs text-amber-100"
+        >
+          <div>
+            <strong className="font-cinzel text-amber-300 block">
+              📦 DLC Manual Base SRD 5E Desactivado en esta Mesa
+            </strong>
+            <span>
+              Los objetos, armas, armaduras y conjuros SRD 5E ahora funcionan como un paquete DLC. Actívalo en Ajustes de la Mesa para usarlos aquí.
+            </span>
+          </div>
+          {onOpenDlcSettings && (
+            <button
+              type="button"
+              onClick={onOpenDlcSettings}
+              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-stone-950 font-cinzel font-bold text-xs cursor-pointer"
+            >
+              Activar DLC en Ajustes
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 2. VIEW: SRD Weapons */}
-      {activeSubTab === 'srd_weapons' && (
+      {activeSubTab === 'srd_weapons' && hasSrdDlcEnabled && (
         <div className="space-y-3">
-          <div className="text-xs text-stone-400 bg-[#14151c] p-3 rounded-xl border border-stone-800">
-            <strong>Manual de Armas Oficiales 5E:</strong> Puedes clonar cualquier arma para personalizarla como objeto único de tu campaña (añadiendo quién la tenía, dónde se encuentra y propiedades legendarias), o entregarla directamente a un jugador.
+          <div className="text-xs text-stone-400 bg-[#14151c] p-3 rounded-xl border border-stone-800 flex items-center justify-between gap-2 flex-wrap">
+            <div>
+              <strong>Manual de Armas Oficiales 5E (DLC SRD Activo):</strong> Puedes clonar cualquier arma para personalizarla como objeto único de tu campaña, o entregarla directamente a un jugador.
+            </div>
+            <span className="px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/50 text-[10px] font-cinzel font-bold text-emerald-300">
+              📦 DLC SRD 5E Activo
+            </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1839,6 +1891,59 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                     value={form.whereFound || ''}
                     onChange={(e) => setForm({ ...form, whereFound: e.target.value })}
                     className="w-full bg-[#181920] border border-stone-700 rounded-lg px-3 py-1.5 text-xs text-stone-100"
+                  />
+                </div>
+              </div>
+
+              {/* Image Upload / URL for Item, Spell, or Ability */}
+              <div className="p-3 rounded-xl bg-[#121316] border border-stone-800 space-y-2">
+                <label className="block text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Imagen del Objeto, Conjuro o Habilidad (Opcional):</span>
+                </label>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  {form.imageUrl && (
+                    <div className="relative">
+                      <img
+                        src={form.imageUrl}
+                        alt="Vista previa"
+                        className="w-12 h-12 rounded-lg object-cover border border-amber-500/60"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, imageUrl: '' })}
+                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white flex items-center justify-center text-[9px]"
+                        title="Quitar imagen"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                  <label className="px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-700 text-amber-200 text-xs font-cinzel font-bold cursor-pointer flex items-center gap-1.5">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Subir Imagen</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const dataUrl = await compressImageFileToDataUrl(file, 360, 0.82);
+                          setForm((prev) => ({ ...prev, imageUrl: dataUrl }));
+                        } catch {
+                          // ignore
+                        }
+                      }}
+                    />
+                  </label>
+                  <input
+                    type="text"
+                    value={form.imageUrl || ''}
+                    onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
+                    placeholder="O pega URL de imagen (https://...)"
+                    className="flex-1 min-w-[180px] bg-[#181920] border border-stone-700 rounded-lg px-3 py-1.5 text-xs text-stone-100"
                   />
                 </div>
               </div>
