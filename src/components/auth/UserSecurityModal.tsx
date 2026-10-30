@@ -3,6 +3,7 @@ import { KeyRound, Lock, Tag, CheckCircle, AlertCircle, Save, Mail, HelpCircle, 
 import { AuthSessionUser } from '../auth/RoleSelectionModal';
 import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 import { PlayerType } from '../../types/dnd';
+import { saveUserProfileAsync } from '../../services/firebaseService';
 
 interface UserSecurityModalProps {
   isOpen: boolean;
@@ -119,6 +120,7 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
       if (!res.ok) {
         setAvatarErrorMsg(data.error || 'No se pudo guardar tu imagen de jugador.');
       } else {
+        saveUserProfileAsync({ ...authUser, avatarUrl: dataUrl }).catch(() => {});
         setAvatarStatusMsg('¡Imagen de jugador actualizada! Ahora se verá en el Lobby y en la lista de Amigos.');
         if (onRefreshAuthStatus) {
           await onRefreshAuthStatus();
@@ -147,6 +149,7 @@ export const UserSecurityModal: React.FC<UserSecurityModalProps> = ({
         }),
       });
       if (res.ok) {
+        saveUserProfileAsync({ ...authUser, avatarUrl: '' }).catch(() => {});
         setAvatarPreviewUrl('');
         setAvatarStatusMsg('Imagen de jugador restaurada al icono por defecto.');
         if (onRefreshAuthStatus) {

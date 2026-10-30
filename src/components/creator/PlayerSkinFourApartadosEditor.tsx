@@ -93,7 +93,7 @@ export type PlayerSkinApartadoId =
 export interface PlayerSkinFourApartadosEditorProps {
   draft?: unknown;
   tokens: AppSkinThemeTokens;
-  sampleCharacter: Character5e;
+  sampleCharacter?: Character5e;
   activeApartado?: PlayerSkinApartadoId;
   onChangeApartado?: (apartado: PlayerSkinApartadoId) => void;
   onUpdateTokens?: (patch: Partial<AppSkinThemeTokens>) => void;
@@ -158,7 +158,7 @@ export const PlayerSkinFourApartadosEditor: React.FC<
   PlayerSkinFourApartadosEditorProps
 > = ({
   tokens,
-  sampleCharacter,
+  sampleCharacter = SAMPLE_ROOM_PLAYERS_5E[0] as unknown as Character5e,
   activeApartado: controlledApartado,
   onChangeApartado,
   onUpdateTokens: onUpdateTokensProp,

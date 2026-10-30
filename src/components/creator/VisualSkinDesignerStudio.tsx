@@ -161,15 +161,16 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
   onActivateOnline,
   onClose,
 }) => {
-  const scope: 'player' | 'dm' | 'app' = (skin.scope || skin.target || 'player') as
+  const targetScope: 'player' | 'dm' | 'app' = (skin.scope || skin.target || 'player') as
     | 'player'
     | 'dm'
     | 'app';
+  const scope: string = targetScope;
 
   const [draft, setDraft] = useState<AppSkinRecord>(() => {
     const copy = JSON.parse(JSON.stringify(skin));
-    copy.scope = scope;
-    copy.target = scope;
+    copy.scope = targetScope;
+    copy.target = targetScope;
     return copy;
   });
 
@@ -404,7 +405,7 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await onSave({ ...draft, scope, target: scope, updatedAt: Date.now() });
+      await onSave({ ...draft, scope: targetScope, target: targetScope, updatedAt: Date.now() });
       invalidateTarotSkinCache();
       setSaveToast('💾 ¡Skin guardada y sincronizada en la nube!');
       setTimeout(() => setSaveToast(''), 4000);
@@ -701,7 +702,7 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
               data-testid="btn-visual-designer-activate-online"
               onClick={async () => {
                 await handleSave();
-                await onActivateOnline(draft.id, scope);
+                await onActivateOnline(draft.id, targetScope);
               }}
               className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-stone-950 font-cinzel font-black text-xs flex items-center gap-1.5 shadow-lg transition cursor-pointer"
               title="Establecer como la Skin Default Dinámica de Temporada en el servidor"

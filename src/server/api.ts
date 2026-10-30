@@ -325,6 +325,66 @@ apiRouter.post('/auth/login', (req, res) => {
   });
 });
 
+// Google / Firebase Auth Login or Register
+apiRouter.post('/auth/google-login', (req, res) => {
+  const { uid, email, displayName, photoURL } = req.body || {};
+  if (!email) {
+    return res.status(400).json({ error: 'Email requerido para autenticación con Google.' });
+  }
+
+  const normEmail = email.trim().toLowerCase();
+  let user = dataStore.findUserByEmail(normEmail);
+
+  if (!user) {
+    // Automatically register user with Google profile
+    const cleanName = (displayName || normEmail.split('@')[0] || 'Aventurero').trim();
+    const isAutoAdmin = normEmail === 'admin@weroll.app' || normEmail === 'cuellarangel2011@gmail.com';
+    user = dataStore.createUser({
+      email: normEmail,
+      displayName: cleanName,
+      avatarUrl: photoURL || undefined,
+      password: '',
+      role: isAutoAdmin ? 'moderator' : 'player',
+      playerType: isAutoAdmin ? 'both' : 'player',
+      appRole: isAutoAdmin ? 'admin' : 'client',
+      canPostInForum: true,
+      status: 'approved',
+      friends: [],
+    });
+  }
+
+  // Record presence & login
+  dataStore.recordUserPresenceHeartbeat({
+    userId: user.id,
+    email: user.email,
+    activity: 'Inicio de Sesión con Google (Firebase)',
+    isLogin: true,
+  });
+
+  res.json({
+    success: true,
+    user: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      userTagId: user.userTagId || '123',
+      fullTag: `${user.displayName}@${user.userTagId || '123'}`,
+      avatarUrl: user.avatarUrl,
+      friends: user.friends || [],
+      role: user.role,
+      playerType: user.playerType || (user.role === 'dm' ? 'dm' : user.role === 'player' ? 'player' : 'both'),
+      requestedPlayerType: user.requestedPlayerType,
+      playerTypeChangeRequested: Boolean(user.playerTypeChangeRequested),
+      appRole: user.appRole || (user.role === 'admin' ? 'admin' : user.role === 'creator' ? 'creator' : user.role === 'moderator' ? 'moderator' : 'client'),
+      canPostInForum: true,
+      forumPermissionsRequested: Boolean(user.forumPermissionsRequested),
+      status: user.status,
+      ownedDlcIds: Array.from(new Set(['dlc-srd-5e-oficial', ...(user.ownedDlcIds || [])])),
+      ownedSkinIds: Array.from(new Set(['skin-app-default', 'skin-player-default', 'skin-dm-default', ...(user.ownedSkinIds || [])])),
+    },
+  });
+});
+
 // Check current user status / me
 apiRouter.get('/auth/me', (req, res) => {
   const email = (req.query.email as string || '').trim().toLowerCase();

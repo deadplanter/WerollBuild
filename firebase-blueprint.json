@@ -1,0 +1,99 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account and profile data in WeRoll 5E",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "userTagId": { "type": "string", "maxLength": 10 },
+        "role": { "type": "string", "enum": ["player", "dm", "moderator"] },
+        "playerType": { "type": "string", "enum": ["player", "dm", "both"] },
+        "avatarUrl": { "type": "string", "maxLength": 2048 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "email", "displayName", "role"]
+    },
+    "Character": {
+      "title": "Character",
+      "description": "D&D 5E player character sheet stored in Firestore",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "race": { "type": "string", "maxLength": 100 },
+        "class": { "type": "string", "maxLength": 100 },
+        "level": { "type": "integer" },
+        "currentHp": { "type": "integer" },
+        "maxHp": { "type": "integer" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "ownerId", "name", "level"]
+    },
+    "Campaign": {
+      "title": "Campaign",
+      "description": "D&D 5E campaign world managed by a Dungeon Master",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "dmUserId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 4000 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "dmUserId", "title"]
+    },
+    "ForumPost": {
+      "title": "ForumPost",
+      "description": "Community forum thread in WeRoll 5E",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 100 },
+        "title": { "type": "string", "maxLength": 200 },
+        "content": { "type": "string", "maxLength": 10000 },
+        "category": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "authorId", "title", "content"]
+    },
+    "ConnectionTest": {
+      "title": "ConnectionTest",
+      "description": "Document used to verify client connection to Firestore",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "maxLength": 50 }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document keyed by auth UID"
+    },
+    "/characters/{characterId}": {
+      "schema": "Character",
+      "description": "Player character sheets owned by users"
+    },
+    "/campaigns/{campaignId}": {
+      "schema": "Campaign",
+      "description": "Campaigns and world sheets created by DMs"
+    },
+    "/forumPosts/{postId}": {
+      "schema": "ForumPost",
+      "description": "Community forum discussion posts"
+    },
+    "/test/{testId}": {
+      "schema": "ConnectionTest",
+      "description": "Read-only test document for connectivity checks"
+    }
+  }
+}

@@ -341,7 +341,7 @@ function matchesArmorKeywords(text: string): boolean {
 }
 
 export function normalizePlayerSheetItemCategory(
-  categoryOrItem?: string | { itemGroup?: string; category?: string; name?: string } | null
+  categoryOrItem?: string | { itemGroup?: string; category?: string; name?: string; weaponAttacks?: any } | null
 ): {
   category: PlayerSheetItemCategory;
   itemGroup: 'weapon' | 'armor' | 'common';

@@ -486,10 +486,11 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
     });
 
     const nextFeatures = (character.featuresAndTraits || []).map((ft) => {
-      if (ft.id !== sourceId || !Array.isArray(ft.itemActions)) return ft;
+      const ftActions = (ft as any).itemActions;
+      if (ft.id !== sourceId || !Array.isArray(ftActions)) return ft;
       return {
         ...ft,
-        itemActions: ft.itemActions.map((ia, idx) =>
+        itemActions: (ftActions as any[]).map((ia, idx) =>
           `${ft.id}-featact-${ia.id || idx}` === cardId
             ? { ...ia, name: name.trim() || ia.name, description: description.trim() }
             : ia

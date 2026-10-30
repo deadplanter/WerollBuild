@@ -4503,7 +4503,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                     onClick={() =>
                       setNpcForm({
                         ...npcForm,
-                        avatarType: 'default',
+                        avatarType: 'icon',
                         avatarCustomUrl: '',
                       })
                     }
@@ -4595,7 +4595,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                       secretOrHook: npcForm.secretOrHook || '',
                       notes: npcForm.notes || '',
                       evolution: npcForm.evolution || '',
-                      avatarType: npcForm.avatarCustomUrl ? 'custom' : npcForm.avatarType || 'default',
+                      avatarType: npcForm.avatarCustomUrl ? 'custom' : (npcForm.avatarType === 'custom' ? 'custom' : 'icon'),
                       avatarCustomUrl: npcForm.avatarCustomUrl || undefined,
                     };
                     onUpdateWorkspace({
@@ -6644,7 +6644,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                     onChange={(e) =>
                       onUpdateWorkspace({
                         ...workspace,
-                        dmAvatarType: e.target.value.trim() ? 'custom' : 'hood',
+                        dmAvatarType: e.target.value.trim() ? 'custom' : 'icon',
                         dmAvatarUrl: e.target.value,
                       })
                     }
@@ -6657,7 +6657,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                       onClick={() =>
                         onUpdateWorkspace({
                           ...workspace,
-                          dmAvatarType: 'hood',
+                          dmAvatarType: 'icon',
                           dmAvatarUrl: undefined,
                         })
                       }

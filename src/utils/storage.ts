@@ -579,3 +579,20 @@ export function importBackupData(jsonString: string): boolean {
     return false;
   }
 }
+
+// ==========================================
+// FIREBASE ASYNC SERVICE LAYER ADAPTER
+// ==========================================
+export {
+  saveCharactersAsync,
+  saveSingleCharacterAsync,
+  loadCharactersAsync,
+  deleteCharacterAsync,
+  subscribeToCharacters,
+  saveDMWorkspaceAsync,
+  loadDMWorkspaceAsync,
+  subscribeToDMWorkspace,
+  saveUserProfileAsync,
+  saveHostSettingsAsync,
+  loadHostSettingsAsync,
+} from '../services/firebaseService';

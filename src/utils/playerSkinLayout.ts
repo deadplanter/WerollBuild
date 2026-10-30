@@ -2623,7 +2623,7 @@ export function resolveModalPopupConfig(
   for (const [k, v] of Object.entries(incomingMap)) {
     if (v && typeof v === 'object') {
       mergedButtons[k] = {
-        ...(mergedButtons[k] || makeInnerEl(k, v.label || k)),
+        ...(mergedButtons[k] || makeInnerEl(k, (v as any).label || k)),
         ...v,
         id: k,
       };

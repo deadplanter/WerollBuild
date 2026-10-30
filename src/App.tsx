@@ -81,6 +81,17 @@ import {
   exportBackupData,
   importBackupData,
 } from './utils/storage';
+import {
+  saveCharactersAsync,
+  saveSingleCharacterAsync,
+  loadCharactersAsync,
+  deleteCharacterAsync,
+  subscribeToCharacters,
+  saveDMWorkspaceAsync,
+  loadDMWorkspaceAsync,
+  subscribeToDMWorkspace,
+  saveUserProfileAsync,
+} from './services/firebaseService';
 import { LobbyPortalView } from './components/lobby/LobbyPortalView';
 import { RoleSelectionModal } from './components/auth/RoleSelectionModal';
 import { PasswordPromptModal } from './components/auth/PasswordPromptModal';
@@ -840,8 +851,28 @@ export default function App() {
   useEffect(() => {
     if (authUser && authUser.status === 'approved') {
       fetchWorldSheets();
+
+      // Sincronización asíncrona de personajes desde Firestore
+      loadCharactersAsync(authUser)
+        .then((cloudChars) => {
+          if (cloudChars && cloudChars.length > 0) {
+            setCharacters(cloudChars);
+          }
+        })
+        .catch(() => {});
+
+      // Suscripción reactiva en tiempo real a cambios en Firestore
+      const unsubscribe = subscribeToCharacters((updatedChars) => {
+        if (updatedChars && updatedChars.length > 0) {
+          setCharacters(updatedChars);
+        }
+      }, authUser);
+
+      return () => {
+        unsubscribe();
+      };
     }
-  }, [authUser?.email, authUser?.status]);
+  }, [authUser?.id, authUser?.email, authUser?.status]);
 
   // Poll room server state & heartbeat active character / DM (Only when inside active online session)
   useEffect(() => {
@@ -1313,6 +1344,7 @@ export default function App() {
 
   // Delete Character
   const handleDeleteCharacter = async (charId: string): Promise<boolean> => {
+    deleteCharacterAsync(charId, authUser).catch(() => {});
     if (!authUser?.email) return false;
     try {
       const res = await fetch(`/api/vault/sheets/${charId}?ownerEmail=${encodeURIComponent(authUser.email)}`, {
@@ -1328,8 +1360,11 @@ export default function App() {
     return false;
   };
 
-  // Save Character to Cloud Vault
+  // Save Character to Cloud Vault & Firestore
   const handlePlayerSaveToCloud = async () => {
+    if (activeCharacter) {
+      saveCharactersAsync(characters, authUser).catch(() => {});
+    }
     if (activeCharacter && authUser?.email) {
       try {
         await fetch('/api/vault/sheets', {
@@ -1554,6 +1589,9 @@ export default function App() {
 
   // DM Saves World Sheet to Cloud Vault
   const handleDmSaveToCloud = async () => {
+    if (activeWorld) {
+      saveDMWorkspaceAsync(dmWorkspace, authUser, activeWorld.id).catch(() => {});
+    }
     if (activeWorld && authUser?.email) {
       try {
         await fetch('/api/vault/worlds', {
@@ -1602,6 +1640,7 @@ export default function App() {
       : [...characters, updated];
     setCharacters(newChars);
     saveCharacters(newChars);
+    saveCharactersAsync(newChars, authUser).catch(() => {});
 
     if (authUser?.email) {
       if (playerVaultSaveTimeoutRef.current) {
@@ -2497,6 +2536,7 @@ export default function App() {
               const updatedList = [...characters.filter((c) => c.id !== importedChar.id), importedChar];
               setCharacters(updatedList);
               saveCharacters(updatedList);
+              saveCharactersAsync(updatedList, authUser).catch(() => {});
               setActiveCharId(importedChar.id);
               saveActiveCharacterId(importedChar.id);
             }}

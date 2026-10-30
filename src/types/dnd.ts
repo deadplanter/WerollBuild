@@ -184,6 +184,7 @@ export interface Character5e {
   avatarType?: 'icon' | 'custom';
   avatarCustomUrl?: string;
   avatarIcon?: string;
+  appearance?: string;
   portraitGallery?: string[]; // Up to 4 switchable & downloadable portraits
 
   // Combat Stats
@@ -637,6 +638,7 @@ export interface DiceRollResult {
   total: number;
   isCrit: boolean; // Natural 20
   isFumble: boolean; // Natural 1
+  label?: string;
   timestamp: number;
 }
 
@@ -1291,7 +1293,7 @@ export interface AppSkinThemeTokens {
   // J-6: Carta Tarot 3D (Frente, Reverso, Giro, Partículas)
   tarotCardBackCustomPngUrl?: string;
   tarotCardFlipDurationMs?: number;
-  tarotParticleEffect?: 'none' | 'fire' | 'stars' | 'snow' | 'runes';
+  tarotParticleEffect?: 'none' | 'fire' | 'stars' | 'snow' | 'runes' | 'embers' | 'arcane_sparkles' | 'golden_dust';
 
   // J-7: Modo Mapa del Jugador (7 Sub-capas 7A a 7G)
   // 7A: Cartas de Aliados
@@ -1388,6 +1390,20 @@ export interface AppSkinThemeTokens {
   storeSeasonBadgeBg?: string;
   adminHarmonizedInherit?: boolean;
 
+  // General theme custom properties
+  appBgColor?: string;
+  accentColor?: string;
+  textPrimaryColor?: string;
+  bodyFontFamily?: string;
+  headingFontFamily?: string;
+  customLogoUrl?: string;
+  brandTitleText?: string;
+  customHeaderBannerUrl?: string;
+  cardBorderColor?: string;
+  bgImageUrl?: string;
+  bgImageOpacity?: number;
+  sheetAudioProfile?: 'heavy_tome' | 'mystic_hum' | 'parchment_whisper';
+
   // Spatial Page Builder for App / Lobby Skin (Shopify-style full block & button customization)
   lobbyPageLayout?: LobbyPageLayoutConfig;
 
@@ -1430,6 +1446,7 @@ export interface AppSkinThemeTokens {
 
   modalPopupConfigs?: Partial<Record<SkinModalTargetId, SkinModalPopupOverride>>;
   modalInteractiveLayouts?: Partial<Record<SkinModalTargetId, SpatialBlockConfig<SkinModalTargetId>>>;
+  modalPopupOverrides?: any;
   modalPopupBg?: string;
   modalPopupBorder?: string;
   modalPopupOverlayOpacity?: number;
@@ -1437,7 +1454,6 @@ export interface AppSkinThemeTokens {
   sheetTraitsCustomPngUrl?: string;
   mapModeFrameCustomPngUrl?: string;
   mapModeButtonCustomPngUrl?: string;
-  sheetAudioProfile?: string;
 
   // ==========================================
   // POP-UPS & MODALS SKINNING + EXTENSIBLE LAYERS
