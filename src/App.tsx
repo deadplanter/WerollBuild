@@ -81,23 +81,47 @@ import {
   exportBackupData,
   importBackupData,
 } from './utils/storage';
-import { CharacterSheetView } from './components/character/CharacterSheetView';
-import { CharacterCreatorModal } from './components/character/CharacterCreatorModal';
-import { DMScreenView } from './components/dm/DMScreenView';
-import { TableMapView } from './components/session/TableMapView';
-import { DiceRollerModal } from './components/dice/DiceRollerModal';
-import { RulesCompendiumModal } from './components/rules/RulesCompendiumModal';
-import { ArcaneOracleModal } from './components/ai/ArcaneOracleModal';
-import { PartySessionBar } from './components/session/PartySessionBar';
-import { LiveRollFeedModal } from './components/session/LiveRollFeedModal';
+import { LobbyPortalView } from './components/lobby/LobbyPortalView';
 import { RoleSelectionModal } from './components/auth/RoleSelectionModal';
 import { PasswordPromptModal } from './components/auth/PasswordPromptModal';
-import { ChangelogModal } from './components/host/ChangelogModal';
-import { LobbyPortalView } from './components/lobby/LobbyPortalView';
-import { FeedbackModal } from './components/feedback/FeedbackModal';
-import { UserSecurityModal } from './components/auth/UserSecurityModal';
-import { ModeratorPanelModal } from './components/admin/ModeratorPanelModal';
 import { BrandLogo } from './components/common/BrandLogo';
+
+const CharacterSheetView = React.lazy(() =>
+  import('./components/character/CharacterSheetView').then((m) => ({ default: m.CharacterSheetView }))
+);
+const CharacterCreatorModal = React.lazy(() =>
+  import('./components/character/CharacterCreatorModal').then((m) => ({ default: m.CharacterCreatorModal }))
+);
+const DMScreenView = React.lazy(() =>
+  import('./components/dm/DMScreenView').then((m) => ({ default: m.DMScreenView }))
+);
+const TableMapView = React.lazy(() =>
+  import('./components/session/TableMapView').then((m) => ({ default: m.TableMapView }))
+);
+const DiceRollerModal = React.lazy(() =>
+  import('./components/dice/DiceRollerModal').then((m) => ({ default: m.DiceRollerModal }))
+);
+const RulesCompendiumModal = React.lazy(() =>
+  import('./components/rules/RulesCompendiumModal').then((m) => ({ default: m.RulesCompendiumModal }))
+);
+const ArcaneOracleModal = React.lazy(() =>
+  import('./components/ai/ArcaneOracleModal').then((m) => ({ default: m.ArcaneOracleModal }))
+);
+const LiveRollFeedModal = React.lazy(() =>
+  import('./components/session/LiveRollFeedModal').then((m) => ({ default: m.LiveRollFeedModal }))
+);
+const ChangelogModal = React.lazy(() =>
+  import('./components/host/ChangelogModal').then((m) => ({ default: m.ChangelogModal }))
+);
+const FeedbackModal = React.lazy(() =>
+  import('./components/feedback/FeedbackModal').then((m) => ({ default: m.FeedbackModal }))
+);
+const UserSecurityModal = React.lazy(() =>
+  import('./components/auth/UserSecurityModal').then((m) => ({ default: m.UserSecurityModal }))
+);
+const ModeratorPanelModal = React.lazy(() =>
+  import('./components/admin/ModeratorPanelModal').then((m) => ({ default: m.ModeratorPanelModal }))
+);
 import {
   calculateProficiencyBonus,
   calculatePassivePerception,
@@ -108,6 +132,8 @@ import {
   buildLiveProjectionFromWorkspace as computeLiveProjectionFromWorkspace,
   canAccessArcaneOracle,
   getHeaderRoleButtonsVisibility,
+  normalizePlayerSheetItemCategory,
+  resolveAuthoritativePlayerHp,
 } from './utils/dnd-math';
 import {
   enqueueOfflineTableEvent,
@@ -312,6 +338,11 @@ export default function App() {
     activeCharacterRef.current = activeCharacter;
   }, [activeCharacter]);
 
+  const recentRollRef = useRef<DiceRollResult | null>(recentRoll);
+  useEffect(() => {
+    recentRollRef.current = recentRoll;
+  }, [recentRoll]);
+
   const appViewRef = useRef(appView);
   useEffect(() => {
     appViewRef.current = appView;
@@ -425,6 +456,7 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
     const syncHostSettings = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const res = await fetch('/api/settings');
         if (res.ok && isMounted) {
@@ -450,10 +482,11 @@ export default function App() {
       } catch (err) {}
     };
 
-    syncHostSettings();
-    const interval = setInterval(syncHostSettings, 3000);
+    const initTimer = setTimeout(syncHostSettings, 1200);
+    const interval = setInterval(syncHostSettings, 30000);
     return () => {
       isMounted = false;
+      clearTimeout(initTimer);
       clearInterval(interval);
     };
   }, []);
@@ -477,9 +510,10 @@ export default function App() {
         }
       } catch {}
     };
-    fetchActiveSkin();
+    const initTimer = setTimeout(fetchActiveSkin, 900);
     return () => {
       isMounted = false;
+      clearTimeout(initTimer);
     };
   }, []);
 
@@ -490,6 +524,7 @@ export default function App() {
 
     const runContinuousBackupComparison = async () => {
       if (!isMounted) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
       // Pause heavy full-vault JSON mirror comparison during active real-time table combat to prevent 15-30 min GC lag
       if (appViewRef.current === 'player-session' || appViewRef.current === 'dm-session') {
         return;
@@ -551,10 +586,11 @@ export default function App() {
         }
         // Case B: Server has a newer backup (from a mutation or cloud recovery) -> Save to our local mirror!
         else if (checkData.action === 'UPDATE_CLIENT_MIRROR' && checkData.latestBackup) {
+          const hadPreviousMirror = Boolean(mirrorObj);
           try {
             localStorage.setItem(MIRROR_STORAGE_KEY, JSON.stringify(checkData.latestBackup));
           } catch {}
-          if (isMounted) {
+          if (isMounted && hadPreviousMirror) {
             fetchWorldSheets();
             setVaultSyncRevision((r) => r + 1);
           }
@@ -564,10 +600,11 @@ export default function App() {
       }
     };
 
-    runContinuousBackupComparison();
-    const compareInterval = setInterval(runContinuousBackupComparison, 8000);
+    const initTimer = setTimeout(runContinuousBackupComparison, 6000);
+    const compareInterval = setInterval(runContinuousBackupComparison, 45000);
     return () => {
       isMounted = false;
+      clearTimeout(initTimer);
       clearInterval(compareInterval);
     };
   }, [authUser?.email]);
@@ -579,6 +616,7 @@ export default function App() {
 
     const sendUserPresence = async () => {
       if (!isMounted) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const currentView = appViewRef.current;
         const currentRoom = roomCodeRef.current;
@@ -602,21 +640,24 @@ export default function App() {
         });
         if (!res.ok || !isMounted) return;
         const data = await res.json();
-        if (
-          typeof data.vaultRevision === 'number' &&
-          data.vaultRevision !== lastSeenServerVaultRevRef.current
-        ) {
-          lastSeenServerVaultRevRef.current = data.vaultRevision;
-          fetchWorldSheets();
-          setVaultSyncRevision((r) => r + 1);
+        if (typeof data.vaultRevision === 'number') {
+          if (lastSeenServerVaultRevRef.current === -1) {
+            // Initialize baseline revision on first heartbeat without triggering redundant cascade
+            lastSeenServerVaultRevRef.current = data.vaultRevision;
+          } else if (data.vaultRevision !== lastSeenServerVaultRevRef.current) {
+            lastSeenServerVaultRevRef.current = data.vaultRevision;
+            fetchWorldSheets();
+            setVaultSyncRevision((r) => r + 1);
+          }
         }
       } catch {}
     };
 
-    sendUserPresence();
-    const hbInterval = setInterval(sendUserPresence, 12000);
+    const initTimer = setTimeout(sendUserPresence, 2500);
+    const hbInterval = setInterval(sendUserPresence, 30000);
     return () => {
       isMounted = false;
+      clearTimeout(initTimer);
       clearInterval(hbInterval);
     };
   }, [authUser?.id, authUser?.email, appView, roomCode]);
@@ -665,7 +706,8 @@ export default function App() {
           initiative: (target.initiativeBonus ?? 0) + (equippedBonuses?.initiative ?? 0),
           race: target.race,
           characterClass: `${target.race} ${target.characterClass}`,
-          lastRoll: recentRoll,
+          lastRoll: recentRollRef.current || recentRoll,
+          hpUpdatedAt: lastLocalPlayerMutationAtRef.current || undefined,
           abilities: {
             str: totalAbilities.str.totalScore,
             dex: totalAbilities.dex.totalScore,
@@ -811,8 +853,12 @@ export default function App() {
     }
 
     let isMounted = true;
+    let isSyncing = false;
 
     const syncSession = async () => {
+      if (isSyncing) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      isSyncing = true;
       try {
         // Send player heartbeat if player session
         if (appView === 'player-session') {
@@ -881,59 +927,66 @@ export default function App() {
           // Flush any locally queued events from a previous micro-disconnection
           flushOfflineTableEvents(roomCode).catch(() => {});
 
-          // Protect against HP flickering: if player mutated HP locally within last 3.5s, keep local HP in party list unless DM explicitly adjusted it
-          const recentlyMutatedPlayerLocally =
-            Date.now() - lastLocalPlayerMutationAtRef.current < 3500;
           const recentlyMutatedDmLocally =
             Date.now() - lastLocalDmMutationAtRef.current < 3500;
 
           if (Array.isArray(data.party)) {
+            if (appView === 'player-session' && activeCharacterRef.current) {
+              const currentChar = activeCharacterRef.current;
+              const myEntry = data.party.find(
+                (p: any) => p.characterId === currentChar.id
+              );
+
+              if (myEntry) {
+                const hpRes = resolveAuthoritativePlayerHp({
+                  localCurrentHp: currentChar.currentHp,
+                  localHpUpdatedAt: lastLocalPlayerMutationAtRef.current,
+                  serverCurrentHp: myEntry.currentHp,
+                  serverHpUpdatedAt: myEntry.hpUpdatedAt,
+                  serverDmModifiedAt: myEntry.dmModifiedAt,
+                  lastSeenDmModifiedAt: lastSeenDmModifiedAtRef.current,
+                });
+
+                lastSeenDmModifiedAtRef.current = hpRes.nextLastSeenDmModifiedAt;
+
+                if (hpRes.shouldApplyServerToLocal) {
+                  lastLocalPlayerMutationAtRef.current = hpRes.effectiveHpUpdatedAt;
+                  const updatedChar: Character5e = {
+                    ...currentChar,
+                    currentHp: hpRes.currentHp,
+                    currency: myEntry.currency || currentChar.currency,
+                  };
+                  activeCharacterRef.current = updatedChar;
+                  setCharacters((prev) => {
+                    const next = prev.map((c) => (c.id === updatedChar.id ? updatedChar : c));
+                    saveCharacters(next);
+                    return next;
+                  });
+                }
+              }
+            }
+
             setPartyMembers(
               data.party.map((m: any) => {
                 if (
                   appView === 'player-session' &&
-                  recentlyMutatedPlayerLocally &&
                   activeCharacterRef.current &&
-                  m.characterId === activeCharacterRef.current.id &&
-                  (!m.dmModifiedAt || m.dmModifiedAt <= lastSeenDmModifiedAtRef.current)
+                  m.characterId === activeCharacterRef.current.id
                 ) {
+                  const charNow = activeCharacterRef.current;
+                  const eqBonuses = charNow.inventory
+                    ? calculateEquippedItemStatBonuses(charNow.inventory)
+                    : null;
                   return {
                     ...m,
-                    currentHp: activeCharacterRef.current.currentHp,
-                    maxHp: activeCharacterRef.current.maxHp,
-                    currency: activeCharacterRef.current.currency,
+                    currentHp: charNow.currentHp,
+                    maxHp: charNow.maxHp + (eqBonuses?.maxHp ?? 0),
+                    currency: charNow.currency,
                   };
                 }
                 return m;
               })
             );
-          }
-
-          // If the DM adjusted this player's HP or gold, apply it to activeCharacter immediately
-          if (appView === 'player-session' && activeCharacterRef.current && Array.isArray(data.party)) {
-            const myEntry = data.party.find(
-              (p: any) => p.characterId === activeCharacterRef.current?.id
-            );
-            if (
-              myEntry &&
-              myEntry.dmModifiedAt &&
-              myEntry.dmModifiedAt > lastSeenDmModifiedAtRef.current
-            ) {
-              lastSeenDmModifiedAtRef.current = myEntry.dmModifiedAt;
-              const currentChar = activeCharacterRef.current;
-              const updatedChar: Character5e = {
-                ...currentChar,
-                currentHp:
-                  typeof myEntry.currentHp === 'number' ? myEntry.currentHp : currentChar.currentHp,
-                currency: myEntry.currency || currentChar.currency,
-              };
-              activeCharacterRef.current = updatedChar;
-              setCharacters((prev) => {
-                const next = prev.map((c) => (c.id === updatedChar.id ? updatedChar : c));
-                saveCharacters(next);
-                return next;
-              });
-            }
           }
           if (Array.isArray(data.rollFeed)) {
             setRollFeed(data.rollFeed.slice(-35));
@@ -964,8 +1017,13 @@ export default function App() {
 
             if (appView === 'player-session' && activeCharacterRef.current) {
               const myCharId = activeCharacterRef.current.id;
+              const myCharName = (activeCharacterRef.current.name || '').trim().toLowerCase();
               const myPending = offers.filter(
-                (o) => o.status === 'pending' && o.targetCharacterId === myCharId
+                (o) =>
+                  o.status === 'pending' &&
+                  (o.targetCharacterId === myCharId ||
+                    (myCharName &&
+                      String(o.targetCharacterName || '').trim().toLowerCase() === myCharName))
               );
               setPendingPlayerOffers(myPending);
             }
@@ -1020,11 +1078,13 @@ export default function App() {
         }
       } catch (err) {
         // Offline handling
+      } finally {
+        isSyncing = false;
       }
     };
 
     syncSession();
-    const interval = setInterval(syncSession, 2500);
+    const interval = setInterval(syncSession, 3000);
 
     return () => {
       isMounted = false;
@@ -1053,6 +1113,7 @@ export default function App() {
 
   const handleRefreshAuthStatus = async () => {
     if (!authUser?.email) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
     try {
       const res = await fetch(`/api/auth/me?email=${encodeURIComponent(authUser.email)}`, {
         cache: 'no-store',
@@ -1075,8 +1136,13 @@ export default function App() {
             playerTypeChangeRequested: Boolean(data.playerTypeChangeRequested),
             status: data.status,
           };
-          setAuthUser(updated);
-          saveAuthUser(updated);
+          setAuthUser((prev) => {
+            if (prev && JSON.stringify(prev) === JSON.stringify(updated)) {
+              return prev;
+            }
+            saveAuthUser(updated);
+            return updated;
+          });
         }
       }
     } catch (e) {
@@ -1086,22 +1152,32 @@ export default function App() {
 
   useEffect(() => {
     if (!authUser?.email) return;
-    handleRefreshAuthStatus();
-    const interval = setInterval(handleRefreshAuthStatus, 4000);
-    return () => clearInterval(interval);
+    const initTimer = setTimeout(handleRefreshAuthStatus, 3500);
+    const interval = setInterval(handleRefreshAuthStatus, 30000);
+    return () => {
+      clearTimeout(initTimer);
+      clearInterval(interval);
+    };
   }, [authUser?.email]);
 
   // Launch Player Sheet into active table
   const handleSelectCharacterToPlay = (character: Character5e, code: string) => {
+    const scopedId =
+      character.id === 'char-1' && authUser?.id
+        ? `char-1-${authUser.id}`
+        : character.id;
+    const readyChar: Character5e =
+      scopedId !== character.id ? { ...character, id: scopedId } : character;
+
     setCharacters((prev) => {
-      const exists = prev.some((c) => c.id === character.id);
-      const next = exists ? prev.map((c) => (c.id === character.id ? character : c)) : [...prev, character];
+      const filtered = prev.filter((c) => c.id !== character.id && c.id !== readyChar.id);
+      const next = [...filtered, readyChar];
       saveCharacters(next);
       return next;
     });
-    activeCharacterRef.current = character;
-    setActiveCharId(character.id);
-    saveActiveCharacterId(character.id);
+    activeCharacterRef.current = readyChar;
+    setActiveCharId(readyChar.id);
+    saveActiveCharacterId(readyChar.id);
     setRoomCode(code);
     saveRoomCode(code);
     setAppView('player-session');
@@ -1154,8 +1230,20 @@ export default function App() {
         };
 
         if (offer.kind === 'item' && offer.item) {
-          if (!updatedChar.inventory.some((i) => i.id === offer.item!.id)) {
-            updatedChar.inventory.push(offer.item);
+          const normClass = normalizePlayerSheetItemCategory({
+            category: offer.item.category || offer.category,
+            itemGroup: offer.item.itemGroup,
+            name: offer.item.name || offer.title,
+            weaponAttacks: offer.item.weaponAttacks,
+          });
+          const normalizedItem: InventoryItem = {
+            ...offer.item,
+            category: normClass.category,
+            itemGroup: normClass.itemGroup,
+            weaponAttacks: normClass.itemGroup === 'weapon' ? offer.item.weaponAttacks : undefined,
+          };
+          if (!updatedChar.inventory.some((i) => i.id === normalizedItem.id)) {
+            updatedChar.inventory.push(normalizedItem);
           }
         } else if (offer.kind === 'spell' && offer.spell) {
           if (!updatedChar.spells.some((s) => s.id === offer.spell!.id)) {
@@ -1535,8 +1623,12 @@ export default function App() {
 
     if (appView === 'player-session') {
       const prof = calculateProficiencyBonus(updated.level);
+      const equippedBonuses = updated.inventory
+        ? calculateEquippedItemStatBonuses(updated.inventory)
+        : null;
+      const totalAbilities = resolveTarotCardAbilityScores(updated, null);
       const pp = calculatePassivePerception(
-        updated.abilities.wis.score,
+        totalAbilities.wis.totalScore,
         updated.skills.perception,
         prof
       );
@@ -1556,21 +1648,22 @@ export default function App() {
                 level: updated.level,
                 experience: updated.experience ?? updated.xp ?? 0,
                 alignment: updated.alignment,
-                speed: updated.speed,
-                initiative: updated.initiativeBonus,
+                speed: (updated.speed ?? 30) + (equippedBonuses?.speed ?? 0),
+                initiative: (updated.initiativeBonus ?? 0) + (equippedBonuses?.initiative ?? 0),
                 race: updated.race,
                 characterClass: `${updated.race} ${updated.characterClass}`,
                 currentHp: updated.currentHp,
-                maxHp: updated.maxHp,
-                ac: updated.armorClass,
+                maxHp: updated.maxHp + (equippedBonuses?.maxHp ?? 0),
+                ac: updated.armorClass + (equippedBonuses?.ac ?? 0),
                 passivePerception: pp,
+                hpUpdatedAt: lastLocalPlayerMutationAtRef.current,
                 abilities: {
-                  str: updated.abilities.str.score,
-                  dex: updated.abilities.dex.score,
-                  con: updated.abilities.con.score,
-                  int: updated.abilities.int.score,
-                  wis: updated.abilities.wis.score,
-                  cha: updated.abilities.cha.score,
+                  str: totalAbilities.str.totalScore,
+                  dex: totalAbilities.dex.totalScore,
+                  con: totalAbilities.con.totalScore,
+                  int: totalAbilities.int.totalScore,
+                  wis: totalAbilities.wis.totalScore,
+                  cha: totalAbilities.cha.totalScore,
                 },
                 currency: updated.currency,
               }
@@ -2510,7 +2603,8 @@ export default function App() {
         {/* PLAYER INCOMING DM SHARE OFFER MODAL (Accept or Decline Item / Spell / Ability) */}
         {appView === 'player-session' && pendingPlayerOffers.length > 0 && activeCharacter && (
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in"
+            data-testid="player-incoming-dm-offer-modal"
+            className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in"
             role="dialog"
             aria-modal="true"
           >
@@ -2592,6 +2686,7 @@ export default function App() {
         )}
 
         {/* 3. TABLE MAP VIEW (Inside Active Session or Solo for Player or DM) */}
+        <React.Suspense fallback={null}>
         {appView !== 'lobby' && isSessionMapViewOpen && (
           <TableMapView
             mode={appView === 'dm-session' ? 'dm' : 'player'}
@@ -2902,6 +2997,7 @@ export default function App() {
             currentUserEmail={authUser?.email}
           />
         )}
+        </React.Suspense>
       </main>
 
       {/* Persistent AI Assistant Reference & Total Backup Banner (Admin/Moderator Only) */}
@@ -2972,6 +3068,7 @@ export default function App() {
       {/* =================================================================== */}
       {/* GLOBAL MODALS                                                       */}
       {/* =================================================================== */}
+      <React.Suspense fallback={null}>
 
       {/* Character Creator Modal */}
       {isCreatorOpen && (
@@ -3135,6 +3232,7 @@ export default function App() {
           }}
         />
       )}
+      </React.Suspense>
 
       {/* LIVE BROADCAST POP-UP MODAL FROM ADMIN / CREATOR / MODERATOR */}
       {activeLiveAdminPopup && (

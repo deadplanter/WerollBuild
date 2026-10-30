@@ -39,6 +39,7 @@ import { CharacterJournalBookModal } from './CharacterJournalBookModal';
 import { CharacterBackpackModal } from './CharacterBackpackModal';
 import { CharacterParchmentModal } from './CharacterParchmentModal';
 import { CharacterTarotCard, AlignmentBadgeIcon } from './CharacterTarotCard';
+import { GeometricSvgBorder } from '../common/GeometricSvgBorder';
 import {
   Character5e,
   AbilityKey,
@@ -65,7 +66,18 @@ import {
   deriveAllCharacterActions,
   buildDeduplicatedPlayerSkillCards,
   clampPortraitGallery,
+  resolveMaxPortraitGalleryCount,
+  getGeometricClipPath,
+  getEdgeFadeMaskCss,
+  resolvePortraitAspectRatioCss,
 } from '../../utils/dnd-math';
+import {
+  resolvePlayerSheetLayout,
+  resolveDeckCardTemplate,
+  resolveStatBoxGraphicConfig,
+  buildSpatialBlockInlineStyle,
+  buildGeometricElementStyle,
+} from '../../utils/playerSkinLayout';
 import { ABILITY_LABELS, SKILL_METADATA, SKILLS_5E } from '../../data/srd';
 import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 import { CreatorPlayerSkin } from '../../types/dnd';
@@ -190,37 +202,82 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
 
   const activeSkinTokens = activeSkinRecord?.themeTokens || null;
 
+  const sheetLayoutBlocks = React.useMemo(
+    () => resolvePlayerSheetLayout(activeSkinTokens),
+    [activeSkinTokens]
+  );
+  const getSheetBlock = React.useCallback(
+    (id: string) => sheetLayoutBlocks.find((b) => b.id === id),
+    [sheetLayoutBlocks]
+  );
+
+  const statGraphicCfg = React.useMemo(
+    () => resolveStatBoxGraphicConfig(activeSkinTokens),
+    [activeSkinTokens]
+  );
+  const combatCardTpl = React.useMemo(
+    () => resolveDeckCardTemplate(activeSkinTokens, 'combat'),
+    [activeSkinTokens]
+  );
+  const skillsCardTpl = React.useMemo(
+    () => resolveDeckCardTemplate(activeSkinTokens, 'skills'),
+    [activeSkinTokens]
+  );
+  const spellsCardTpl = React.useMemo(
+    () => resolveDeckCardTemplate(activeSkinTokens, 'spells'),
+    [activeSkinTokens]
+  );
+  const maxPortraitCount = React.useMemo(
+    () => resolveMaxPortraitGalleryCount(activeSkinTokens),
+    [activeSkinTokens]
+  );
+  const portraitAspectCss = React.useMemo(
+    () =>
+      resolvePortraitAspectRatioCss(
+        activeSkinTokens?.portraitAspectRatio,
+        activeSkinTokens?.portraitCustomAspectW,
+        activeSkinTokens?.portraitCustomAspectH
+      ),
+    [activeSkinTokens]
+  );
+  const portraitGeomStyle = React.useMemo(
+    () =>
+      buildGeometricElementStyle({
+        shape: activeSkinTokens?.portraitGeometricShape || 'circle',
+        hideBorder: activeSkinTokens?.portraitHideBorder,
+        edgeFadePercent: activeSkinTokens?.portraitEdgeFadePercent || 0,
+      }),
+    [activeSkinTokens]
+  );
+
   const statBoxCustomStyle: React.CSSProperties = React.useMemo(() => {
     if (!activeSkinTokens) return {};
-    if (activeSkinTokens.sheetStatBoxHideBox) {
+    const geom = buildGeometricElementStyle({
+      shape: statGraphicCfg.shape,
+      hideBorder: statGraphicCfg.hideBorder || activeSkinTokens.sheetStatBoxHideBox,
+      edgeFadePercent: statGraphicCfg.edgeFadePercent,
+      bgColor: statGraphicCfg.bgColor,
+      borderColor: statGraphicCfg.borderColor,
+      borderWidthPx: statGraphicCfg.borderWidthPx,
+      customPngUrl: statGraphicCfg.customPngUrl,
+      opacity: statGraphicCfg.opacity,
+    });
+    if (activeSkinTokens.sheetStatBoxHideBox || statGraphicCfg.hideBorder) {
       return {
-        backgroundColor: 'transparent',
+        ...geom,
+        backgroundColor: statGraphicCfg.hideBorder ? geom.backgroundColor : 'transparent',
         borderColor: 'transparent',
         boxShadow: 'none',
-        opacity:
-          activeSkinTokens.sheetStatBoxOpacity !== undefined
-            ? activeSkinTokens.sheetStatBoxOpacity
-            : 1,
       };
     }
     return {
-      backgroundColor: activeSkinTokens.sheetStatBoxBg || undefined,
-      borderColor: activeSkinTokens.sheetStatBoxBorder || undefined,
-      backgroundImage: activeSkinTokens.sheetStatBoxCustomPngUrl
-        ? `url(${activeSkinTokens.sheetStatBoxCustomPngUrl})`
-        : undefined,
-      backgroundSize: 'cover',
-      backgroundPosition: 'center',
-      opacity:
-        activeSkinTokens.sheetStatBoxOpacity !== undefined
-          ? activeSkinTokens.sheetStatBoxOpacity
-          : 1,
+      ...geom,
       borderRadius:
-        activeSkinTokens.sheetStatBoxBorderRadius !== undefined
+        statGraphicCfg.shape === 'rounded' && activeSkinTokens.sheetStatBoxBorderRadius !== undefined
           ? `${activeSkinTokens.sheetStatBoxBorderRadius}px`
-          : undefined,
+          : geom.borderRadius,
     };
-  }, [activeSkinTokens]);
+  }, [activeSkinTokens, statGraphicCfg]);
 
   const hpBarContainerStyle: React.CSSProperties = React.useMemo(() => {
     if (!activeSkinTokens) return {};
@@ -337,6 +394,119 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
       ? character.spellAttackBonusOverride
       : calculateSpellAttackBonus(spellAbilityScore, profBonus);
 
+  // Quick Edit Modal for Combat / Action Card or Spell Card Description
+  const [editingDeckCardModal, setEditingDeckCardModal] = useState<{
+    deck: 'combat' | 'spells';
+    cardId: string;
+    sourceId: string;
+    sourceKind?: string;
+    name: string;
+    description: string;
+    damageOrFormula?: string;
+    imageUrl?: string;
+  } | null>(null);
+
+  const handleSaveDeckCardDescription = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDeckCardModal) return;
+    const { deck, cardId, sourceId, name, description, damageOrFormula, imageUrl } = editingDeckCardModal;
+
+    if (deck === 'spells') {
+      const nextSpells = (character.spells || []).map((sp) =>
+        sp.id === cardId || sp.id === sourceId
+          ? {
+              ...sp,
+              name: name.trim() || sp.name,
+              description: description.trim(),
+              damageOrHeal: damageOrFormula !== undefined ? damageOrFormula.trim() : sp.damageOrHeal,
+              imageUrl: imageUrl?.trim() || sp.imageUrl,
+            }
+          : sp
+      );
+      onUpdateCharacter({ ...character, spells: nextSpells });
+      setEditingDeckCardModal(null);
+      return;
+    }
+
+    // Combat / Action Card editing: update matching inventory weaponAttack / itemAction, spell itemAction, feature itemAction, or custom attack
+    const nextInventory = (character.inventory || []).map((item) => {
+      if (item.id !== sourceId) return item;
+      let updatedItem = { ...item };
+      if (Array.isArray(item.weaponAttacks) && item.weaponAttacks.length > 0) {
+        updatedItem.weaponAttacks = item.weaponAttacks.map((wa, idx) =>
+          `${item.id}-atk-${wa.id || idx}` === cardId || wa.name === name
+            ? {
+                ...wa,
+                name: name.trim() || wa.name,
+                description: description.trim(),
+                imageUrl: imageUrl?.trim() || wa.imageUrl,
+              }
+            : wa
+        );
+      } else if (cardId === `${item.id}-atk-default`) {
+        updatedItem.description = description.trim();
+        if (imageUrl?.trim()) updatedItem.imageUrl = imageUrl.trim();
+      }
+      if (Array.isArray(item.itemActions) && item.itemActions.length > 0) {
+        updatedItem.itemActions = item.itemActions.map((ia, idx) =>
+          `${item.id}-act-${ia.id || idx}` === cardId || ia.name === name
+            ? {
+                ...ia,
+                name: name.trim() || ia.name,
+                description: description.trim(),
+                imageUrl: imageUrl?.trim() || ia.imageUrl,
+              }
+            : ia
+        );
+      }
+      return updatedItem;
+    });
+
+    const nextAttacks = (character.attacks || []).map((atk) =>
+      atk.id === cardId || atk.id === sourceId || atk.name === name
+        ? {
+            ...atk,
+            name: name.trim() || atk.name,
+            notes: description.trim(),
+            damageDice: damageOrFormula?.trim() || atk.damageDice,
+          }
+        : atk
+    );
+
+    const nextSpells = (character.spells || []).map((sp) => {
+      if (sp.id !== sourceId || !Array.isArray(sp.itemActions)) return sp;
+      return {
+        ...sp,
+        itemActions: sp.itemActions.map((ia, idx) =>
+          `${sp.id}-spact-${ia.id || idx}` === cardId
+            ? { ...ia, name: name.trim() || ia.name, description: description.trim() }
+            : ia
+        ),
+      };
+    });
+
+    const nextFeatures = (character.featuresAndTraits || []).map((ft) => {
+      if (ft.id !== sourceId || !Array.isArray(ft.itemActions)) return ft;
+      return {
+        ...ft,
+        itemActions: ft.itemActions.map((ia, idx) =>
+          `${ft.id}-featact-${ia.id || idx}` === cardId
+            ? { ...ia, name: name.trim() || ia.name, description: description.trim() }
+            : ia
+        ),
+      };
+    });
+
+    onUpdateCharacter({
+      ...character,
+      inventory: nextInventory,
+      attacks: nextAttacks,
+      spells: nextSpells,
+      featuresAndTraits: nextFeatures,
+    });
+    setEditingDeckCardModal(null);
+  };
+
   // Derived Equipped Weapons & Actions for "Combates y Acciones" Deck
   const allCharacterActions = React.useMemo(
     () =>
@@ -344,6 +514,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
         inventory: character.inventory || [],
         spells: character.spells || [],
         features: character.featuresAndTraits || [],
+        attacks: character.attacks || [],
         strScore: calculateTotalAbilityScore(character.abilities.str, equippedBonuses.str).totalScore,
         dexScore: calculateTotalAbilityScore(character.abilities.dex, equippedBonuses.dex).totalScore,
         profBonus,
@@ -352,6 +523,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
       character.inventory,
       character.spells,
       character.featuresAndTraits,
+      character.attacks,
       character.abilities,
       equippedBonuses,
       profBonus,
@@ -885,41 +1057,68 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
           {/* --------------------------------------------------------------- */}
           {/* ROW 1: CHARACTER IDENTITY & 4 ORNATE COMBAT STAT BOXES          */}
           {/* --------------------------------------------------------------- */}
-          <div className="bg-[#12141b]/90 border border-[#c8a45c]/45 rounded-xl px-3 py-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
-            {/* Left: Circular Gold Avatar + 4-Portrait Quick Switcher + Name + Subtitle */}
+          {!getSheetBlock('identity_header')?.hidden && (
+          <div
+            style={buildSpatialBlockInlineStyle(getSheetBlock('identity_header'), false)}
+            className="bg-[#12141b]/90 border border-[#c8a45c]/45 rounded-xl px-3 py-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5"
+          >
+            {/* Left: Geometric Gold Avatar + Dynamic Portrait Quick Switcher + Name + Subtitle */}
             <div className="flex items-center gap-3.5">
               <div className="flex flex-col items-center gap-1 shrink-0">
                 <div
                   onClick={() => !isLocked && setIsAvatarModalOpen(true)}
-                  className={`relative group shrink-0 rounded-full p-0.5 bg-gradient-to-b from-[#f3dfb2] via-[#c8a45c] to-[#785a28] shadow-lg ${
-                    !isLocked ? 'cursor-pointer' : ''
-                  }`}
-                  title={!isLocked ? 'Cambiar retrato o gestionar galería (máx 4 imágenes)' : undefined}
+                  style={{
+                    ...portraitGeomStyle,
+                    width: activeSkinTokens?.portraitWidthPx
+                      ? `${activeSkinTokens.portraitWidthPx}px`
+                      : '68px',
+                    aspectRatio: portraitAspectCss,
+                    padding: activeSkinTokens?.portraitHideBorder ? '0px' : undefined,
+                    background: activeSkinTokens?.portraitHideBorder ? 'transparent' : undefined,
+                  }}
+                  className={`relative group shrink-0 w-16 sm:w-[68px] ${
+                    activeSkinTokens?.portraitHideBorder
+                      ? ''
+                      : 'p-0.5 bg-gradient-to-b from-[#f3dfb2] via-[#c8a45c] to-[#785a28] shadow-lg'
+                  } ${!isLocked ? 'cursor-pointer' : ''}`}
+                  title={!isLocked ? `Cambiar retrato o gestionar galería (máx ${maxPortraitCount} imágenes)` : undefined}
                 >
-                  <div className="rounded-full overflow-hidden bg-[#14161d]">
+                  <div
+                    style={{
+                      clipPath: portraitGeomStyle.clipPath,
+                      borderRadius: portraitGeomStyle.borderRadius,
+                    }}
+                    className="relative overflow-hidden bg-[#14161d] w-full h-full flex items-center justify-center"
+                  >
+                    <GeometricSvgBorder
+                      shape={activeSkinTokens?.portraitShape}
+                      borderColor={activeSkinTokens?.sheetBaseFrameBorder || '#c8a45c'}
+                      borderWidthPx={2}
+                      hideBorder={activeSkinTokens?.portraitHideBorder}
+                    />
                     <EntityAvatar
                       avatarType={character.avatarType || (character.avatarUrl ? 'custom' : 'icon')}
                       customUrl={character.avatarCustomUrl || character.avatarUrl}
                       iconId={character.avatarIcon || 'anonymous'}
                       size="lg"
-                      className="rounded-full"
+                      className="w-full h-full object-cover"
                     />
                   </div>
                   {!isLocked && (
                     <button
                       type="button"
                       aria-label="Editar retrato"
-                      className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-[#241c12] border border-[#e2c275] text-[#e2c275] flex items-center justify-center shadow"
+                      className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-[#241c12] border border-[#e2c275] text-[#e2c275] flex items-center justify-center shadow z-10"
                     >
                       <Edit2 className="w-2.5 h-2.5" />
                     </button>
                   )}
                 </div>
 
-                {/* Quick 4-Portrait Switcher Strip (if portraitGallery has images) */}
+                {/* Quick Portrait Switcher Strip (supports up to 24 portraits configured by skin) */}
                 {Array.isArray(character.portraitGallery) && character.portraitGallery.length > 0 && (
-                  <div className="flex items-center gap-1" data-testid="character-portrait-quick-strip">
-                    {clampPortraitGallery(character.portraitGallery).map((imgUrl, idx) => {
+                  <div className="flex items-center gap-1 flex-wrap max-w-[140px] justify-center" data-testid="character-portrait-quick-strip">
+                    {clampPortraitGallery(character.portraitGallery, maxPortraitCount).map((imgUrl, idx) => {
                       const isActive = (character.avatarCustomUrl || character.avatarUrl) === imgUrl;
                       return (
                         <button
@@ -954,7 +1153,11 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                   <h1 className="font-cinzel font-black text-xl sm:text-2xl text-[#f5e4be] tracking-wide leading-none">
                     {character.name}
                   </h1>
-                  <AlignmentBadgeIcon alignment={character.alignment} size="sm" />
+                  <AlignmentBadgeIcon
+                    alignment={character.alignment}
+                    size="sm"
+                    customIconUrl={activeSkinTokens?.alignmentCustomIcons?.[character.alignment]}
+                  />
 
                   <button
                     type="button"
@@ -971,7 +1174,15 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                         : 'bg-[#1b1e28] text-[#cbb692] border-[#c8a45c]/50 hover:border-[#e2c275]'
                     }`}
                   >
-                    <Sparkles className="w-3 h-3 text-[#e2c275]" />
+                    {activeSkinTokens?.sheetInspBtnCustomPngUrl ? (
+                      <img
+                        src={activeSkinTokens.sheetInspBtnCustomPngUrl}
+                        alt="Inspiración"
+                        className="w-3.5 h-3.5 object-contain"
+                      />
+                    ) : (
+                      <Sparkles className="w-3 h-3 text-[#e2c275]" />
+                    )}
                     <span>INSPIRACIÓN</span>
                   </button>
                 </div>
@@ -1023,7 +1234,11 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
             </div>
 
             {/* Right: 4 Tall Ornate Gold-Bordered Combat Stat Boxes */}
-            <div className="grid grid-cols-4 gap-2 shrink-0">
+            {!getSheetBlock('combat_stats_bar')?.hidden && (
+            <div
+              style={buildSpatialBlockInlineStyle(getSheetBlock('combat_stats_bar'), false)}
+              className="grid grid-cols-4 gap-2 shrink-0"
+            >
               <div
                 style={statBoxCustomStyle}
                 className="bg-gradient-to-b from-[#1d202b] to-[#12141c] border-2 border-[#c8a45c]/70 rounded-xl px-2.5 py-1 text-center min-w-[68px] shadow-inner"
@@ -1079,17 +1294,31 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                 </div>
               </div>
             </div>
+            )}
           </div>
+          )}
 
           {/* --------------------------------------------------------------- */}
           {/* ROW 2: HP BAR + TIRADAS DE MUERTE + AJUSTES/SKIN + DESCANSOS    */}
           {/* --------------------------------------------------------------- */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-stretch">
+          {!getSheetBlock('hp_and_rests_bar')?.hidden && (
+          <div
+            style={buildSpatialBlockInlineStyle(getSheetBlock('hp_and_rests_bar'), false)}
+            className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-stretch"
+          >
             {/* Left 7 Cols: PG Actual & Glowing Green HP Bar */}
             <div className="lg:col-span-7 bg-[#12141b]/95 border border-[#c8a45c]/45 rounded-xl px-3 py-2 flex flex-col justify-between gap-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <Heart className="w-4 h-4 text-red-500 fill-red-500/30" />
+                  {activeSkinTokens?.sheetHeartCustomPngUrl ? (
+                    <img
+                      src={activeSkinTokens.sheetHeartCustomPngUrl}
+                      alt="PG"
+                      className="w-4 h-4 object-contain"
+                    />
+                  ) : (
+                    <Heart className="w-4 h-4 text-red-500 fill-red-500/30" />
+                  )}
                   <span className="font-cinzel font-bold text-xs sm:text-sm text-[#f5e4be]">
                     PG Actual:{' '}
                     <strong className="text-white text-base">
@@ -1276,10 +1505,16 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
             </div>
           </div>
 
+          )}
+
           {/* --------------------------------------------------------------- */}
           {/* ROW 3: 6 ORNATE ABILITY SCORE CARDS (FUE, DES, CON, INT, SAB, CAR)*/}
           {/* --------------------------------------------------------------- */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          {!getSheetBlock('ability_scores_grid')?.hidden && (
+          <div
+            style={buildSpatialBlockInlineStyle(getSheetBlock('ability_scores_grid'), false)}
+            className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2"
+          >
             {(Object.keys(ABILITY_LABELS) as AbilityKey[]).map((key) => {
               const ab = character.abilities[key];
               const itemBonus = equippedBonuses[key] || 0;
@@ -1290,11 +1525,26 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
               return (
                 <div
                   key={key}
+                  style={statBoxCustomStyle}
                   className="bg-gradient-to-b from-[#1e212d] via-[#161821] to-[#11131a] border-2 border-[#c8a45c]/65 rounded-xl px-2 py-1.5 flex flex-col items-center justify-between shadow-md relative group hover:border-[#f3dfb2] transition"
                 >
+                  <GeometricSvgBorder
+                    shape={statGraphicCfg.shape}
+                    borderColor={statGraphicCfg.borderColor || '#c8a45c'}
+                    borderWidthPx={statGraphicCfg.borderWidthPx ?? 2}
+                    hideBorder={statGraphicCfg.hideBorder}
+                  />
                   {/* Top Label */}
                   <div className="text-center">
-                    <div className="font-cinzel font-black text-xs text-[#f5e4be] tracking-wider leading-none">
+                    <div
+                      style={{
+                        color: statGraphicCfg.labelColor || undefined,
+                        fontSize: statGraphicCfg.labelFontSizePx
+                          ? `${statGraphicCfg.labelFontSizePx}px`
+                          : undefined,
+                      }}
+                      className="font-cinzel font-black text-xs text-[#f5e4be] tracking-wider leading-none"
+                    >
                       {meta.abbr}
                     </div>
                     <div className="text-[10px] text-[#b8a68e]">{meta.nameEs}</div>
@@ -1304,6 +1554,12 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                   <button
                     type="button"
                     onClick={() => onTriggerRoll(`Prueba de ${meta.nameEs}`, breakdown.modifier)}
+                    style={{
+                      color: statGraphicCfg.modifierColor || undefined,
+                      fontSize: statGraphicCfg.valueFontSizePx
+                        ? `${statGraphicCfg.valueFontSizePx}px`
+                        : undefined,
+                    }}
                     className="my-1 w-14 h-9 rounded-xl bg-[#0e1016] border border-[#c8a45c]/50 group-hover:border-[#e2c275] flex items-center justify-center font-cinzel font-black text-xl text-white group-hover:text-[#f5e4be] transition shadow-inner cursor-pointer"
                     title={`Tirar prueba de ${meta.nameEs} (1d20 ${formatModifier(breakdown.modifier)})`}
                   >
@@ -1312,7 +1568,13 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
 
                   {/* Total Points Header */}
                   <div className="text-[10px] font-cinzel font-bold text-[#e5c478] mb-0.5">
-                    TOTAL: <strong className="text-white text-xs">{breakdown.totalScore}</strong>
+                    TOTAL:{' '}
+                    <strong
+                      style={{ color: statGraphicCfg.valueColor || undefined }}
+                      className="text-white text-xs"
+                    >
+                      {breakdown.totalScore}
+                    </strong>
                   </div>
 
                   {/* 3-Part Decomposition: Base, Extra, Objetos Equipados */}
@@ -1413,13 +1675,18 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
               );
             })}
           </div>
+          )}
 
           {/* --------------------------------------------------------------- */}
           {/* ROW 4: MAZOS DE JUEGO (LEFT) & EL RINCÓN DEL AVENTURERO (RIGHT) */}
           {/* --------------------------------------------------------------- */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 pt-1 items-stretch">
             {/* LEFT 7 COLS: MAZOS DE JUEGO (Tarot-Proportioned Cards in Both Solo & Table Modes) */}
-            <div className="lg:col-span-7 bg-[#12151e]/95 border-2 border-[#c8a45c]/65 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between shadow-xl">
+            {!getSheetBlock('game_decks_panel')?.hidden && (
+            <div
+              style={buildSpatialBlockInlineStyle(getSheetBlock('game_decks_panel'), false)}
+              className="lg:col-span-7 bg-[#12151e]/95 border-2 border-[#c8a45c]/65 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between shadow-xl"
+            >
               {(() => {
                 const combatCardsCount = Math.max(1, equippedWeaponAttacks.length);
                 const currentPlayerDeckCount =
@@ -1546,10 +1813,22 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                           data-testid="btn-player-deck-prev"
                           disabled={safeScrollIdx === 0}
                           onClick={() => setPlayerDeckScrollIndex(Math.max(0, safeScrollIdx - 1))}
-                          className="w-7 h-36 rounded-xl bg-[#191c29] hover:bg-amber-950/80 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 transition cursor-pointer disabled:cursor-default shadow"
+                          style={{
+                            backgroundColor: activeSkinTokens?.sheetDeckArrowBtnBg || undefined,
+                            borderColor: activeSkinTokens?.sheetDeckArrowBtnBorder || undefined,
+                          }}
+                          className="w-7 h-36 rounded-xl bg-[#191c29] hover:bg-amber-950/80 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 transition cursor-pointer disabled:cursor-default shadow overflow-hidden"
                           title="Ver cartas anteriores"
                         >
-                          <ChevronLeft className="w-4 h-4 text-amber-300" />
+                          {activeSkinTokens?.sheetDeckArrowBtnCustomPngUrl ? (
+                            <img
+                              src={activeSkinTokens.sheetDeckArrowBtnCustomPngUrl}
+                              alt="Anterior"
+                              className="w-4 h-4 object-contain -scale-x-100"
+                            />
+                          ) : (
+                            <ChevronLeft className="w-4 h-4 text-amber-300" />
+                          )}
                         </button>
                       )}
 
@@ -1564,6 +1843,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                 <div
                                   key={action.id}
                                   data-testid={`player-card-${action.id}`}
+                                  title={action.description || undefined}
                                   onClick={() =>
                                     onTriggerRoll(
                                       `${action.sourceName}: ${action.name} (${action.damageFormula} ${action.damageType})`,
@@ -1571,6 +1851,16 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                       20
                                     )
                                   }
+                                  style={buildGeometricElementStyle({
+                                    shape: combatCardTpl.cardShape,
+                                    hideBorder: combatCardTpl.hideBorder,
+                                    edgeFadePercent: combatCardTpl.edgeFadePercent,
+                                    bgColor: combatCardTpl.bgColor,
+                                    borderColor: combatCardTpl.borderColor,
+                                    borderWidthPx: combatCardTpl.borderWidthPx,
+                                    customPngUrl: combatCardTpl.customBgPngUrl,
+                                    opacity: combatCardTpl.opacity,
+                                  })}
                                   className={`group relative rounded-2xl border-2 ring-1 ring-inset p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer ${
                                     action.isSpecialAction
                                       ? 'border-purple-400/80 ring-purple-300/35 hover:border-purple-200 bg-gradient-to-b from-[#2a173d] via-[#1a1226] to-[#110e1a]'
@@ -1579,6 +1869,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                 >
                                   {/* Card Top Header */}
                                   <div
+                                    style={{ backgroundColor: combatCardTpl.headerBgColor || undefined }}
                                     className={`flex items-center justify-between text-[11px] font-cinzel font-bold border-b pb-1 ${
                                       action.isSpecialAction
                                         ? 'text-purple-300 border-purple-500/30'
@@ -1586,15 +1877,45 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                     }`}
                                   >
                                     <span className="truncate uppercase">{action.sourceName}</span>
-                                    {action.isSpecialAction ? (
-                                      <Sparkles className="w-3.5 h-3.5 shrink-0 text-purple-300" />
-                                    ) : (
-                                      <Sword className="w-3.5 h-3.5 shrink-0 text-[#e2c275]" />
-                                    )}
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {!isLocked && (
+                                        <button
+                                          type="button"
+                                          data-testid={`btn-edit-combat-card-${action.id}`}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingDeckCardModal({
+                                              deck: 'combat',
+                                              cardId: action.id,
+                                              sourceId: action.sourceId,
+                                              sourceKind: action.sourceKind,
+                                              name: action.name,
+                                              description: action.description || '',
+                                              damageOrFormula: action.damageFormula,
+                                              imageUrl: action.imageUrl || '',
+                                            });
+                                          }}
+                                          className="text-amber-300 hover:text-white transition"
+                                          title="Editar descripción o imagen de esta acción"
+                                        >
+                                          <Edit3 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                      {action.isSpecialAction ? (
+                                        <Sparkles className="w-3.5 h-3.5 shrink-0 text-purple-300" />
+                                      ) : (
+                                        <Sword className="w-3.5 h-3.5 shrink-0 text-[#e2c275]" />
+                                      )}
+                                    </div>
                                   </div>
 
                                   {/* Framed Tarot Illustration Box */}
                                   <div
+                                    style={buildGeometricElementStyle({
+                                      shape: combatCardTpl.illustrationShape,
+                                      hideBorder: combatCardTpl.illustrationHideBorder,
+                                      edgeFadePercent: combatCardTpl.illustrationEdgeFadePercent,
+                                    })}
                                     className={`my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl border-2 shadow-inner flex items-center justify-center overflow-hidden group-hover:scale-105 transition ${
                                       action.isSpecialAction
                                         ? 'bg-gradient-to-b from-[#3d1e58] to-[#180f24] border-purple-400/50'
@@ -1620,12 +1941,30 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                     )}
                                   </div>
 
-                                  {/* Title & Formula Pill */}
-                                  <div className="text-center space-y-1.5">
-                                    <div className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase leading-tight line-clamp-2">
+                                  {/* Title, Description & Formula Pill */}
+                                  <div className="text-center space-y-1">
+                                    <div
+                                      style={{ color: combatCardTpl.titleColor || undefined }}
+                                      className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase leading-tight line-clamp-1"
+                                    >
                                       {action.name}
                                     </div>
-                                    <div className="rounded-xl bg-[#181c29] border border-white/10 py-1.5 px-2.5 shadow-inner">
+                                    {action.description && (
+                                      <p
+                                        data-testid={`combat-card-desc-${action.id}`}
+                                        style={{ color: combatCardTpl.descColor || undefined }}
+                                        className="text-[10px] text-amber-200/80 line-clamp-2 leading-tight px-1"
+                                      >
+                                        {action.description}
+                                      </p>
+                                    )}
+                                    <div
+                                      style={{
+                                        backgroundColor: combatCardTpl.badgeBgColor || undefined,
+                                        color: combatCardTpl.badgeTextColor || undefined,
+                                      }}
+                                      className="rounded-xl bg-[#181c29] border border-white/10 py-1 px-2.5 shadow-inner"
+                                    >
                                       <div className="font-cinzel font-black text-base sm:text-lg text-white leading-none">
                                         {action.damageFormula}
                                       </div>
@@ -1675,11 +2014,14 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                   </svg>
                                 </div>
 
-                                <div className="text-center space-y-1.5">
+                                <div className="text-center space-y-1">
                                   <div className="font-cinzel font-black text-xs sm:text-sm text-[#f5e4be] uppercase leading-tight">
                                     GOLPE DESARMADO
                                   </div>
-                                  <div className="rounded-xl bg-[#181c29] border border-white/10 py-1.5 px-2.5 shadow-inner">
+                                  <p className="text-[10px] text-amber-200/80 line-clamp-2 leading-tight px-1">
+                                    Ataque cuerpo a cuerpo directo con tus puños o artes marciales.
+                                  </p>
+                                  <div className="rounded-xl bg-[#181c29] border border-white/10 py-1 px-2.5 shadow-inner">
                                     <div className="font-cinzel font-black text-base sm:text-lg text-white leading-none">
                                       1 + {getEffectiveAbilityModifier(character.abilities.str)}
                                     </div>
@@ -1724,6 +2066,16 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                   data-testid={`player-card-${sk.id}`}
                                   onClick={() => onTriggerRoll(`Habilidad: ${sk.name}`, totalBonus, 20)}
                                   title={sk.description || undefined}
+                                  style={buildGeometricElementStyle({
+                                    shape: skillsCardTpl.cardShape,
+                                    hideBorder: skillsCardTpl.hideBorder,
+                                    edgeFadePercent: skillsCardTpl.edgeFadePercent,
+                                    bgColor: skillsCardTpl.bgColor,
+                                    borderColor: skillsCardTpl.borderColor,
+                                    borderWidthPx: skillsCardTpl.borderWidthPx,
+                                    customPngUrl: skillsCardTpl.customBgPngUrl,
+                                    opacity: skillsCardTpl.opacity,
+                                  })}
                                   className="group relative rounded-2xl border-2 border-cyan-400/80 ring-1 ring-inset ring-cyan-300/25 hover:border-cyan-200 bg-gradient-to-b from-[#132838] via-[#0e1c28] to-[#09121a] p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer"
                                 >
                                   <div className="flex items-center justify-between text-[11px] text-cyan-300 font-cinzel font-bold border-b border-cyan-500/30 pb-1">
@@ -1758,7 +2110,14 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                     )}
                                   </div>
 
-                                  <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#152d3e] to-[#0b1721] border-2 border-cyan-500/50 shadow-inner flex items-center justify-center overflow-hidden group-hover:scale-105 transition">
+                                  <div
+                                    style={buildGeometricElementStyle({
+                                      shape: skillsCardTpl.illustrationShape,
+                                      hideBorder: skillsCardTpl.illustrationHideBorder,
+                                      edgeFadePercent: skillsCardTpl.illustrationEdgeFadePercent,
+                                    })}
+                                    className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#152d3e] to-[#0b1721] border-2 border-cyan-500/50 shadow-inner flex items-center justify-center overflow-hidden group-hover:scale-105 transition"
+                                  >
                                     {sk.imageUrl ? (
                                       <img
                                         src={sk.imageUrl}
@@ -1771,11 +2130,17 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                   </div>
 
                                   <div className="text-center space-y-1">
-                                    <div className="font-cinzel font-black text-xs sm:text-sm text-white uppercase leading-tight line-clamp-1">
+                                    <div
+                                      style={{ color: skillsCardTpl.titleColor || undefined }}
+                                      className="font-cinzel font-black text-xs sm:text-sm text-white uppercase leading-tight line-clamp-1"
+                                    >
                                       {sk.name}
                                     </div>
                                     {sk.description && (
-                                      <p className="text-[10px] text-cyan-200/80 line-clamp-2 leading-tight px-1">
+                                      <p
+                                        style={{ color: skillsCardTpl.descColor || undefined }}
+                                        className="text-[10px] text-cyan-200/80 line-clamp-2 leading-tight px-1"
+                                      >
                                         {sk.description}
                                       </p>
                                     )}
@@ -1805,6 +2170,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                             <div
                               key={sp.id}
                               data-testid={`player-card-${sp.id}`}
+                              title={sp.description || undefined}
                               onClick={() =>
                                 onTriggerRoll(
                                   `Conjuro: ${sp.name} ${sp.damageOrHeal ? `(${sp.damageOrHeal})` : ''}`,
@@ -1812,14 +2178,55 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                   20
                                 )
                               }
+                              style={buildGeometricElementStyle({
+                                shape: spellsCardTpl.cardShape,
+                                hideBorder: spellsCardTpl.hideBorder,
+                                edgeFadePercent: spellsCardTpl.edgeFadePercent,
+                                bgColor: spellsCardTpl.bgColor,
+                                borderColor: spellsCardTpl.borderColor,
+                                borderWidthPx: spellsCardTpl.borderWidthPx,
+                                customPngUrl: spellsCardTpl.customBgPngUrl,
+                                opacity: spellsCardTpl.opacity,
+                              })}
                               className="group relative rounded-2xl border-2 border-purple-400/80 ring-1 ring-inset ring-purple-300/25 hover:border-purple-200 bg-gradient-to-b from-[#28153d] via-[#1b0e29] to-[#11091a] p-2.5 flex flex-col justify-between min-h-[225px] sm:min-h-[240px] shadow-2xl hover:-translate-y-1 transition cursor-pointer"
                             >
                               <div className="flex items-center justify-between text-[11px] text-purple-300 font-cinzel font-bold border-b border-purple-500/30 pb-1">
                                 <span>{sp.level === 0 ? 'TRUCO' : `NIVEL ${sp.level}`}</span>
-                                <Flame className="w-3.5 h-3.5 text-purple-300" />
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {!isLocked && (
+                                    <button
+                                      type="button"
+                                      data-testid={`btn-edit-spell-card-${sp.id}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingDeckCardModal({
+                                          deck: 'spells',
+                                          cardId: sp.id,
+                                          sourceId: sp.id,
+                                          name: sp.name,
+                                          description: sp.description || '',
+                                          damageOrFormula: sp.damageOrHeal || '',
+                                          imageUrl: sp.imageUrl || '',
+                                        });
+                                      }}
+                                      className="text-purple-300 hover:text-white transition"
+                                      title="Editar descripción o imagen de este conjuro"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  <Flame className="w-3.5 h-3.5 text-purple-300" />
+                                </div>
                               </div>
 
-                              <div className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#311a4a] to-[#160b24] border-2 border-purple-400/50 shadow-inner flex items-center justify-center overflow-hidden group-hover:scale-105 transition">
+                              <div
+                                style={buildGeometricElementStyle({
+                                  shape: spellsCardTpl.illustrationShape,
+                                  hideBorder: spellsCardTpl.illustrationHideBorder,
+                                  edgeFadePercent: spellsCardTpl.illustrationEdgeFadePercent,
+                                })}
+                                className="my-1.5 mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-gradient-to-b from-[#311a4a] to-[#160b24] border-2 border-purple-400/50 shadow-inner flex items-center justify-center overflow-hidden group-hover:scale-105 transition"
+                              >
                                 {sp.imageUrl ? (
                                   <img
                                     src={sp.imageUrl}
@@ -1831,11 +2238,23 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                                 )}
                               </div>
 
-                              <div className="text-center space-y-1.5">
-                                <div className="font-cinzel font-black text-xs sm:text-sm text-white uppercase leading-tight line-clamp-2">
+                              <div className="text-center space-y-1">
+                                <div
+                                  style={{ color: spellsCardTpl.titleColor || undefined }}
+                                  className="font-cinzel font-black text-xs sm:text-sm text-white uppercase leading-tight line-clamp-1"
+                                >
                                   {sp.name}
                                 </div>
-                                <div className="rounded-xl bg-[#140b20] border border-purple-400/25 py-1.5 px-2.5 shadow-inner">
+                                {sp.description && (
+                                  <p
+                                    data-testid={`spell-card-desc-${sp.id}`}
+                                    style={{ color: spellsCardTpl.descColor || undefined }}
+                                    className="text-[10px] text-purple-200/80 line-clamp-2 leading-tight px-1"
+                                  >
+                                    {sp.description}
+                                  </p>
+                                )}
+                                <div className="rounded-xl bg-[#140b20] border border-purple-400/25 py-1 px-2.5 shadow-inner">
                                   <div className="font-cinzel font-black text-base sm:text-lg text-amber-300 leading-none">
                                     {sp.damageOrHeal || formatModifier(spellAttackBonus)}
                                   </div>
@@ -1896,10 +2315,22 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                           data-testid="btn-player-deck-next"
                           disabled={safeScrollIdx >= maxScrollIdx}
                           onClick={() => setPlayerDeckScrollIndex(Math.min(maxScrollIdx, safeScrollIdx + 1))}
-                          className="w-7 h-36 rounded-xl bg-[#191c29] hover:bg-amber-950/80 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 transition cursor-pointer disabled:cursor-default shadow"
+                          style={{
+                            backgroundColor: activeSkinTokens?.sheetDeckArrowBtnBg || undefined,
+                            borderColor: activeSkinTokens?.sheetDeckArrowBtnBorder || undefined,
+                          }}
+                          className="w-7 h-36 rounded-xl bg-[#191c29] hover:bg-amber-950/80 disabled:opacity-30 border border-[#c8a45c]/60 text-[#f5e4be] flex items-center justify-center shrink-0 transition cursor-pointer disabled:cursor-default shadow overflow-hidden"
                           title="Ver siguientes cartas"
                         >
-                          <ChevronRight className="w-4 h-4 text-amber-300" />
+                          {activeSkinTokens?.sheetDeckArrowBtnCustomPngUrl ? (
+                            <img
+                              src={activeSkinTokens.sheetDeckArrowBtnCustomPngUrl}
+                              alt="Siguiente"
+                              className="w-4 h-4 object-contain"
+                            />
+                          ) : (
+                            <ChevronRight className="w-4 h-4 text-amber-300" />
+                          )}
                         </button>
                       )}
                     </div>
@@ -1907,9 +2338,14 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                 );
               })()}
             </div>
+            )}
 
             {/* RIGHT 5 COLS: EL RINCÓN DEL AVENTURERO (1 Large Inventory Box on Top + 2 Half-Size Boxes Below) */}
-            <div className="lg:col-span-5 bg-[#12151e]/95 border-2 border-[#c8a45c]/65 rounded-2xl p-3 flex flex-col justify-between gap-2.5 shadow-xl">
+            {!getSheetBlock('adventurer_corner_panel')?.hidden && (
+            <div
+              style={buildSpatialBlockInlineStyle(getSheetBlock('adventurer_corner_panel'), false)}
+              className="lg:col-span-5 bg-[#12151e]/95 border-2 border-[#c8a45c]/65 rounded-2xl p-3 flex flex-col justify-between gap-2.5 shadow-xl"
+            >
               <div className="flex items-center gap-3">
                 <h2 className="font-cinzel font-black text-base sm:text-lg text-[#e7c67b] tracking-wider uppercase whitespace-nowrap">
                   {activeSkinTokens?.adventurerCornerTitleText || 'EL RINCÓN DEL AVENTURERO'}
@@ -2109,58 +2545,64 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                   </span>
 
                   {/* Framed Parchment Scroll with Wax Seal SVG Illustration */}
-                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[#10141c] border-2 border-[#8c7853] shadow-inner flex items-center justify-center p-2 mt-1.5 group-hover:scale-105 transition">
-                    <svg viewBox="0 0 64 64" className="w-full h-full drop-shadow">
-                      {/* Top Roll */}
-                      <rect
-                        x="12"
-                        y="10"
-                        width="40"
-                        height="8"
-                        rx="4"
-                        fill="#c9ad7c"
-                        stroke="#24180c"
-                        strokeWidth="2.2"
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[#10141c] border-2 border-[#8c7853] shadow-inner flex items-center justify-center p-2 mt-1.5 group-hover:scale-105 transition overflow-hidden">
+                    {activeSkinTokens?.sheetTraitsCustomPngUrl ? (
+                      <img
+                        src={activeSkinTokens.sheetTraitsCustomPngUrl}
+                        alt="Rasgos"
+                        className="w-full h-full object-contain drop-shadow"
                       />
-                      {/* Scroll Body */}
-                      <path
-                        d="M16 18 H48 L46 46 H14 Z"
-                        fill="#DFC699"
-                        stroke="#24180c"
-                        strokeWidth="2.2"
-                      />
-                      {/* Script Lines */}
-                      <line x1="21" y1="25" x2="41" y2="25" stroke="#6e5430" strokeWidth="1.8" strokeLinecap="round" />
-                      <line x1="20" y1="31" x2="40" y2="31" stroke="#6e5430" strokeWidth="1.8" strokeLinecap="round" />
-                      <line x1="20" y1="37" x2="33" y2="37" stroke="#6e5430" strokeWidth="1.8" strokeLinecap="round" />
-                      {/* Bottom Roll */}
-                      <rect
-                        x="10"
-                        y="45"
-                        width="42"
-                        height="9"
-                        rx="4.5"
-                        fill="#b89864"
-                        stroke="#24180c"
-                        strokeWidth="2.2"
-                      />
-                      {/* Wax Seal */}
-                      <circle
-                        cx="40"
-                        cy="42"
-                        r="5"
-                        fill="#8c3b2b"
-                        stroke="#24180c"
-                        strokeWidth="1.8"
-                      />
-                    </svg>
+                    ) : (
+                      <svg viewBox="0 0 64 64" className="w-full h-full drop-shadow">
+                        {/* Top Roll */}
+                        <rect
+                          x="12"
+                          y="10"
+                          width="40"
+                          height="8"
+                          rx="4"
+                          fill="#c9ad7c"
+                          stroke="#24180c"
+                          strokeWidth="2.2"
+                        />
+                        {/* Scroll Body */}
+                        <path
+                          d="M16 18 H48 L46 46 H14 Z"
+                          fill="#DFC699"
+                          stroke="#24180c"
+                          strokeWidth="2.2"
+                        />
+                        {/* Script Lines */}
+                        <line x1="21" y1="25" x2="41" y2="25" stroke="#6e5430" strokeWidth="1.8" strokeLinecap="round" />
+                        <line x1="20" y1="31" x2="40" y2="31" stroke="#6e5430" strokeWidth="1.8" strokeLinecap="round" />
+                        <line x1="20" y1="37" x2="33" y2="37" stroke="#6e5430" strokeWidth="1.8" strokeLinecap="round" />
+                        {/* Bottom Roll */}
+                        <rect
+                          x="10"
+                          y="45"
+                          width="42"
+                          height="9"
+                          rx="4.5"
+                          fill="#b89864"
+                          stroke="#24180c"
+                          strokeWidth="2.2"
+                        />
+                        {/* Wax Seal */}
+                        <circle
+                          cx="40"
+                          cy="42"
+                          r="5"
+                          fill="#8c3b2b"
+                          stroke="#24180c"
+                          strokeWidth="1.8"
+                        />
+                      </svg>
+                    )}
                   </div>
 
                   <div className="mt-1.5">
                     <h3 className="font-cinzel font-black text-xs text-[#e7c67b] group-hover:text-[#fff1cc] uppercase leading-tight">
-                      RASGOS Y
-                      <br />
-                      TRASFONDO
+                      {activeSkinTokens?.sheetTraitsLabelText || 'RASGOS Y TRASFONDO'}
                     </h3>
                     <p className="text-[10px] text-[#8e96aa] mt-0.5 line-clamp-1">
                       {character.background} • Personalidad e Ideales
@@ -2169,6 +2611,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
                 </button>
               </div>
             </div>
+            )}
           </div>
         </div>
 
@@ -2331,7 +2774,7 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
         onUnlockRequest={onUnlockRequest}
       />
 
-      {/* 5. Avatar Customizer Modal (with 4-Slot Portrait Gallery) */}
+      {/* 5. Avatar Customizer Modal (with Dynamic Portrait Gallery up to 24 PNGs) */}
       {isAvatarModalOpen && (
         <AvatarCustomizerModal
           isOpen={isAvatarModalOpen}
@@ -2341,6 +2784,8 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
           currentCustomUrl={character.avatarCustomUrl || character.avatarUrl || ''}
           currentIconId={character.avatarIcon || 'anonymous'}
           currentPortraitGallery={character.portraitGallery || []}
+          maxPortraits={maxPortraitCount}
+          aspectRatioCss={portraitAspectCss}
           onSave={({ type, customUrl, iconId, portraitGallery }) => {
             onUpdateCharacter({
               ...character,
@@ -2348,7 +2793,10 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
               avatarCustomUrl: customUrl,
               avatarIcon: iconId,
               avatarUrl: type === 'custom' ? customUrl : undefined,
-              portraitGallery: clampPortraitGallery(portraitGallery || character.portraitGallery || []),
+              portraitGallery: clampPortraitGallery(
+                portraitGallery || character.portraitGallery || [],
+                maxPortraitCount
+              ),
             });
             setIsAvatarModalOpen(false);
           }}
@@ -2634,6 +3082,20 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
               </div>
             </div>
 
+            <div>
+              <label className="block text-[11px] font-cinzel text-[#cbb692] mb-1">
+                Descripción del Ataque o Acción
+              </label>
+              <textarea
+                rows={3}
+                data-testid="input-combat-card-description"
+                value={combatCardForm.notes}
+                onChange={(e) => setCombatCardForm({ ...combatCardForm, notes: e.target.value })}
+                placeholder="Describe el efecto, alcance, propiedades o notas de esta acción..."
+                className="w-full bg-[#101218] border border-stone-700 rounded-xl p-2.5 text-xs text-white"
+              />
+            </div>
+
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
@@ -2644,9 +3106,133 @@ export const CharacterSheetView: React.FC<CharacterSheetViewProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-cinzel font-black text-xs"
+                data-testid="btn-save-combat-card"
+                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-cinzel font-black text-xs cursor-pointer"
               >
                 Añadir Carta al Mazo
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* 7b. Quick Edit Modal for Combat / Spell Card Description & Image */}
+      {editingDeckCardModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          data-testid="modal-edit-deck-card-description"
+        >
+          <form
+            onSubmit={handleSaveDeckCardDescription}
+            className="w-full max-w-md bg-[#171922] border-2 border-amber-400 rounded-2xl p-5 space-y-3.5 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-stone-800 pb-2">
+              <h3 className="font-cinzel font-bold text-base text-amber-200">
+                {editingDeckCardModal.deck === 'spells'
+                  ? 'Editar Carta de Conjuro'
+                  : 'Editar Carta de Combate o Acción'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingDeckCardModal(null)}
+                className="text-stone-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-cinzel text-[#cbb692] mb-1">
+                Nombre de la Carta
+              </label>
+              <input
+                type="text"
+                required
+                data-testid="input-edit-deck-card-name"
+                value={editingDeckCardModal.name}
+                onChange={(e) =>
+                  setEditingDeckCardModal({ ...editingDeckCardModal, name: e.target.value })
+                }
+                className="w-full bg-[#101218] border border-stone-700 rounded-xl px-3 py-2 text-xs text-white font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-cinzel text-amber-200 mb-1">
+                Descripción en la Carta
+              </label>
+              <textarea
+                rows={4}
+                data-testid="input-edit-deck-card-description"
+                value={editingDeckCardModal.description}
+                onChange={(e) =>
+                  setEditingDeckCardModal({ ...editingDeckCardModal, description: e.target.value })
+                }
+                placeholder="Describe el efecto, alcance, dados adicionales o notas narrativas..."
+                className="w-full bg-[#101218] border border-stone-700 rounded-xl p-2.5 text-xs text-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-cinzel text-stone-300 mb-1">
+                Imagen de la Carta (Opcional)
+              </label>
+              <div className="flex items-center gap-2">
+                {editingDeckCardModal.imageUrl && (
+                  <img
+                    src={editingDeckCardModal.imageUrl}
+                    alt="Vista previa"
+                    className="w-10 h-10 rounded-lg object-cover border border-amber-400 shrink-0"
+                  />
+                )}
+                <input
+                  type="text"
+                  value={editingDeckCardModal.imageUrl || ''}
+                  onChange={(e) =>
+                    setEditingDeckCardModal({ ...editingDeckCardModal, imageUrl: e.target.value })
+                  }
+                  placeholder="URL de imagen o sube archivo PNG/JPG..."
+                  className="flex-1 bg-[#101218] border border-stone-700 rounded-xl px-3 py-1.5 text-xs text-white"
+                />
+                <label className="px-2.5 py-1.5 rounded-xl bg-amber-950 hover:bg-amber-900 border border-amber-500/50 text-amber-200 text-xs font-cinzel font-bold cursor-pointer shrink-0">
+                  Subir
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const dataUrl = await compressImageFileToDataUrl(file, 360, 0.85);
+                        setEditingDeckCardModal((prev) =>
+                          prev ? { ...prev, imageUrl: dataUrl } : null
+                        );
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingDeckCardModal(null)}
+                className="px-4 py-2 rounded-xl bg-stone-800 text-stone-300 text-xs font-cinzel"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                data-testid="btn-save-deck-card-description"
+                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-cinzel font-black text-xs cursor-pointer"
+              >
+                Guardar Descripción
               </button>
             </div>
           </form>

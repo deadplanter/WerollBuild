@@ -46,7 +46,12 @@ import {
   SpellDefinition,
 } from '../../data/srd';
 import { folderMatchesFilter } from '../../utils/storage';
-import { formatWeaponAttackFormula, getSpanishAbilityLabel } from '../../utils/dnd-math';
+import {
+  formatWeaponAttackFormula,
+  getSpanishAbilityLabel,
+  normalizePlayerSheetItemCategory,
+  PLAYER_SHEET_ITEM_CATEGORIES,
+} from '../../utils/dnd-math';
 import { compressImageFileToDataUrl } from '../../utils/imageCompressor';
 
 interface DMItemsAndSpellsViewProps {
@@ -59,6 +64,8 @@ interface DMItemsAndSpellsViewProps {
   partyMembers?: PartyMemberLive[];
   hasSrdDlcEnabled?: boolean;
   onOpenDlcSettings?: () => void;
+  initialTransferItem?: DMCustomItemOrSpell | null;
+  onClearInitialTransferItem?: () => void;
 }
 
 export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
@@ -71,6 +78,8 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
   partyMembers = [],
   hasSrdDlcEnabled = true,
   onOpenDlcSettings,
+  initialTransferItem = null,
+  onClearInitialTransferItem,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'custom' | 'srd_weapons' | 'srd_armors' | 'srd_spells'>('custom');
   const [filterType, setFilterType] = useState<'all' | 'item' | 'spell' | 'ability'>('all');
@@ -105,13 +114,27 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
     }
   };
 
+  React.useEffect(() => {
+    if (initialTransferItem) {
+      fetchVaultSheets();
+      setTransferTarget({
+        kind: initialTransferItem.kind,
+        title: initialTransferItem.name,
+        customObj: initialTransferItem,
+      });
+      if (onClearInitialTransferItem) {
+        onClearInitialTransferItem();
+      }
+    }
+  }, [initialTransferItem]);
+
   // Form state
   const [form, setForm] = useState<Partial<DMCustomItemOrSpell>>({
     name: '',
     kind: 'item',
     itemGroup: 'weapon',
     rarity: 'Raro',
-    category: 'Arma (Espada)',
+    category: 'Arma',
     whoHasIt: '',
     whereFound: '',
     description: '',
@@ -277,7 +300,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       kind: 'item',
       itemGroup: 'weapon',
       rarity: 'Raro',
-      category: 'Arma (Espada)',
+      category: 'Arma',
       whoHasIt: '',
       whereFound: '',
       description: '',
@@ -308,15 +331,22 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
   const handleOpenEdit = (item: DMCustomItemOrSpell) => {
     setEditingId(item.id);
     setActiveAttackTabIdx(0);
-    const inferredGroup =
-      item.itemGroup ||
-      ((item.category || '').toLowerCase().includes('armadura') || (item.category || '').toLowerCase().includes('escudo')
-        ? 'armor'
-        : (item.category || '').toLowerCase().includes('arma') || (item.category || '').toLowerCase().includes('espada')
-        ? 'weapon'
-        : 'common');
+    const normalized = normalizePlayerSheetItemCategory({
+      category: item.category,
+      itemGroup: item.itemGroup,
+      name: item.name,
+      weaponAttacks: item.weaponAttacks,
+    });
+    const inferredGroup = item.kind === 'item' ? normalized.itemGroup : undefined;
+    const normalizedCat =
+      item.kind === 'spell'
+        ? 'Conjuro'
+        : item.kind === 'ability'
+        ? 'Habilidad'
+        : normalized.category;
     setForm({
       ...item,
+      category: normalizedCat,
       itemGroup: inferredGroup,
       weight: item.weight ?? (inferredGroup === 'armor' ? 10 : inferredGroup === 'weapon' ? 3 : 1),
       statModifiers: item.statModifiers || [],
@@ -347,7 +377,23 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
     if (!form.name?.trim()) return;
 
     const effectiveKind = form.kind || 'item';
-    const effectiveGroup = effectiveKind === 'item' ? form.itemGroup || 'common' : undefined;
+    const normalizedItemClass =
+      effectiveKind === 'item'
+        ? normalizePlayerSheetItemCategory({
+            category: form.category,
+            itemGroup: form.itemGroup,
+            name: form.name,
+            weaponAttacks: form.weaponAttacks,
+          })
+        : null;
+    const effectiveGroup = effectiveKind === 'item' ? normalizedItemClass!.itemGroup : undefined;
+    const effectiveCategory =
+      effectiveKind === 'spell'
+        ? 'Conjuro'
+        : effectiveKind === 'ability'
+        ? 'Habilidad'
+        : normalizedItemClass!.category;
+
     const effectiveAttacks =
       effectiveKind === 'item' && effectiveGroup === 'weapon'
         ? (form.weaponAttacks || []).map((atk, idx) => ({
@@ -359,6 +405,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
             damageType: (atk.damageType || 'Cortante').trim(),
             attackBonus: Number(atk.attackBonus ?? atk.potenciador) || 0,
             range: (atk.range || '5 pies').trim(),
+            imageUrl: atk.imageUrl?.trim() || undefined,
           }))
         : undefined;
 
@@ -372,6 +419,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
               ...form,
               weight: safeWeight,
               kind: effectiveKind,
+              category: effectiveCategory,
               itemGroup: effectiveGroup,
               weaponAttacks: effectiveAttacks,
               statModifiers: form.statModifiers && form.statModifiers.length > 0 ? form.statModifiers : undefined,
@@ -389,9 +437,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
         kind: effectiveKind,
         itemGroup: effectiveGroup,
         rarity: form.rarity || 'Común',
-        category:
-          form.category ||
-          (effectiveGroup === 'weapon' ? 'Arma' : effectiveGroup === 'armor' ? 'Armadura' : 'Objeto Común'),
+        category: effectiveCategory,
         whoHasIt: form.whoHasIt || 'Nadie / Por descubrir',
         whereFound: form.whereFound || 'Por definir',
         description: form.description || '',
@@ -427,7 +473,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       kind: 'item',
       itemGroup: 'weapon',
       rarity: 'Raro',
-      category: `Arma (${w.category} ${w.rangeType})`,
+      category: 'Arma',
       whoHasIt: 'Jefe orco / Guardia de la cripta',
       whereFound: 'En un pedestal con runas antiguas',
       description: `Versión magistral de ${w.name}. Forjada con acero élfico templado en fuego sagrado.`,
@@ -469,7 +515,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       kind: 'item',
       itemGroup: 'armor',
       rarity: 'Muy Raro',
-      category: `Armadura (${a.category})`,
+      category: 'Armadura',
       whoHasIt: 'Estatua del caballero en el santuario',
       whereFound: 'Cofre ceremonial en las ruinas',
       description: `Protección superior basada en ${a.name}. Placas grabadas con bendiciones sagradas.`,
@@ -488,7 +534,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
       name: `${s.name} Corrupto / Magistral`,
       kind: 'spell',
       rarity: s.level === 0 ? 'Poco común' : s.level <= 2 ? 'Raro' : 'Muy Raro',
-      category: `Conjuro Nivel ${s.level} (${s.school})`,
+      category: 'Conjuro',
       whoHasIt: 'Pergamino en la túnica del hechicero enemigo',
       whereFound: 'Cámara ritual secreta',
       description: s.description,
@@ -586,25 +632,24 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
   // Give custom item to player
   const handleGiveCustomToPlayer = (entry: DMCustomItemOrSpell) => {
     if (!onGiveItemToPlayer) return;
+    const normalized = normalizePlayerSheetItemCategory({
+      category: entry.category,
+      itemGroup: entry.itemGroup,
+      name: entry.name,
+      weaponAttacks: entry.weaponAttacks,
+    });
     const invItem: InventoryItem = {
       id: `inv-${Date.now()}`,
       name: entry.name,
       quantity: 1,
       weight: typeof entry.weight === 'number' ? entry.weight : (entry.kind === 'spell' ? 0.5 : 3),
-      category:
-        entry.itemGroup === 'weapon'
-          ? 'Arma'
-          : entry.itemGroup === 'armor'
-          ? 'Armadura'
-          : entry.kind === 'spell'
-          ? 'Mágico'
-          : 'Objeto',
-      itemGroup: entry.itemGroup || 'common',
+      category: normalized.category,
+      itemGroup: normalized.itemGroup,
       rarity: entry.rarity,
       description: `${entry.description}\n\nPropiedades: ${entry.properties || 'Sin propiedades'}${entry.whoHasIt ? `\nProcedencia: ${entry.whoHasIt}` : ''}`,
       equipped: false,
       imageUrl: entry.imageUrl,
-      weaponAttacks: entry.weaponAttacks,
+      weaponAttacks: normalized.itemGroup === 'weapon' ? entry.weaponAttacks : undefined,
       statModifiers: entry.statModifiers,
       itemActions: entry.itemActions,
     };
@@ -1288,7 +1333,23 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                   <label className="block text-[11px] text-stone-400 mb-1">Tipo Principal:</label>
                   <select
                     value={form.kind || 'item'}
-                    onChange={(e) => setForm({ ...form, kind: e.target.value as any })}
+                    onChange={(e) => {
+                      const nextKind = e.target.value as 'item' | 'spell' | 'ability';
+                      setForm({
+                        ...form,
+                        kind: nextKind,
+                        category:
+                          nextKind === 'spell'
+                            ? 'Conjuro'
+                            : nextKind === 'ability'
+                            ? 'Habilidad'
+                            : form.itemGroup === 'armor'
+                            ? 'Armadura'
+                            : form.itemGroup === 'common'
+                            ? 'Objeto Común'
+                            : 'Arma',
+                      });
+                    }}
                     className="w-full bg-[#121316] border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100"
                   >
                     <option value="item">Objeto / Arma / Armadura</option>
@@ -1325,7 +1386,7 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                         setForm({
                           ...form,
                           itemGroup: 'weapon',
-                          category: form.category?.includes('Armadura') || form.category === 'Objeto Común' ? 'Arma (Espada)' : form.category || 'Arma',
+                          category: 'Arma',
                           weaponAttacks: existingAtks,
                         });
                       }}
@@ -1418,14 +1479,66 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-[11px] text-stone-400 mb-1">Categoría / Subtipo:</label>
-                  <input
-                    type="text"
-                    placeholder="Ej. Espada, Armadura, Conjuro..."
-                    value={form.category || ''}
-                    onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    className="w-full bg-[#121316] border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100"
-                  />
+                  <label className="block text-[11px] text-stone-400 mb-1">Categoría (Ficha Jugador):</label>
+                  {(form.kind || 'item') === 'item' ? (
+                    <select
+                      data-testid="dm-item-category-select"
+                      value={
+                        form.itemGroup === 'armor'
+                          ? 'Armadura'
+                          : form.itemGroup === 'common'
+                          ? 'Objeto Común'
+                          : 'Arma'
+                      }
+                      onChange={(e) => {
+                        const nextCat = e.target.value as 'Arma' | 'Armadura' | 'Objeto Común';
+                        const nextGroup =
+                          nextCat === 'Armadura'
+                            ? 'armor'
+                            : nextCat === 'Objeto Común'
+                            ? 'common'
+                            : 'weapon';
+                        setForm({
+                          ...form,
+                          category: nextCat,
+                          itemGroup: nextGroup,
+                          weaponAttacks:
+                            nextGroup === 'weapon' && (!form.weaponAttacks || form.weaponAttacks.length === 0)
+                              ? [
+                                  {
+                                    id: `atk-${Date.now()}-1`,
+                                    name: 'Ataque Principal',
+                                    description: 'Ataque base con el arma.',
+                                    dice: '1d6',
+                                    potenciador: 2,
+                                    damageType: 'Cortante',
+                                    attackBonus: 2,
+                                    range: '5 pies',
+                                  },
+                                ]
+                              : form.weaponAttacks,
+                        });
+                      }}
+                      className="w-full bg-[#121316] border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100"
+                    >
+                      {PLAYER_SHEET_ITEM_CATEGORIES.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <select
+                      data-testid="dm-item-category-select"
+                      value={form.kind === 'spell' ? 'Conjuro' : 'Habilidad'}
+                      disabled
+                      className="w-full bg-[#121316] border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-400"
+                    >
+                      <option value={form.kind === 'spell' ? 'Conjuro' : 'Habilidad'}>
+                        {form.kind === 'spell' ? 'Conjuro' : 'Habilidad'}
+                      </option>
+                    </select>
+                  )}
                 </div>
 
                 <div>
@@ -1650,6 +1763,57 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                             className="w-full bg-[#121316] border border-stone-700 rounded-lg px-2.5 py-1.5 text-xs text-stone-100"
                           />
                         </div>
+
+                        <div>
+                          <label className="block text-[11px] text-amber-300 font-bold mb-1 flex items-center gap-1">
+                            <ImageIcon className="w-3 h-3 text-amber-400" />
+                            <span>Imagen / PNG Individual de este Ataque (Opcional):</span>
+                          </label>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {currentAtk.imageUrl && (
+                              <img
+                                src={currentAtk.imageUrl}
+                                alt={currentAtk.name || 'Ataque'}
+                                className="w-8 h-8 rounded object-cover border border-amber-500/60 shrink-0"
+                              />
+                            )}
+                            <label className="px-2.5 py-1 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-700/60 text-amber-200 text-[11px] font-cinzel font-bold cursor-pointer flex items-center gap-1 shrink-0">
+                              <Upload className="w-3 h-3" />
+                              <span>Subir PNG / Imagen</span>
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/*"
+                                className="hidden"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  try {
+                                    const dataUrl = await compressImageFileToDataUrl(file, 360, 0.82);
+                                    handleUpdateWeaponAttackTab(editIdx, { imageUrl: dataUrl });
+                                  } catch {
+                                    // ignore
+                                  }
+                                }}
+                              />
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="O pega URL de imagen para este ataque..."
+                              value={currentAtk.imageUrl || ''}
+                              onChange={(e) => handleUpdateWeaponAttackTab(editIdx, { imageUrl: e.target.value })}
+                              className="flex-1 min-w-[160px] bg-[#121316] border border-stone-700 rounded-lg px-2.5 py-1 text-xs text-stone-100"
+                            />
+                            {currentAtk.imageUrl && (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateWeaponAttackTab(editIdx, { imageUrl: '' })}
+                                className="px-2 py-1 rounded bg-red-950/50 border border-red-800/60 text-red-300 text-[10px] hover:bg-red-900/50 cursor-pointer"
+                              >
+                                Quitar
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     );
                   })()}
@@ -1859,6 +2023,57 @@ export const DMItemsAndSpellsView: React.FC<DMItemsAndSpellsViewProps> = ({
                             onChange={(e) => handleUpdateItemAction(idx, { description: e.target.value })}
                             className="w-full bg-[#121316] border border-stone-700 rounded px-2.5 py-1 text-xs text-stone-200"
                           />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] text-amber-300 font-bold mb-1 flex items-center gap-1">
+                            <ImageIcon className="w-3 h-3 text-amber-400" />
+                            <span>Imagen / PNG Individual de esta Acción (Opcional):</span>
+                          </label>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {act.imageUrl && (
+                              <img
+                                src={act.imageUrl}
+                                alt={act.name || 'Acción'}
+                                className="w-8 h-8 rounded object-cover border border-amber-500/60 shrink-0"
+                              />
+                            )}
+                            <label className="px-2.5 py-1 rounded bg-amber-950/70 hover:bg-amber-900 border border-amber-700/60 text-amber-200 text-[10px] font-cinzel font-bold cursor-pointer flex items-center gap-1 shrink-0">
+                              <Upload className="w-3 h-3" />
+                              <span>Subir PNG / Imagen</span>
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/*"
+                                className="hidden"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  try {
+                                    const dataUrl = await compressImageFileToDataUrl(file, 360, 0.82);
+                                    handleUpdateItemAction(idx, { imageUrl: dataUrl });
+                                  } catch {
+                                    // ignore
+                                  }
+                                }}
+                              />
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="O pega URL de imagen para esta acción..."
+                              value={act.imageUrl || ''}
+                              onChange={(e) => handleUpdateItemAction(idx, { imageUrl: e.target.value })}
+                              className="flex-1 min-w-[160px] bg-[#121316] border border-stone-700 rounded px-2.5 py-1 text-xs text-stone-200"
+                            />
+                            {act.imageUrl && (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateItemAction(idx, { imageUrl: '' })}
+                                className="px-2 py-1 rounded bg-red-950/50 border border-red-800/60 text-red-300 text-[10px] hover:bg-red-900/50 cursor-pointer"
+                              >
+                                Quitar
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}

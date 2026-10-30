@@ -81,10 +81,20 @@ import {
 } from '../../utils/indexedCache';
 import { CharacterTarotCard } from '../character/CharacterTarotCard';
 import { ForumView } from '../forum/ForumView';
-import { FriendDirectChatModal, FRIEND_CHAT_BROADCAST_CHANNEL } from '../friends/FriendDirectChatModal';
-import { ModeratorPanelModal } from '../admin/ModeratorPanelModal';
-import { CreatorStudioPanel } from '../creator/CreatorStudioPanel';
-import { UserSecurityModal } from '../auth/UserSecurityModal';
+import { FRIEND_CHAT_BROADCAST_CHANNEL } from '../friends/FriendDirectChatModal';
+
+const FriendDirectChatModal = React.lazy(() =>
+  import('../friends/FriendDirectChatModal').then((m) => ({ default: m.FriendDirectChatModal }))
+);
+const ModeratorPanelModal = React.lazy(() =>
+  import('../admin/ModeratorPanelModal').then((m) => ({ default: m.ModeratorPanelModal }))
+);
+const CreatorStudioPanel = React.lazy(() =>
+  import('../creator/CreatorStudioPanel').then((m) => ({ default: m.CreatorStudioPanel }))
+);
+const UserSecurityModal = React.lazy(() =>
+  import('../auth/UserSecurityModal').then((m) => ({ default: m.UserSecurityModal }))
+);
 import {
   computeLobbyBlockContainerStyle,
   computeLobbyInnerButtonStyle,
@@ -964,9 +974,12 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       .catch(() => {});
   }, [localCharacters, worldSheets, authUser?.email, syncMetadata?.revision]);
 
-  // Subscribe to Real-Time SSE stream (/api/events/stream) for instant Delta Sync & presence updates
+  // Subscribe to Real-Time SSE stream (/api/events/stream) only when moderator is actively viewing the architecture sub-tab
   useEffect(() => {
     if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+    if (!isModerator || (currentLobbyPage !== 'admin' && !isAdminModalOpen) || adminSubTab !== 'architecture') {
+      return;
+    }
     let es: EventSource | null = null;
     try {
       es = new EventSource('/api/events/stream');
@@ -974,9 +987,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
         try {
           const payload = JSON.parse(ev.data || '{}');
           if (payload.type === 'delta:applied') {
-            if (isModerator && adminSubTab === 'architecture') {
-              fetchArchitectureStatus(true);
-            }
+            fetchArchitectureStatus(true);
           }
         } catch {}
       };
@@ -986,7 +997,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
         es?.close();
       } catch {}
     };
-  }, [isModerator, adminSubTab]);
+  }, [isModerator, currentLobbyPage, isAdminModalOpen, adminSubTab]);
 
   const formatDurationHuman = (ms?: number) => {
     const totalSec = Math.max(0, Math.floor((ms || 0) / 1000));
@@ -1328,8 +1339,9 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
   useEffect(() => {
     if (!authUser?.email || authUser.status === 'pending') return;
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       fetchUserFriends(true);
-    }, 6000);
+    }, 25000);
 
     let channel: BroadcastChannel | null = null;
     try {
@@ -1661,6 +1673,9 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       fetchUserSheets(vaultSyncRevision > 0);
       fetchUserFriends(vaultSyncRevision > 0);
     }
+  }, [authUser?.email, authUser?.status, charactersCount, vaultSyncRevision]);
+
+  useEffect(() => {
     if (isModerator && (activeTab === 'admin' || currentLobbyPage === 'admin' || isAdminModalOpen)) {
       fetchAdminUsers();
       fetchVaultDetails();
@@ -1668,7 +1683,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       fetchAdminFeedback();
       fetchServerStats(true);
     }
-  }, [authUser?.email, authUser?.status, activeTab, currentLobbyPage, isAdminModalOpen, isModerator, charactersCount, vaultSyncRevision]);
+  }, [isModerator, activeTab, currentLobbyPage, isAdminModalOpen, vaultSyncRevision]);
 
   // Auto-refresh server stats when admin is viewing the 'stats' sub-tab
   useEffect(() => {
@@ -2523,6 +2538,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       {/* =================================================================== */}
       {/* DEDICATED FULL PAGE: PANEL DE CREADOR DE CONTENIDO (DLCs & SKINS)   */}
       {/* =================================================================== */}
+      <React.Suspense fallback={null}>
       {currentLobbyPage === 'creator' && isCreatorOrAbove && (
         <div className="space-y-3 animate-in fade-in">
           <div className="flex items-center justify-between bg-[#141622] border border-amber-500/40 rounded-2xl px-4 py-2.5">
@@ -2563,6 +2579,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           onRefreshAuthStatus={onRefreshAuthStatus}
         />
       )}
+      </React.Suspense>
 
       {/* =================================================================== */}
       {/* MAIN 2-COLUMN VIEWPORT: LEFT (1/3) & RIGHT FORUM (2/3)              */}
@@ -7856,6 +7873,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
       )}
 
       {/* User Security & Password Modal */}
+      <React.Suspense fallback={null}>
       {isSecurityModalOpen && (
         <UserSecurityModal
           isOpen={isSecurityModalOpen}
@@ -7889,6 +7907,7 @@ export const LobbyPortalView: React.FC<LobbyPortalViewProps> = ({
           onMessagesUpdated={() => fetchUserFriends(true)}
         />
       )}
+      </React.Suspense>
     </div>
   );
 };

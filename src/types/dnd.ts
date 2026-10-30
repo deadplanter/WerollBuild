@@ -666,6 +666,7 @@ export interface PartyMemberLive {
   characterClass: string;
   lastPing: number;
   dmModifiedAt?: number;
+  hpUpdatedAt?: number;
   presenceStatus?: PresenceStatus;
   idleSeconds?: number;
   lastRoll?: DiceRollResult;
@@ -1391,11 +1392,448 @@ export interface AppSkinThemeTokens {
   lobbyPageLayout?: LobbyPageLayoutConfig;
 
   // ==========================================
+  // 4-APARTADO PLAYER SKIN STUDIO TOKENS
+  // ==========================================
+  // Apartado 1: Player Sheet Spatial Block Layout
+  playerSheetLayout?: PlayerSheetSpatialLayoutConfig;
+  sheetDeckArrowBtnBg?: string;
+  sheetDeckArrowBtnBorder?: string;
+  sheetDeckArrowBtnTextColor?: string;
+  sheetDeckArrowBtnCustomPngUrl?: string;
+  sheetDeckArrowBtnSizePx?: number;
+
+  // Apartado 2: Player Map Mode Spatial Block Layout
+  playerMapLayout?: PlayerMapSpatialLayoutConfig;
+
+  // Apartado 3: Graphic Design, Geometric Shapes, Edge Fading, 3 Deck Templates, 9 Alignment Icons & Up to 24 Portraits
+  portraitGeometricShape?: GeometricShapeType;
+  portraitHideBorder?: boolean;
+  portraitEdgeFadePercent?: number; // 0 to 100 (feathers/blends portrait edges into background)
+  maxPortraitGalleryCount?: number; // 1 to 24 (default 4)
+  portraitAspectRatio?: PortraitAspectRatioPreset;
+  portraitCustomAspectW?: number;
+  portraitCustomAspectH?: number;
+
+  combatCardTemplate?: DeckCardGraphicTemplate;
+  skillsCardTemplate?: DeckCardGraphicTemplate;
+  spellsCardTemplate?: DeckCardGraphicTemplate;
+
+  statBoxGraphicConfig?: StatBoxGraphicConfig;
+  alignmentCustomIcons?: Record<string, string>; // Custom PNG/SVG URLs for the 9 D&D alignments
+  sheetHeartCustomPngUrl?: string; // Custom Heart/HP icon PNG
+  sheetRestShortBtnCustomPngUrl?: string;
+  sheetRestLongBtnCustomPngUrl?: string;
+  adventurerCornerTraitsIconPngUrl?: string;
+
+  // Apartado 4: Exclusive Character Tarot Card Studio (Front & Back, 20% Outer Margin Bleed, Stretchable Card, Modular Elements)
+  tarotStudioConfig?: TarotCardExclusiveStudioConfig;
+
+  modalPopupConfigs?: Partial<Record<SkinModalTargetId, SkinModalPopupOverride>>;
+  modalInteractiveLayouts?: Partial<Record<SkinModalTargetId, SpatialBlockConfig<SkinModalTargetId>>>;
+  modalPopupBg?: string;
+  modalPopupBorder?: string;
+  modalPopupOverlayOpacity?: number;
+  sheetInspBtnCustomPngUrl?: string;
+  sheetTraitsCustomPngUrl?: string;
+  mapModeFrameCustomPngUrl?: string;
+  mapModeButtonCustomPngUrl?: string;
+  sheetAudioProfile?: string;
+
+  // ==========================================
   // POP-UPS & MODALS SKINNING + EXTENSIBLE LAYERS
   // ==========================================
   popupConfigs?: Record<string, PopupSkinConfig>;
   customLayers?: CustomLayerToken[];
   extensibleTokens?: Record<string, any>;
+}
+
+export type SkinModalTargetId =
+  | 'modal_forum_create'
+  | 'modal_friend_chat'
+  | 'modal_account_settings'
+  | 'modal_join_room'
+  | 'modal_inventory'
+  | 'modal_journal'
+  | 'modal_traits'
+  | 'modal_character_settings';
+
+export interface SkinModalPopupOverride {
+  bgColor?: string;
+  borderColor?: string;
+  headerBgColor?: string;
+  textColor?: string;
+  accentColor?: string;
+  overlayBackdropOpacity?: number;
+  borderRadiusPx?: number;
+  customBgPngUrl?: string;
+  shape?: GeometricShapeType;
+  edgeFadePercent?: number;
+  hideBorder?: boolean;
+  borderWidthPx?: number;
+  widthPx?: number;
+  heightPx?: number;
+  boxBgOpacity?: number;
+  opacity?: number;
+  fontFamily?: string;
+  headerTextColor?: string;
+  innerButtonsOrder?: string[];
+  innerButtonsConfig?: Record<string, SpatialInnerElementConfig>;
+  innerElementsOrder?: string[];
+  innerElementsConfig?: Record<string, SpatialInnerElementConfig>;
+}
+
+export type GeometricShapeType =
+  | 'circle'
+  | 'square'
+  | 'rounded'
+  | 'hexagon'
+  | 'triangle'
+  | 'pentagon'
+  | 'octagon'
+  | 'diamond';
+
+export type PortraitAspectRatioPreset =
+  | '1:1'
+  | '3:4'
+  | '9:16'
+  | '4:3'
+  | '16:9'
+  | 'custom';
+
+export type PlayerSheetBlockId =
+  | 'session_top_bar'
+  | 'live_table_combatants_bar'
+  | 'identity_header'
+  | 'combat_stats_bar'
+  | 'hp_and_rests_bar'
+  | 'ability_scores_grid'
+  | 'game_decks_panel'
+  | 'adventurer_corner_panel'
+  | 'sheet_tarot_dock';
+
+export type PlayerMapBlockId =
+  | 'map_top_bar'
+  | 'map_canvas_area'
+  | 'map_decks_overlay'
+  | 'map_notebook_overlay'
+  | 'map_enemies_panel'
+  | 'map_roll_history_panel'
+  | 'map_dice_box_panel'
+  | 'map_mini_tarot_dock';
+
+export interface SpatialInnerElementConfig {
+  id: string;
+  label?: string;
+  exampleValue?: string;
+  visible?: boolean;
+  opacity?: number; // 0 to 1
+  x?: number; // px offset
+  y?: number; // px offset
+  widthPx?: number; // 0 = auto
+  heightPx?: number; // 0 = auto
+  paddingXPx?: number;
+  paddingYPx?: number;
+  fontSizePx?: number;
+  iconSizePx?: number;
+  borderRadiusPx?: number;
+  borderWidthPx?: number;
+  hideBorder?: boolean;
+  shape?: GeometricShapeType;
+  edgeFadePercent?: number;
+  bgColor?: string;
+  bgOpacity?: number; // 0 to 1 (0 = transparent button frame)
+  textColor?: string;
+  borderColor?: string;
+  fontFamily?: string;
+  bgImageUrl?: string;
+  customIconUrl?: string;
+}
+
+export interface SpatialBlockConfig<TId extends string = string> {
+  id: TId;
+  name: string;
+  label: string;
+  customTitle?: string;
+  visible: boolean;
+  hidden: boolean;
+  order: number;
+  x: number;
+  y: number;
+  offsetX: number;
+  offsetY: number;
+  widthPx: number; // 0 = auto
+  heightPx: number; // 0 = auto
+  scale: number; // 0.5 to 1.5
+  paddingPx: number;
+  opacity: number; // 0 to 1
+  boxBgOpacity: number; // 0 to 1 (0 = transparent box frame)
+  hideBorder: boolean;
+  shape?: GeometricShapeType;
+  edgeFadePercent?: number;
+  bgColor: string;
+  borderColor: string;
+  borderWidthPx: number;
+  borderRadiusPx: number;
+  bgImageUrl: string;
+  bgImageFit: 'cover' | 'contain' | 'stretch';
+  titleText?: string;
+  subtitleText?: string;
+  fontFamily?: string;
+  titleFontSizePx?: number;
+  bodyFontSizePx?: number;
+  titleColor?: string;
+  textColor?: string;
+  accentColor?: string;
+  iconSizePx?: number;
+  innerButtonsOrder?: string[];
+  innerButtonsConfig?: Record<string, SpatialInnerElementConfig>;
+}
+
+export type PlayerSheetSpatialLayoutConfig = Array<SpatialBlockConfig<PlayerSheetBlockId>> & {
+  version?: number;
+  blocksOrder: PlayerSheetBlockId[];
+  blocks: Record<PlayerSheetBlockId, SpatialBlockConfig<PlayerSheetBlockId>>;
+};
+
+export type PlayerMapSpatialLayoutConfig = Array<SpatialBlockConfig<PlayerMapBlockId>> & {
+  version?: number;
+  blocksOrder: PlayerMapBlockId[];
+  blocks: Record<PlayerMapBlockId, SpatialBlockConfig<PlayerMapBlockId>>;
+};
+
+export interface DeckCardGraphicTemplate {
+  deckKind: 'combat' | 'skills' | 'spells';
+  label: string;
+  cardShape: GeometricShapeType;
+  edgeFadePercent: number;
+  illustrationShape: GeometricShapeType;
+  illustrationHideBorder: boolean;
+  illustrationEdgeFadePercent: number;
+  bgColor: string;
+  bgGradient?: string;
+  borderColor: string;
+  borderWidthPx: number;
+  borderRadiusPx: number;
+  hideBorder: boolean;
+  boxBgOpacity: number; // 0 to 1
+  opacity: number;
+  customFramePngUrl: string;
+  customBgPngUrl: string;
+  headerBgColor: string;
+  titleColor: string;
+  subtitleColor: string;
+  descriptionColor: string;
+  descColor: string;
+  badgeBgColor: string;
+  badgeTextColor: string;
+  fontFamily: string;
+  titleFontSizePx: number;
+  descriptionFontSizePx: number;
+  artworkShape: GeometricShapeType;
+  artworkEdgeFadePercent: number; // 0 to 100
+  artworkHideBorder: boolean;
+  innerButtonsOrder?: string[];
+  innerButtonsConfig?: Record<string, SpatialInnerElementConfig>;
+}
+
+export interface StatBoxGraphicConfig {
+  shape: GeometricShapeType;
+  hideBorder: boolean;
+  edgeFadePercent: number; // 0 to 100
+  boxBgOpacity: number; // 0 to 1
+  opacity: number;
+  bgColor: string;
+  borderColor: string;
+  borderWidthPx: number;
+  borderRadiusPx: number;
+  customFramePngUrl?: string;
+  customPngUrl?: string;
+  fontFamily: string;
+  labelFontSizePx: number;
+  valueFontSizePx: number;
+  modifierFontSizePx: number;
+  labelColor: string;
+  valueColor: string;
+  modifierColor: string;
+  innerButtonsOrder?: string[];
+  innerButtonsConfig?: Record<string, SpatialInnerElementConfig>;
+}
+
+export type TarotHpVisualStyle =
+  | 'classic_bar'
+  | 'square_bar'
+  | 'segmented_points'
+  | 'clockwork_gears'
+  | 'alchemical_potion'
+  | 'crimson_hearts';
+
+export type TarotElementSidePlacement = 'front' | 'back' | 'both' | 'hidden';
+
+export type TarotCardModuleKind =
+  | 'online_badge'
+  | 'portrait'
+  | 'level_xp_badge'
+  | 'character_name'
+  | 'alignment_badge'
+  | 'race_class'
+  | 'stat_ca'
+  | 'stat_init'
+  | 'stat_speed'
+  | 'stat_pp'
+  | 'hp_bar'
+  | 'ability_str'
+  | 'ability_dex'
+  | 'ability_con'
+  | 'ability_int'
+  | 'ability_wis'
+  | 'ability_cha'
+  | 'coin_gp'
+  | 'coin_sp'
+  | 'coin_cp'
+  | 'coin_pp'
+  | 'lore_quote'
+  | 'custom_layer';
+
+export type TarotStudioSurfaceSide = 'front' | 'back' | 'token';
+
+export interface TarotCardModuleItem {
+  id: string;
+  kind: TarotCardModuleKind;
+  name: string;
+  side: TarotStudioSurfaceSide;
+  visible: boolean;
+  x: number; // px offset from default slot or canvas origin (can extend into the 20% outer bleed margin)
+  y: number;
+  widthPx: number; // 0 = default module width, >0 = explicit width in px
+  heightPx: number; // 0 = default module height, >0 = explicit height in px
+  zIndex: number;
+  opacity: number; // 0 to 1
+  boxBgOpacity: number; // 0 to 1 (0 = transparent box frame)
+  shape: GeometricShapeType;
+  edgeFadePercent: number; // 0 to 100
+  hideBorder: boolean;
+  bgColor: string;
+  borderColor: string;
+  borderWidthPx: number;
+  borderRadiusPx: number;
+  bgImageUrl: string;
+  customIconUrl: string;
+  label: string; // Can be "" so creator can clear "FUE" or "PG" and use a PNG instead
+  exampleValue: string;
+  fontFamily: string;
+  fontSizePx: number;
+  labelFontSizePx?: number;
+  textColor: string;
+  labelColor?: string;
+  // Modular HP bar properties (when kind === 'hp_bar')
+  fillDirection?: 'left_to_right' | 'right_to_left' | 'bottom_to_top' | 'top_to_bottom';
+  fillColor?: string;
+  emptyBgColor?: string;
+  fillTexturePngUrl?: string;
+  frameOverlayPngUrl?: string;
+  showNumericText?: boolean;
+}
+
+export interface TarotCardExclusiveStudioConfig {
+  // Stretchable Card Dimensions & 20% Outer Margin Bleed Zone
+  cardWidthPx?: number; // Default 290, stretchable
+  cardHeightPx?: number; // Default 450, stretchable
+  outerBleedPercent?: number; // Default 20 (80% card + 20% outer bleed margin for GIFs/PNGs)
+  cardShape?: GeometricShapeType;
+  borderWidthPx?: number;
+
+  // Ficha de Jugador (Tactical Map Square Grid Token) in Apartado 4
+  tokenSquareSizePx?: number; // Default 220 (1:1 square grid cell canvas size)
+  tokenInnerRatioPercent?: number; // Default 80 (80% token body + 20% outer ring inside the square perimeter)
+  tokenShape?: GeometricShapeType; // Default 'circle'
+  tokenBgColor?: string;
+  tokenBorderColor?: string;
+  tokenBorderWidthPx?: number;
+  tokenHideBorder?: boolean;
+  tokenBoxBgOpacity?: number;
+  tokenEdgeFadePercent?: number;
+  tokenCustomFramePngUrl?: string;
+  tokenAnimatedBorderGifUrl?: string; // Looping GIF inside the square perimeter around the token
+
+  // Modular Drag-and-Drop Elements on Front, Back & Tactical Token (including duplicates)
+  modules?: TarotCardModuleItem[];
+
+  // Border & Animated Frame
+  animatedBorderGifUrl?: string;
+  borderEffectPreset?: string;
+  frontBgColor?: string;
+  frontBgGradient?: string;
+  frontCustomPngUrl?: string;
+  frontCustomFramePngUrl?: string;
+  frontBgImageUrl?: string;
+  frontBoxBgOpacity?: number;
+  backBgColor?: string;
+  backBgGradient?: string;
+  backCustomPngUrl?: string;
+  backBgImageUrl?: string;
+  backAnimatedGifUrl?: string;
+  backBoxBgOpacity?: number;
+  borderColor?: string;
+  glowColor?: string;
+  borderRadiusPx?: number;
+  hideBorder?: boolean;
+
+  // Artwork & Cinema Pop-Out Effect
+  artworkShape?: GeometricShapeType;
+  artworkHideBorder?: boolean;
+  artworkEdgeFadePercent?: number; // 0 to 100
+  artworkPopoutScale?: number; // 1.0 to 1.45 (cinema overflow effect)
+  artworkOverflowCinema?: boolean;
+  artworkOffsetX?: number; // px offset
+  artworkOffsetY?: number; // px offset
+
+  // Flexible HP Placement & Independent Front/Back Styles
+  hpPlacement?: 'front' | 'back' | 'both' | 'border';
+  frontHpStyle?: TarotHpVisualStyle;
+  backHpStyle?: TarotHpVisualStyle;
+  hpPrimaryColor?: string;
+  hpSecondaryColor?: string;
+  hpCustomPngUrl?: string;
+  frontHpCustomPngUrl?: string;
+  backHpCustomPngUrl?: string;
+
+  // Flexible Ability Stats Placement & Styling
+  statsPlacement?: 'front_grid' | 'back_grid' | 'both' | 'card_edges' | 'floating_corners';
+  statsShape?: GeometricShapeType;
+  statsScale?: 'sm' | 'md' | 'lg';
+  statsBgColor?: string;
+  statsBorderColor?: string;
+  statsTextColor?: string;
+
+  // Per-Element Front / Back / Both / Hidden Assignment
+  elementSides?: {
+    identity?: TarotElementSidePlacement;
+    alignment?: TarotElementSidePlacement;
+    combatStats?: TarotElementSidePlacement;
+    hpBar?: TarotElementSidePlacement;
+    abilityStats?: TarotElementSidePlacement;
+    coins?: TarotElementSidePlacement;
+    loreQuote?: TarotElementSidePlacement;
+  };
+  backLoreQuoteText?: string;
+  fontFamily?: string;
+  titleColor?: string;
+  subtitleColor?: string;
+
+  // Free Stickers / GIF Overlays on Front or Back
+  customStickers?: Array<{
+    id: string;
+    name?: string;
+    side: 'front' | 'back' | 'both';
+    imageUrl?: string;
+    url?: string;
+    xPercent: number;
+    yPercent: number;
+    sizePx?: number;
+    widthPx?: number;
+    heightPx?: number;
+    opacity?: number;
+  }>;
 }
 
 export type LobbyBlockId =

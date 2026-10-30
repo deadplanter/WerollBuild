@@ -1556,6 +1556,24 @@ export const dataStore = {
   getForumPosts(category?: string, roleFilter?: string, query?: string): ForumPost[] {
     const defaultPosts: ForumPost[] = [
       {
+        id: 'post-update-150',
+        category: 'app-updates',
+        title: 'WeRoll 1.5 Beta • Tooltip de Bonificadores en Carta Tarot, Último Dado en Tiempo Real en Modo Mapa, Estabilidad Multijugador de Vida (PG) y Subida Directa de PNG para el DM',
+        content: '¡Llega WeRoll 1.5 Beta! En esta actualización incorporamos mejoras clave solicitadas por la comunidad: ahora al acercar el cursor a cualquiera de los puntajes totales de características (FUE, DES, CON, INT, SAB, CAR) en la Carta Tarot de tu personaje, se despliega un tooltip flotante indicando cuántos puntos de bono tienes en esa estadística (por ejemplo, +4 en Fuerza para Valeros del Alba). También corregimos el indicador de "Último dado tirado" en el Modo Mapa para que se actualice siempre con cada nueva tirada del historial sin quedarse congelado, estabilizamos la sincronización de Puntos de Golpe (PG) cuando hay varios jugadores conectados en línea para evitar que la vida suba y baje, y habilitamos la subida directa de archivos PNG e imágenes desde tu dispositivo en la Hoja del Dungeon Master.',
+        authorEmail: 'admin@weroll.app',
+        authorName: 'Administrador Supremo',
+        authorTagId: 'adm',
+        authorFullTag: 'Administrador Supremo@adm',
+        authorPlayerType: 'both',
+        authorAppRole: 'admin',
+        flair: 'Actualización',
+        createdAt: 1793228400000,
+        upvotes: 108,
+        upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
+        commentsCount: 8,
+        pinned: true,
+      },
+      {
         id: 'post-update-140',
         category: 'app-updates',
         title: 'WeRoll 1.4 Beta • Barra Superior Unificada en Partida, Modo Mapa Ampliado, Cartas Tarot Miniatura en Mesa, Estadísticas Totales e Imágenes por Ataque',
@@ -1571,7 +1589,7 @@ export const dataStore = {
         upvotes: 96,
         upvoters: ['admin@weroll.app', 'deadplanter@gmail.com'],
         commentsCount: 7,
-        pinned: true,
+        pinned: false,
       },
       {
         id: 'post-update-130',
@@ -1813,7 +1831,7 @@ export const dataStore = {
     if (!posts || posts.length === 0) {
       posts = defaultPosts;
       writeJSON('forum_posts.json', posts);
-    } else if (!posts.some((p) => p.id === 'post-update-140')) {
+    } else if (!posts.some((p) => p.id === 'post-update-150')) {
       posts = [defaultPosts[0], ...posts.map((p) => (p.pinned ? { ...p, pinned: false } : p))];
       writeJSON('forum_posts.json', posts);
     }
@@ -2390,6 +2408,18 @@ export const dataStore = {
 
   // --- PERSISTENT HOST SETTINGS & CHANGELOG ---
   getHostSettings(): HostSettings {
+    const v15BetaEntry: ChangelogEntry = {
+      version: '1.5 Beta',
+      date: '2026-10-28',
+      title: 'WeRoll 1.5 Beta • Tooltip de Bonificadores en Carta Tarot, Sincronización Exacta del Último Dado en Modo Mapa, Estabilidad Multijugador de Vida (PG) y Subida Directa de PNG para el DM',
+      changes: [
+        'Tooltip Flotante de Bono en Estadísticas de la Carta Tarot: Al acercar el cursor sobre cualquiera de las 6 puntuaciones totales (FUE, DES, CON, INT, SAB, CAR) en la tarjeta del personaje, aparece una pestaña flotante (tooltip) mostrando el bonificador exacto de esa característica (por ejemplo, +4 para 18 de Fuerza en Valeros del Alba).',
+        'Actualización Continua del Último Dado Tirado en Modo Mapa: Corrección del indicador superior "Último dado tirado" y de las insignias de tirada en las tarjetas de jugador dentro del Modo Mapa para que siempre reflejen la tirada más reciente del historial sin quedarse congelados en tiradas pasadas.',
+        'Estabilización de Puntos de Golpe (PG) con Múltiples Jugadores en Línea: Nuevo control de marca de tiempo monotónica (hpUpdatedAt) entre cliente y servidor que evita que los latidos de conexión sobrescriban cambios recientes de vida o provoquen que la barra de vida suba y baje.',
+        'Subida Directa de Archivos PNG e Imágenes en la Hoja del Dungeon Master: Ahora el Dungeon Master puede subir archivos PNG/imágenes directamente desde su dispositivo (además de enlaces URL) tanto en los ajustes de su Hoja de DM como en lugares, NPCs, objetos, ataques y acciones.',
+      ],
+    };
+
     const v14BetaEntry: ChangelogEntry = {
       version: '1.4 Beta',
       date: '2026-10-26',
@@ -2554,7 +2584,7 @@ export const dataStore = {
 
     const defaultSettings: HostSettings = {
       headerTitle: 'WeRoll',
-      headerSubtitle: 'Companion & DM Suite v1.4 Beta',
+      headerSubtitle: 'Companion & DM Suite v1.5 Beta',
       headerLogoIcon: 'shield',
       aiModel: 'gemini-flash-lite-latest',
       moderatorPassword: 'admin',
@@ -2567,25 +2597,26 @@ export const dataStore = {
         enabled: true,
         title: 'Comunicado del Administrador',
         message:
-          '¡Bienvenido a WeRoll 5E v1.4 Beta! Disfruta del nuevo Modo Mapa ampliado con barra superior unificada, paneles flotantes plegables, Cartas Tarot en miniatura con estadísticas totales e imágenes personalizadas por ataque.',
+          '¡Bienvenido a WeRoll 5E v1.5 Beta! Ahora puedes ver el tooltip del bono al acercar el cursor a tus estadísticas en la Carta Tarot, disfrutar de tiradas y vida (PG) sincronizadas sin saltos en partidas multijugador y subir archivos PNG directamente en tu Hoja de Dungeon Master.',
         type: 'info',
         updatedAt: Date.now(),
       },
       developerNotice: {
         enabled: true,
-        title: 'WeRoll • Novedades v1.4 Beta',
+        title: 'WeRoll • Novedades v1.5 Beta',
         content:
-          '¡Versión 1.4 Beta disponible! Barra superior unificada en sesión y Modo Mapa, lienzo de mapa ampliado con paneles flotantes plegables, Cartas Tarot miniatura en la parte inferior de la mesa, estadísticas totales en las cartas de jugador e ilustraciones individuales por ataque y acción.',
-        version: '1.4 Beta',
+          '¡Versión 1.5 Beta disponible! Tooltips de bonificadores (+Bono) al pasar el cursor sobre las estadísticas en la Carta Tarot, sincronización en tiempo real del Último Dado Tirado en Modo Mapa, estabilización de Puntos de Golpe (PG) con múltiples jugadores en línea y subida directa de archivos PNG/Imagen en la Hoja del Dungeon Master.',
+        version: '1.5 Beta',
       },
       developerAnnouncement: {
         enabled: true,
-        title: 'WeRoll • Novedades v1.4 Beta',
+        title: 'WeRoll • Novedades v1.5 Beta',
         content:
-          '¡Versión 1.4 Beta disponible! Barra superior unificada en sesión y Modo Mapa, lienzo de mapa ampliado con paneles flotantes plegables, Cartas Tarot miniatura en la parte inferior de la mesa, estadísticas totales en las cartas de jugador e ilustraciones individuales por ataque y acción.',
-        version: '1.4 Beta',
+          '¡Versión 1.5 Beta disponible! Tooltips de bonificadores (+Bono) al pasar el cursor sobre las estadísticas en la Carta Tarot, sincronización en tiempo real del Último Dado Tirado en Modo Mapa, estabilización de Puntos de Golpe (PG) con múltiples jugadores en línea y subida directa de archivos PNG/Imagen en la Hoja del Dungeon Master.',
+        version: '1.5 Beta',
       },
       changelog: [
+        v15BetaEntry,
         v14BetaEntry,
         v13BetaEntry,
         v12BetaEntry,
@@ -2729,6 +2760,15 @@ export const dataStore = {
       finalChangelog[v14Idx] = v14BetaEntry;
     }
 
+    const v15Idx = finalChangelog.findIndex(
+      (entry) => entry.version && entry.version.toLowerCase().includes('1.5')
+    );
+    if (v15Idx === -1) {
+      finalChangelog = [v15BetaEntry, ...finalChangelog];
+    } else {
+      finalChangelog[v15Idx] = v15BetaEntry;
+    }
+
     const finalHeaderSubtitle =
       !current.headerSubtitle ||
       /v0\.(1|2|3|4|5|6|65|8|9|95)\b/i.test(current.headerSubtitle) ||
@@ -2736,7 +2776,8 @@ export const dataStore = {
       current.headerSubtitle.includes('1.0') ||
       current.headerSubtitle.includes('1.1') ||
       current.headerSubtitle.includes('1.2') ||
-      current.headerSubtitle.includes('1.3')
+      current.headerSubtitle.includes('1.3') ||
+      current.headerSubtitle.includes('1.4')
         ? defaultSettings.headerSubtitle
         : current.headerSubtitle;
 
@@ -2748,14 +2789,14 @@ export const dataStore = {
       developerNotice: {
         ...defaultSettings.developerNotice!,
         ...(current.developerNotice || {}),
-        version: '1.4 Beta',
-        title: 'WeRoll • Novedades v1.4 Beta',
+        version: '1.5 Beta',
+        title: 'WeRoll • Novedades v1.5 Beta',
         content: defaultSettings.developerNotice!.content,
       },
       developerAnnouncement: {
         enabled: true,
-        version: '1.4 Beta',
-        title: 'WeRoll • Novedades v1.4 Beta',
+        version: '1.5 Beta',
+        title: 'WeRoll • Novedades v1.5 Beta',
         content: defaultSettings.developerNotice!.content,
       },
       adminGreeting: current.adminGreeting
@@ -2768,7 +2809,8 @@ export const dataStore = {
                 current.adminGreeting.message.includes('1.0') ||
                 current.adminGreeting.message.includes('1.1') ||
                 current.adminGreeting.message.includes('1.2') ||
-                current.adminGreeting.message.includes('1.3'))
+                current.adminGreeting.message.includes('1.3') ||
+                current.adminGreeting.message.includes('1.4'))
                 ? defaultSettings.adminGreeting!.message
                 : current.adminGreeting.message,
           }

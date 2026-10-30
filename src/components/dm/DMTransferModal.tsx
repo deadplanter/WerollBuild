@@ -8,6 +8,7 @@ import {
   PlayerSheetRecord,
   PartyMemberLive,
 } from '../../types/dnd';
+import { normalizePlayerSheetItemCategory } from '../../utils/dnd-math';
 
 export interface DMTransferModalProps {
   isOpen: boolean;
@@ -122,23 +123,23 @@ export const DMTransferModal: React.FC<DMTransferModalProps> = ({
       let abilityObj: SharedFeatureOrAbility | undefined;
 
       if (entity.kind === 'item') {
-        const inferredGroup =
-          entity.item?.itemGroup ||
-          entity.customObj?.itemGroup ||
-          ((entity.customObj?.category || '').toLowerCase().includes('armadura') ||
-          (entity.customObj?.category || '').toLowerCase().includes('escudo')
-            ? 'armor'
-            : (entity.customObj?.category || '').toLowerCase().includes('arma') ||
-              (entity.customObj?.category || '').toLowerCase().includes('espada') ||
-              (entity.customObj?.weaponAttacks && entity.customObj.weaponAttacks.length > 0)
-            ? 'weapon'
-            : 'common');
+        const normalized = normalizePlayerSheetItemCategory({
+          category: entity.customObj?.category || entity.item?.category,
+          itemGroup: entity.item?.itemGroup || entity.customObj?.itemGroup,
+          name: entity.customObj?.name || entity.item?.name || entity.title,
+          weaponAttacks: entity.item?.weaponAttacks || entity.customObj?.weaponAttacks,
+        });
         itemObj = entity.item
           ? {
               ...entity.item,
               id: `inv-transfer-${Date.now()}`,
-              itemGroup: entity.item.itemGroup || inferredGroup,
-              weaponAttacks: entity.item.weaponAttacks || entity.customObj?.weaponAttacks,
+              category: normalized.category,
+              itemGroup: normalized.itemGroup,
+              imageUrl: entity.item.imageUrl || entity.customObj?.imageUrl,
+              weaponAttacks:
+                normalized.itemGroup === 'weapon'
+                  ? entity.item.weaponAttacks || entity.customObj?.weaponAttacks
+                  : undefined,
               statModifiers: entity.item.statModifiers || entity.customObj?.statModifiers,
               itemActions: entity.item.itemActions || entity.customObj?.itemActions,
             }
@@ -147,17 +148,14 @@ export const DMTransferModal: React.FC<DMTransferModalProps> = ({
               name: entity.customObj?.name || entity.title,
               quantity: 1,
               weight: entity.customObj?.weight ?? 1,
-              category:
-                inferredGroup === 'weapon'
-                  ? 'Arma'
-                  : inferredGroup === 'armor'
-                  ? 'Armadura'
-                  : ((entity.customObj?.category as any) || 'Objeto'),
-              itemGroup: inferredGroup,
+              category: normalized.category,
+              itemGroup: normalized.itemGroup,
               rarity: entity.customObj?.rarity || 'Raro',
               description: fullDescription.trim() || 'Objeto otorgado por el Dungeon Master.',
               equipped: false,
-              weaponAttacks: entity.customObj?.weaponAttacks,
+              imageUrl: entity.customObj?.imageUrl,
+              weaponAttacks:
+                normalized.itemGroup === 'weapon' ? entity.customObj?.weaponAttacks : undefined,
               statModifiers: entity.customObj?.statModifiers,
               itemActions: entity.customObj?.itemActions,
             };
@@ -217,8 +215,7 @@ export const DMTransferModal: React.FC<DMTransferModalProps> = ({
           title: entity.title,
           rarity: entity.customObj?.rarity || entity.item?.rarity || 'Especial',
           category:
-            entity.customObj?.category ||
-            entity.item?.category ||
+            itemObj?.category ||
             entity.spell?.school ||
             entity.ability?.source ||
             kindLabel,

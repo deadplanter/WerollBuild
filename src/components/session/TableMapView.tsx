@@ -75,6 +75,8 @@ import {
   removeVisualFromQueue,
   moveTacticalTokenOnGrid,
   buildDeduplicatedPlayerSkillCards,
+  pickMostRecentRoll,
+  pickMostRecentRollForRoller,
 } from '../../utils/dnd-math';
 import { CharacterTarotCard } from '../character/CharacterTarotCard';
 import { ABILITY_LABELS, SKILL_METADATA, SKILLS_5E } from '../../data/srd';
@@ -582,31 +584,17 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
   // 3. PARTY PLAYER CARDS (SAME DESIGN AS PLAYER SHEET BOTTOM-RIGHT CARD)
   // =========================================================================
   const resolvedPlayerCards: PartyMemberLive[] = useMemo(() => {
-    const findLatestRollForMember = (
-      charName?: string,
-      pName?: string,
-      fallbackRoll?: DiceRollResult
-    ): DiceRollResult | undefined => {
-      for (let i = rollFeed.length - 1; i >= 0; i--) {
-        const r = rollFeed[i];
-        if (!r || !r.rollerName) continue;
-        const rLower = r.rollerName.toLowerCase().trim();
-        if (
-          (charName && rLower === charName.toLowerCase().trim()) ||
-          (pName && rLower === pName.toLowerCase().trim())
-        ) {
-          return r;
-        }
-      }
-      return fallbackRoll;
-    };
-
     const map = new Map<string, PartyMemberLive>();
     for (const p of partyMembers) {
       if (p && p.characterId) {
         map.set(p.characterId, {
           ...p,
-          lastRoll: findLatestRollForMember(p.characterName, p.playerName, p.lastRoll),
+          lastRoll: pickMostRecentRollForRoller({
+            characterName: p.characterName,
+            playerName: p.playerName,
+            rollFeed,
+            fallbackRoll: p.lastRoll,
+          }),
         });
       }
     }
@@ -630,9 +618,13 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
         prof
       );
       const existingSelf = map.get(character.id);
-      const latestSelfRoll =
-        lastBoxRoll ||
-        findLatestRollForMember(character.name, character.playerName, existingSelf?.lastRoll);
+      const latestSelfRoll = pickMostRecentRollForRoller({
+        characterName: character.name,
+        playerName: character.playerName,
+        rollFeed,
+        localBoxRoll: lastBoxRoll,
+        fallbackRoll: existingSelf?.lastRoll,
+      });
 
       map.set(character.id, {
         characterId: character.id,
@@ -1427,7 +1419,10 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
     }
   };
 
-  const latestRoll = lastBoxRoll || rollFeed[rollFeed.length - 1] || null;
+  const latestRoll = useMemo(
+    () => pickMostRecentRoll(rollFeed, lastBoxRoll),
+    [rollFeed, lastBoxRoll]
+  );
 
   return (
     <div
@@ -2032,6 +2027,11 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                                             >
                                               {atk.name}
                                             </div>
+                                            {atk.notes && (
+                                              <p className="text-[8px] text-amber-200/80 line-clamp-2 leading-tight mt-0.5">
+                                                {atk.notes}
+                                              </p>
+                                            )}
                                           </div>
                                         </div>
                                         <div className="flex items-center justify-between gap-1 text-[9px] font-mono text-[#cbb692] border-t border-[#c8a45c]/30 pt-1 mt-1">
@@ -2150,6 +2150,11 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
                                             >
                                               {sp.name}
                                             </div>
+                                            {sp.description && (
+                                              <p className="text-[8px] text-purple-200/80 line-clamp-2 leading-tight mt-0.5">
+                                                {sp.description}
+                                              </p>
+                                            )}
                                           </div>
                                         </div>
                                         <div className="flex items-center justify-between gap-1 text-[8px] text-purple-200/85 border-t border-purple-500/30 pt-1 mt-1">
@@ -3245,14 +3250,20 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
             </h3>
 
             {/* Parchment Scroll Banner for Latest Roll */}
-            <div className="rounded-xl bg-gradient-to-b from-[#d8c396] via-[#cbb17c] to-[#b59860] border-2 border-[#6e4f22] px-3 py-2.5 text-[#231709] shadow-inner">
+            <div
+              data-testid="map-latest-roll-banner"
+              className="rounded-xl bg-gradient-to-b from-[#d8c396] via-[#cbb17c] to-[#b59860] border-2 border-[#6e4f22] px-3 py-2.5 text-[#231709] shadow-inner"
+            >
               {latestRoll ? (
                 <div className="space-y-0.5">
                   <div className="text-xs font-serif font-bold flex items-center justify-between gap-1">
                     <span className="truncate">
                       📜 Último: <strong>{latestRoll.rollerName}</strong>
                     </span>
-                    <span className="font-mono font-black text-sm text-[#4a1c0b] shrink-0">
+                    <span
+                      data-testid="map-latest-roll-total"
+                      className="font-mono font-black text-sm text-[#4a1c0b] shrink-0"
+                    >
                       = {latestRoll.total}
                     </span>
                   </div>
@@ -3274,8 +3285,8 @@ export const TableMapView: React.FC<TableMapViewProps> = ({
               <div className="max-h-28 overflow-y-auto space-y-1 bg-black/50 border border-[#c8a45c]/35 rounded-xl p-2 text-[11px]">
                 {rollFeed
                   .slice()
-                  .reverse()
-                  .slice(0, 10)
+                  .sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0))
+                  .slice(0, 12)
                   .map((r) => (
                     <div
                       key={r.id}

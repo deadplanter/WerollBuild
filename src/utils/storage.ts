@@ -20,29 +20,40 @@ export const DEFAULT_HOST_SETTINGS: HostSettings = {
   dmPassword: '',
   moderatorPassword: 'admin',
   headerTitle: 'WeRoll',
-  headerSubtitle: 'Companion & DM Suite v1.4 Beta',
+  headerSubtitle: 'Companion & DM Suite v1.5 Beta',
   headerLogoIcon: 'shield',
   developerNotice: {
     enabled: true,
-    title: 'WeRoll • Novedades v1.4 Beta',
-    content: '¡Versión 1.4 Beta disponible! Barra superior unificada en sesión y Modo Mapa, lienzo de mapa ampliado con paneles flotantes plegables, Cartas Tarot miniatura en la parte inferior de la mesa, estadísticas totales en las cartas de jugador e ilustraciones individuales por ataque y acción.',
-    version: '1.4 Beta',
+    title: 'WeRoll • Novedades v1.5 Beta',
+    content: '¡Versión 1.5 Beta disponible! Tooltips de bonificadores (+Bono) al pasar el cursor sobre las estadísticas en la Carta Tarot, sincronización en tiempo real del Último Dado Tirado en Modo Mapa, estabilización de Puntos de Golpe (PG) con múltiples jugadores en línea y subida directa de archivos PNG/Imagen en la Hoja del Dungeon Master.',
+    version: '1.5 Beta',
   },
   developerAnnouncement: {
     enabled: true,
-    title: 'WeRoll • Novedades v1.4 Beta',
-    content: '¡Versión 1.4 Beta disponible! Barra superior unificada en sesión y Modo Mapa, lienzo de mapa ampliado con paneles flotantes plegables, Cartas Tarot miniatura en la parte inferior de la mesa, estadísticas totales en las cartas de jugador e ilustraciones individuales por ataque y acción.',
-    version: '1.4 Beta',
+    title: 'WeRoll • Novedades v1.5 Beta',
+    content: '¡Versión 1.5 Beta disponible! Tooltips de bonificadores (+Bono) al pasar el cursor sobre las estadísticas en la Carta Tarot, sincronización en tiempo real del Último Dado Tirado en Modo Mapa, estabilización de Puntos de Golpe (PG) con múltiples jugadores en línea y subida directa de archivos PNG/Imagen en la Hoja del Dungeon Master.',
+    version: '1.5 Beta',
   },
   adminGreeting: {
     enabled: true,
     title: 'Comunicado del Administrador',
-    message: '¡Bienvenido a WeRoll 5E v1.4 Beta! Disfruta del nuevo Modo Mapa ampliado con barra superior unificada, paneles flotantes plegables, Cartas Tarot en miniatura con estadísticas totales e imágenes personalizadas por ataque.',
+    message: '¡Bienvenido a WeRoll 5E v1.5 Beta! Ahora puedes ver el tooltip del bono al acercar el cursor a tus estadísticas en la Carta Tarot, disfrutar de tiradas y vida (PG) sincronizadas sin saltos en partidas multijugador y subir archivos PNG directamente en tu Hoja de Dungeon Master.',
     type: 'info',
     updatedAt: Date.now(),
   },
   oracleWelcomeMessage: 'Saludos, viajero. Soy el Sabio Arcano, tu árbitro y custodio de las reglas de 5E. ¿Qué duda deseas resolver hoy?',
   changelog: [
+    {
+      version: '1.5 Beta',
+      date: '2026-10-28',
+      title: 'WeRoll 1.5 Beta • Tooltip de Bonificadores en Carta Tarot, Sincronización Exacta del Último Dado en Modo Mapa, Estabilidad Multijugador de Vida (PG) y Subida Directa de PNG para el DM',
+      changes: [
+        'Tooltip Flotante de Bono en Estadísticas de la Carta Tarot: Al acercar el cursor sobre cualquiera de las 6 puntuaciones totales (FUE, DES, CON, INT, SAB, CAR) en la tarjeta del personaje, aparece una pestaña flotante (tooltip) mostrando el bonificador exacto de esa característica (por ejemplo, +4 para 18 de Fuerza en Valeros del Alba).',
+        'Actualización Continua del Último Dado Tirado en Modo Mapa: Corrección del indicador superior "Último dado tirado" y de las insignias de tirada en las tarjetas de jugador dentro del Modo Mapa para que siempre reflejen la tirada más reciente del historial sin quedarse congelados en tiradas pasadas.',
+        'Estabilización de Puntos de Golpe (PG) con Múltiples Jugadores en Línea: Nuevo control de marca de tiempo monotónica (hpUpdatedAt) entre cliente y servidor que evita que los latidos de conexión sobrescriban cambios recientes de vida o provoquen que la barra de vida suba y baje.',
+        'Subida Directa de Archivos PNG e Imágenes en la Hoja del Dungeon Master: Ahora el Dungeon Master puede subir archivos PNG/imágenes directamente desde su dispositivo (además de enlaces URL) tanto en los ajustes de su Hoja de DM como en lugares, NPCs, objetos, ataques y acciones.',
+      ],
+    },
     {
       version: '1.4 Beta',
       date: '2026-10-26',
@@ -424,17 +435,18 @@ export function loadHostSettings(): HostSettings {
     if (!data) return DEFAULT_HOST_SETTINGS;
     const parsed = JSON.parse(data);
     const merged: HostSettings = { ...DEFAULT_HOST_SETTINGS, ...parsed };
-    const v14 = DEFAULT_HOST_SETTINGS.changelog?.[0];
-    if (v14 && Array.isArray(merged.changelog)) {
-      const idx = merged.changelog.findIndex((c) => c.version && c.version.toLowerCase().includes('1.4'));
+    const v15 = DEFAULT_HOST_SETTINGS.changelog?.[0];
+    if (v15 && Array.isArray(merged.changelog)) {
+      const idx = merged.changelog.findIndex((c) => c.version && c.version.toLowerCase().includes('1.5'));
       if (idx === -1) {
-        merged.changelog = [v14, ...merged.changelog];
+        merged.changelog = [v15, ...merged.changelog];
       } else {
-        merged.changelog[idx] = v14;
+        merged.changelog[idx] = v15;
       }
     }
     if (
       !merged.headerSubtitle ||
+      merged.headerSubtitle.includes('1.4') ||
       merged.headerSubtitle.includes('1.3') ||
       merged.headerSubtitle.includes('1.2') ||
       merged.headerSubtitle.includes('1.1') ||
@@ -452,7 +464,8 @@ export function loadHostSettings(): HostSettings {
       merged.developerNotice?.version?.includes('1.0') ||
       merged.developerNotice?.version?.includes('1.1') ||
       merged.developerNotice?.version?.includes('1.2') ||
-      merged.developerNotice?.version?.includes('1.3')
+      merged.developerNotice?.version?.includes('1.3') ||
+      merged.developerNotice?.version?.includes('1.4')
     ) {
       merged.developerNotice = DEFAULT_HOST_SETTINGS.developerNotice;
     }
