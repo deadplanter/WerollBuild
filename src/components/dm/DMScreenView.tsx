@@ -388,6 +388,8 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
   const [isChroniclesModalOpen, setIsChroniclesModalOpen] = useState<boolean>(false);
   const [isPlayerMessagesModalOpen, setIsPlayerMessagesModalOpen] = useState<boolean>(false);
   const [isItemsCompendiumModalOpen, setIsItemsCompendiumModalOpen] = useState<boolean>(false);
+  const [compendiumInitialTransferItem, setCompendiumInitialTransferItem] =
+    useState<DMCustomItemOrSpell | null>(null);
   const [isAddCombatantPickerOpen, setIsAddCombatantPickerOpen] = useState<'enemy' | 'ally' | null>(null);
   const [isInitiativeDetailModalOpen, setIsInitiativeDetailModalOpen] = useState<boolean>(false);
   const [selectedWarSummary, setSelectedWarSummary] = useState<CombatSummary | null>(null);
@@ -3736,6 +3738,7 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        setCompendiumInitialTransferItem(unfoldedCard.data);
                         setUnfoldedCard(null);
                         setIsItemsCompendiumModalOpen(true);
                       }}
@@ -4026,6 +4029,8 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                   setIsItemsCompendiumModalOpen(false);
                   openDmTableSettingsModal();
                 }}
+                initialTransferItem={compendiumInitialTransferItem}
+                onClearInitialTransferItem={() => setCompendiumInitialTransferItem(null)}
               />
             </div>
           </div>
@@ -4441,6 +4446,75 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
               </select>
             </div>
 
+            {/* Imagen / PNG del NPC (Archivo o URL) */}
+            <div className="mb-2 p-2.5 rounded-lg bg-[#121316] border border-stone-700/80 space-y-1.5">
+              <label className="text-[11px] font-cinzel font-bold text-amber-300 uppercase flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                <span>Imagen / PNG del NPC (Subir Archivo o URL):</span>
+              </label>
+              <div className="flex items-center gap-2 flex-wrap">
+                {npcForm.avatarCustomUrl && (
+                  <img
+                    src={npcForm.avatarCustomUrl}
+                    alt="Retrato NPC"
+                    className="w-10 h-10 rounded-lg object-cover border border-amber-500/60 shrink-0"
+                  />
+                )}
+                <label className="px-2.5 py-1.5 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-700/60 text-amber-200 text-xs font-cinzel font-bold cursor-pointer flex items-center gap-1.5 shrink-0">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Subir Archivo PNG / Imagen</span>
+                  <input
+                    type="file"
+                    data-testid="input-npc-modal-file"
+                    accept="image/png,image/jpeg,image/webp,image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const dataUrl = await compressImageFileToDataUrl(file, 420, 0.82);
+                        setNpcForm((prev) => ({
+                          ...prev,
+                          avatarType: 'custom',
+                          avatarCustomUrl: dataUrl,
+                        }));
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                  />
+                </label>
+                <input
+                  type="text"
+                  placeholder="O pega URL de imagen (https://...)"
+                  value={npcForm.avatarCustomUrl || ''}
+                  onChange={(e) =>
+                    setNpcForm({
+                      ...npcForm,
+                      avatarType: e.target.value.trim() ? 'custom' : npcForm.avatarType,
+                      avatarCustomUrl: e.target.value,
+                    })
+                  }
+                  className="flex-1 min-w-[160px] bg-[#181920] border border-stone-700 rounded-lg px-2.5 py-1.5 text-xs text-stone-100"
+                />
+                {npcForm.avatarCustomUrl && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNpcForm({
+                        ...npcForm,
+                        avatarType: 'default',
+                        avatarCustomUrl: '',
+                      })
+                    }
+                    className="px-2 py-1 rounded bg-red-950/50 border border-red-800/60 text-red-300 text-[10px] hover:bg-red-900/50 cursor-pointer"
+                  >
+                    Quitar
+                  </button>
+                )}
+              </div>
+            </div>
+
             <textarea
               placeholder="Descripción física y apariencia..."
               value={npcForm.appearance || ''}
@@ -4521,6 +4595,8 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                       secretOrHook: npcForm.secretOrHook || '',
                       notes: npcForm.notes || '',
                       evolution: npcForm.evolution || '',
+                      avatarType: npcForm.avatarCustomUrl ? 'custom' : npcForm.avatarType || 'default',
+                      avatarCustomUrl: npcForm.avatarCustomUrl || undefined,
                     };
                     onUpdateWorkspace({
                       ...workspace,
@@ -4891,13 +4967,57 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
               </select>
             </div>
 
-            <input
-              type="text"
-              placeholder="URL de Imagen de Mapa (opcional)"
-              value={locationForm.mapImageUrl || ''}
-              onChange={(e) => setLocationForm({ ...locationForm, mapImageUrl: e.target.value })}
-              className="w-full bg-[#121316] border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100 mb-3"
-            />
+            <div className="mb-3 p-2.5 rounded-lg bg-[#121316] border border-stone-700/80 space-y-1.5">
+              <label className="text-[11px] font-cinzel font-bold text-amber-300 uppercase flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                <span>Imagen / PNG del Mapa del Lugar (Subir Archivo o URL):</span>
+              </label>
+              <div className="flex items-center gap-2 flex-wrap">
+                {locationForm.mapImageUrl && (
+                  <img
+                    src={locationForm.mapImageUrl}
+                    alt="Vista previa mapa"
+                    className="w-10 h-10 rounded-lg object-cover border border-amber-500/60 shrink-0"
+                  />
+                )}
+                <label className="px-2.5 py-1.5 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-700/60 text-amber-200 text-xs font-cinzel font-bold cursor-pointer flex items-center gap-1.5 shrink-0">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Subir Archivo PNG / Imagen</span>
+                  <input
+                    type="file"
+                    data-testid="input-location-modal-file"
+                    accept="image/png,image/jpeg,image/webp,image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const dataUrl = await compressImageFileToDataUrl(file, 1440, 0.85);
+                        setLocationForm((prev) => ({ ...prev, mapImageUrl: dataUrl }));
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                  />
+                </label>
+                <input
+                  type="text"
+                  placeholder="URL de Imagen de Mapa (opcional)"
+                  value={locationForm.mapImageUrl || ''}
+                  onChange={(e) => setLocationForm({ ...locationForm, mapImageUrl: e.target.value })}
+                  className="flex-1 min-w-[160px] bg-[#181920] border border-stone-700 rounded-lg px-3 py-1.5 text-xs text-stone-100"
+                />
+                {locationForm.mapImageUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setLocationForm({ ...locationForm, mapImageUrl: '' })}
+                    className="px-2 py-1 rounded bg-red-950/50 border border-red-800/60 text-red-300 text-[10px] hover:bg-red-900/50 cursor-pointer"
+                  >
+                    Quitar
+                  </button>
+                )}
+              </div>
+            </div>
 
             <textarea
               placeholder="Descripción ambiental del lugar..."
@@ -6472,6 +6592,82 @@ export const DMScreenView: React.FC<DMScreenViewProps> = ({
                   className="w-4 h-4 accent-amber-500 shrink-0"
                 />
               </label>
+
+              {/* Estandarte / PNG Personalizado de la Hoja del Dungeon Master */}
+              <div
+                data-testid="dm-settings-custom-png-section"
+                className="p-3.5 rounded-xl bg-[#191c28] border border-amber-500/40 space-y-2"
+              >
+                <div className="text-xs font-cinzel font-bold text-amber-300 uppercase flex items-center gap-1.5">
+                  <ImageIcon className="w-4 h-4 text-amber-400" />
+                  <span>Imagen / PNG Personalizado de la Hoja del Dungeon Master</span>
+                </div>
+                <p className="text-[11px] text-stone-400">
+                  Sube directamente un archivo PNG/imagen desde tu dispositivo o pega un enlace URL para el estandarte y retrato de tu Hoja de Dungeon Master.
+                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {workspace.dmAvatarUrl && (
+                    <img
+                      src={workspace.dmAvatarUrl}
+                      alt="PNG del DM"
+                      className="w-11 h-11 rounded-lg object-cover border border-amber-500/60 shrink-0"
+                    />
+                  )}
+                  <label className="px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-600 text-white font-cinzel font-bold text-xs cursor-pointer flex items-center gap-1.5 shrink-0 shadow">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Subir Archivo PNG / Imagen</span>
+                    <input
+                      type="file"
+                      data-testid="input-dm-settings-sheet-png-file"
+                      accept="image/png,image/jpeg,image/webp,image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const dataUrl = await compressImageFileToDataUrl(file, 512, 0.85);
+                          onUpdateWorkspace({
+                            ...workspace,
+                            dmAvatarType: 'custom',
+                            dmAvatarUrl: dataUrl,
+                          });
+                        } catch {
+                          // ignore
+                        }
+                      }}
+                    />
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="input-dm-settings-sheet-png-url"
+                    value={workspace.dmAvatarUrl || ''}
+                    onChange={(e) =>
+                      onUpdateWorkspace({
+                        ...workspace,
+                        dmAvatarType: e.target.value.trim() ? 'custom' : 'hood',
+                        dmAvatarUrl: e.target.value,
+                      })
+                    }
+                    placeholder="O pega URL de imagen PNG (https://...)"
+                    className="flex-1 min-w-[180px] bg-[#11131a] border border-stone-700 rounded-lg px-2.5 py-1.5 text-xs text-stone-100"
+                  />
+                  {workspace.dmAvatarUrl && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateWorkspace({
+                          ...workspace,
+                          dmAvatarType: 'hood',
+                          dmAvatarUrl: undefined,
+                        })
+                      }
+                      className="px-2.5 py-1.5 rounded-lg bg-red-950/60 border border-red-700/50 text-red-200 text-[11px] hover:bg-red-900/50 cursor-pointer"
+                    >
+                      Restaurar Capucha
+                    </button>
+                  )}
+                </div>
+              </div>
 
               {/* APARTADO DE DLCs E INYECCIÓN DE CONTENIDO (SRD 5E & EXPANSIONES) */}
               <div

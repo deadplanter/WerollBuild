@@ -1087,7 +1087,272 @@ test('resolveTarotCardAbilityScores returns total ability scores (e.g. 18 Fuerza
   assert.equal(resolvedFromMember.dex.totalScore, 13);
 });
 
+test('normalizePlayerSheetItemCategory strictly locks item categories to Player Sheet categories (Arma, Armadura, Objeto Común) even if DM typed a custom category like "escamas de dragon"', async () => {
+  const {
+    PLAYER_SHEET_ITEM_CATEGORIES,
+    normalizePlayerSheetItemCategory,
+    classifyInventoryItemGroup,
+    classifyInventoryItemKey,
+  } = await import('./dnd-math.ts');
 
+  assert.deepEqual(PLAYER_SHEET_ITEM_CATEGORIES, ['Arma', 'Armadura', 'Objeto Común']);
 
+  // Even if itemGroup defaulted to 'weapon' when DM typed "escamas de dragon" in category, it normalizes to Objeto Común
+  const dragonScales = normalizePlayerSheetItemCategory({
+    name: 'Escamas Rojas Antiguas',
+    category: 'escamas de dragon',
+    itemGroup: 'weapon',
+  });
+  assert.deepEqual(dragonScales, {
+    category: 'Objeto Común',
+    itemGroup: 'common',
+    mainGroup: 'Objetos comunes',
+  });
+  assert.equal(
+    classifyInventoryItemGroup({
+      name: 'Escamas Rojas Antiguas',
+      category: 'escamas de dragon',
+      itemGroup: 'weapon',
+    }),
+    'Objetos comunes'
+  );
+  assert.equal(
+    classifyInventoryItemKey({
+      name: 'Escamas Rojas Antiguas',
+      category: 'escamas de dragon',
+      itemGroup: 'weapon',
+    }),
+    'common'
+  );
+
+  // Standard Weapon & Armor categories normalize strictly to 'Arma' and 'Armadura'
+  assert.deepEqual(normalizePlayerSheetItemCategory({ category: 'Arma (Espada)', itemGroup: 'weapon' }), {
+    category: 'Arma',
+    itemGroup: 'weapon',
+    mainGroup: 'Armas',
+  });
+  assert.deepEqual(normalizePlayerSheetItemCategory({ category: 'Armadura (Pesada)', itemGroup: 'armor' }), {
+    category: 'Armadura',
+    itemGroup: 'armor',
+    mainGroup: 'Armaduras',
+  });
+});
+
+test('pickMostRecentRoll and pickMostRecentRollForRoller always return the newest dice roll by timestamp instead of getting stuck on an older localBoxRoll', async () => {
+  const { pickMostRecentRoll, pickMostRecentRollForRoller } = await import('./dnd-math.ts');
+
+  const oldBoxRoll = {
+    id: 'roll-1',
+    rollerName: 'Valeros del Alba',
+    total: 14,
+    timestamp: 1000,
+  };
+  const newerOtherRoll = {
+    id: 'roll-2',
+    rollerName: 'Lyra',
+    total: 19,
+    timestamp: 2000,
+  };
+  const newestSelfRollFromSheet = {
+    id: 'roll-3',
+    rollerName: 'Valeros del Alba',
+    total: 22,
+    timestamp: 3000,
+  };
+
+  // Even when oldBoxRoll is passed first, pickMostRecentRoll picks the roll with highest timestamp
+  const latest = pickMostRecentRoll(oldBoxRoll, [oldBoxRoll, newerOtherRoll]);
+  assert.equal(latest?.id, 'roll-2');
+  assert.equal(latest?.total, 19);
+
+  // And for a specific player's card, pickMostRecentRollForRoller picks their newest roll across rollFeed and localBoxRoll
+  const valerosLatest = pickMostRecentRollForRoller({
+    characterName: 'Valeros del Alba',
+    playerName: 'Jugador',
+    rollFeed: [oldBoxRoll, newerOtherRoll, newestSelfRollFromSheet],
+    localBoxRoll: oldBoxRoll,
+  });
+  assert.equal(valerosLatest?.id, 'roll-3');
+  assert.equal(valerosLatest?.total, 22);
+});
+
+test('resolveAuthoritativePlayerHp prevents HP oscillation when multiple players are online while respecting newer DM adjustments', async () => {
+  const { resolveAuthoritativePlayerHp } = await import('./dnd-math.ts');
+
+  // 1. Player mutates HP locally at t=5000 (to 18), while server poll still reports t=4000 (25 HP) and an old DM modification from t=2000:
+  // Must keep local HP 18 and NOT bounce back to 25!
+  const step1 = resolveAuthoritativePlayerHp({
+    localCurrentHp: 18,
+    localHpUpdatedAt: 5000,
+    serverCurrentHp: 25,
+    serverHpUpdatedAt: 4000,
+    serverDmModifiedAt: 2000,
+    lastSeenDmModifiedAt: 2000,
+  });
+  assert.equal(step1.currentHp, 18);
+  assert.equal(step1.shouldApplyServerToLocal, false);
+
+  // 2. DM adjusts player HP at t=6000 (to 12): dmModifiedAt (6000) > localHpUpdatedAt (5000) and > lastSeenDmModifiedAt (2000)
+  // Must adopt 12 HP immediately and advance nextLastSeenDmModifiedAt to 6000
+  const step2 = resolveAuthoritativePlayerHp({
+    localCurrentHp: 18,
+    localHpUpdatedAt: 5000,
+    serverCurrentHp: 12,
+    serverHpUpdatedAt: 6000,
+    serverDmModifiedAt: 6000,
+    lastSeenDmModifiedAt: 2000,
+  });
+  assert.equal(step2.currentHp, 12);
+  assert.equal(step2.shouldApplyServerToLocal, true);
+  assert.equal(step2.nextLastSeenDmModifiedAt, 6000);
+
+  // 3. Player then heals themselves at t=7000 (to 20) right after DM adjustment at t=6000:
+  // Even if server still reports 12 from t=6000, player's localHpUpdatedAt (7000) >= 6000 wins without bouncing!
+  const step3 = resolveAuthoritativePlayerHp({
+    localCurrentHp: 20,
+    localHpUpdatedAt: 7000,
+    serverCurrentHp: 12,
+    serverHpUpdatedAt: 6000,
+    serverDmModifiedAt: 6000,
+    lastSeenDmModifiedAt: 6000,
+  });
+  assert.equal(step3.currentHp, 20);
+  assert.equal(step3.shouldApplyServerToLocal, false);
+});
+
+test('deriveAllCharacterActions preserves descriptions on weapon attacks, custom character.attacks, and item actions', async () => {
+  const { deriveAllCharacterActions } = await import('./dnd-math.ts');
+
+  const actions = deriveAllCharacterActions({
+    inventory: [
+      {
+        id: 'item-sword',
+        name: 'Hoja Solar',
+        category: 'Arma',
+        equipped: true,
+        weaponAttacks: [
+          {
+            id: 'wa-1',
+            name: 'Tajo Radiante',
+            description: 'Emite un destello solar que ilumina 30 pies y quema sombras.',
+            dice: '1d8',
+            bonus: 2,
+            damageType: 'Radiante',
+            attackType: 'melee',
+          },
+        ],
+      },
+      {
+        id: 'item-amulet',
+        name: 'Amuleto del Fénix',
+        category: 'Objeto Común',
+        equipped: true,
+        itemActions: [
+          {
+            id: 'ia-1',
+            name: 'Pulso Ígneo',
+            description: 'Libera una onda de calor curativo alrededor del portador.',
+            actionType: 'heal',
+            dice: '2d4',
+            bonus: 2,
+          },
+        ],
+      },
+    ],
+    strScore: 16,
+    dexScore: 14,
+    profBonus: 2,
+    attacks: [
+      {
+        id: 'custom-atk-1',
+        name: 'Embate con Escudo',
+        attackBonus: 5,
+        damageDice: '1d4+3',
+        damageType: 'Contundente',
+        notes: 'Empuja al objetivo 5 pies si falla Fue CD 13.',
+      },
+    ],
+  });
+
+  assert.equal(actions.length, 3);
+  const swordAction = actions.find((a) => a.actionName === 'Tajo Radiante');
+  assert.equal(swordAction?.description, 'Emite un destello solar que ilumina 30 pies y quema sombras.');
+
+  const amuletAction = actions.find((a) => a.actionName === 'Pulso Ígneo');
+  assert.equal(amuletAction?.description, 'Libera una onda de calor curativo alrededor del portador.');
+
+  const customAttackAction = actions.find((a) => a.actionName === 'Embate con Escudo');
+  assert.equal(customAttackAction?.description, 'Empuja al objetivo 5 pies si falla Fue CD 13.');
+});
+
+test('Player Skin helpers support up to 24 portraits, geometric clip paths, edge fading, and Tarot Front/Back placement', async () => {
+  const {
+    resolveMaxPortraitGalleryCount,
+    clampPortraitGallery,
+    getGeometricClipPath,
+    getEdgeFadeMaskCss,
+    resolvePortraitAspectRatioCss,
+    isTarotElementVisibleOnSide,
+  } = await import('./dnd-math.ts');
+  const {
+    resolvePlayerSheetLayout,
+    resolvePlayerMapLayout,
+    resolveDeckCardTemplate,
+    resolveTarotStudioConfig,
+  } = await import('./playerSkinLayout.ts');
+
+  // 1. Portrait count defaults to 4 and clamps between 1 and 24
+  assert.equal(resolveMaxPortraitGalleryCount(undefined), 4);
+  assert.equal(resolveMaxPortraitGalleryCount({ maxPortraitGalleryCount: 12 }), 12);
+  assert.equal(resolveMaxPortraitGalleryCount(99), 24);
+
+  const twentyPortraits = Array.from({ length: 20 }, (_, i) => `https://img.test/${i}.png`);
+  assert.equal(clampPortraitGallery(twentyPortraits, 4).length, 4);
+  assert.equal(clampPortraitGallery(twentyPortraits, 16).length, 16);
+
+  // 2. Geometric shapes & Edge Fade
+  assert.ok(getGeometricClipPath('hexagon')?.includes('polygon'));
+  assert.ok(getGeometricClipPath('triangle')?.includes('polygon'));
+  assert.equal(getGeometricClipPath('rounded'), undefined);
+  assert.ok(getEdgeFadeMaskCss(40)?.includes('radial-gradient'));
+  assert.equal(getEdgeFadeMaskCss(0), undefined);
+  assert.equal(resolvePortraitAspectRatioCss('9:16'), '9 / 16');
+
+  // 3. Tarot Front/Back visibility (both literal placement and element-key lookup)
+  assert.equal(isTarotElementVisibleOnSide('front', 'front'), true);
+  assert.equal(isTarotElementVisibleOnSide('front', 'back'), false);
+  assert.equal(isTarotElementVisibleOnSide('both', 'front'), true);
+  assert.equal(isTarotElementVisibleOnSide('both', 'back'), true);
+  assert.equal(isTarotElementVisibleOnSide('hidden', 'front'), false);
+
+  // 4. Layout & Tarot Studio resolvers
+  const sheetLayout = resolvePlayerSheetLayout({});
+  assert.equal(sheetLayout.blocksOrder.length, 9);
+  assert.equal(sheetLayout.length, 9);
+  assert.equal(sheetLayout.find((b) => b.id === 'identity_header')?.offsetX, 0);
+
+  const mapLayout = resolvePlayerMapLayout({});
+  assert.equal(mapLayout.blocksOrder.length, 8);
+  assert.equal(mapLayout.length, 8);
+
+  const combatTpl = resolveDeckCardTemplate({}, 'combat');
+  assert.equal(combatTpl.deckKind, 'combat');
+  assert.equal(combatTpl.borderColor, '#c8a45c');
+  assert.equal(combatTpl.label, 'Combates y Acciones');
+
+  const tarotCfg = resolveTarotStudioConfig({
+    tarotStudioConfig: {
+      hpPlacement: 'both',
+      frontHpStyle: 'classic_bar',
+      backHpStyle: 'alchemical_potion',
+    } as any,
+  });
+  assert.equal(tarotCfg.hpPlacement, 'both');
+  assert.equal(tarotCfg.frontHpStyle, 'classic_bar');
+  assert.equal(tarotCfg.backHpStyle, 'alchemical_potion');
+  assert.equal(isTarotElementVisibleOnSide('identity', 'front', tarotCfg.elementSides), true);
+  assert.equal(isTarotElementVisibleOnSide('combatStats', 'front', tarotCfg.elementSides), true);
+  assert.equal(isTarotElementVisibleOnSide('combatStats', 'back', tarotCfg.elementSides), false);
+});
 
 

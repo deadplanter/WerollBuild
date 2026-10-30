@@ -49,6 +49,10 @@ import {
   LobbyBlockLayoutConfig,
   LobbyInnerButtonConfig,
   LobbyPageLayoutConfig,
+  GeometricShapeType,
+  SkinModalPopupOverride,
+  SkinModalTargetId,
+  SpatialInnerElementConfig,
 } from '../../types/dnd';
 import { soundFx } from '../../utils/audio';
 import {
@@ -60,7 +64,12 @@ import {
   updateLobbyBlock,
   updateLobbyInnerButton,
 } from '../../utils/lobbyPageLayout';
+import { resolveModalPopupConfig } from '../../utils/playerSkinLayout';
 import { LobbyPageBuilderCanvas } from './LobbyPageBuilderCanvas';
+import { InteractivePopupBuilderCanvas } from './InteractivePopupBuilderCanvas';
+import { PlayerSkinFourApartadosEditor } from './PlayerSkinFourApartadosEditor';
+import { invalidateTarotSkinCache } from '../character/CharacterTarotCard';
+import { SAMPLE_CHARACTER } from '../../data/srd';
 
 interface VisualSkinDesignerStudioProps {
   skin: AppSkinRecord;
@@ -181,6 +190,7 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
   const [activeAppSection, setActiveAppSection] = useState<'global' | 'block' | 'popup'>('block');
   const [selectedLobbyBlockId, setSelectedLobbyBlockId] = useState<LobbyBlockId>('friends_box');
   const [selectedLobbyButtonId, setSelectedLobbyButtonId] = useState<string | null>(null);
+  const [selectedLobbyPopupInnerId, setSelectedLobbyPopupInnerId] = useState<string | null>(null);
 
   // Preview Sub-Mode (strictly isolated to the current scope!)
   const [playerPreviewMode, setPlayerPreviewMode] = useState<'sheet' | 'tarot' | 'map' | 'popup'>('sheet');
@@ -215,6 +225,16 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
       themeTokens: {
         ...(d.themeTokens || {}),
         [key]: val,
+      },
+    }));
+  };
+
+  const updateTokensBatch = (patch: Partial<AppSkinThemeTokens>) => {
+    setDraft((d) => ({
+      ...d,
+      themeTokens: {
+        ...(d.themeTokens || {}),
+        ...patch,
       },
     }));
   };
@@ -301,6 +321,74 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
     });
   };
 
+  const activeLobbyPopupOverride: SkinModalPopupOverride = resolveModalPopupConfig(
+    t,
+    (activePopupId as SkinModalTargetId) || 'modal_friend_chat'
+  );
+
+  const handleUpdateLobbyPopupConfig = (patch: Partial<SkinModalPopupOverride>) => {
+    const targetId = (activePopupId as SkinModalTargetId) || 'modal_friend_chat';
+    const nextCfg: SkinModalPopupOverride = {
+      ...activeLobbyPopupOverride,
+      ...patch,
+    };
+    updateTokensBatch({
+      modalPopupOverrides: {
+        ...(t.modalPopupOverrides || {}),
+        [targetId]: nextCfg,
+      },
+      popupConfigs: {
+        ...(t.popupConfigs || {}),
+        [targetId]: {
+          ...currentPopupConfig,
+          geometry: {
+            ...(currentPopupConfig.geometry || {}),
+            borderRadius: nextCfg.borderRadiusPx ?? currentPopupConfig.geometry?.borderRadius ?? 18,
+            opacity: Math.round((nextCfg.boxBgOpacity ?? 0.96) * 100),
+          },
+          visuals: {
+            ...(currentPopupConfig.visuals || {}),
+            bgColor: nextCfg.bgColor || currentPopupConfig.visuals?.bgColor || '#141722',
+            borderColor: nextCfg.borderColor || currentPopupConfig.visuals?.borderColor || '#c8a45c',
+            customFramePngUrl:
+              nextCfg.customBgPngUrl ?? currentPopupConfig.visuals?.customFramePngUrl,
+          },
+          typography: {
+            ...(currentPopupConfig.typography || {}),
+            titleColor: nextCfg.headerTextColor || currentPopupConfig.typography?.titleColor || '#f5e4be',
+          },
+        },
+      },
+    });
+  };
+
+  const handleUpdateLobbyPopupInner = (
+    innerId: string,
+    patch: Partial<SpatialInnerElementConfig>
+  ) => {
+    const existing = activeLobbyPopupOverride.innerElementsConfig?.[innerId] || {
+      id: innerId,
+      label: innerId,
+      x: 0,
+      y: 0,
+      widthPx: 0,
+      heightPx: 0,
+      scale: 1,
+      opacity: 1,
+      bgOpacity: 0.92,
+      visible: true,
+    };
+    handleUpdateLobbyPopupConfig({
+      innerElementsConfig: {
+        ...(activeLobbyPopupOverride.innerElementsConfig || {}),
+        [innerId]: {
+          ...existing,
+          ...patch,
+        },
+      },
+    });
+  };
+
   // Auto-save debounce (500ms) to local storage draft backup
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -317,6 +405,7 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
     setIsSaving(true);
     try {
       await onSave({ ...draft, scope, target: scope, updatedAt: Date.now() });
+      invalidateTarotSkinCache();
       setSaveToast('💾 ¡Skin guardada y sincronizada en la nube!');
       setTimeout(() => setSaveToast(''), 4000);
     } catch {
@@ -625,11 +714,17 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
       </header>
 
       {/* =================================================================== */}
-      {/* 3-COLUMN STUDIO BODY:                                               */}
-      {/* 1) Left: Hierarchical Component Layer Tree (Strictly Scoped)        */}
-      {/* 2) Center: Deep Property Inspector for Selected Layer               */}
-      {/* 3) Right: Interactive Live Sandbox & Click-to-Inspect Canvas        */}
+      {/* PLAYER SKIN STUDIO: 4 APARTADOS INTERACTIVOS (COMO EL LOBBY)        */}
       {/* =================================================================== */}
+      {scope === 'player' ? (
+        <PlayerSkinFourApartadosEditor
+          draft={draft}
+          tokens={t}
+          sampleCharacter={SAMPLE_CHARACTER}
+          updateToken={updateToken}
+          updateTokensBatch={updateTokensBatch}
+        />
+      ) : (
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
         {/* ================================================================= */}
         {/* COLUMN 1: HIERARCHICAL COMPONENT TREE (3 cols)                    */}
@@ -965,10 +1060,10 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                   : selectedLobbyButtonId
                   ? `Botón: ${selectedLobbyButtonId}`
                   : selectedLobbyBlockId
-                  ? `Caja: ${lobbyBlockDefinitions.find((b) => b.id === selectedLobbyBlockId)?.label || selectedLobbyBlockId}`
-                  : activeAppSection === 'canvas'
+                  ? `Caja: ${lobbyLayout.blocks[selectedLobbyBlockId]?.name || selectedLobbyBlockId}`
+                  : activeAppSection === 'global'
                   ? 'Lienzo Global'
-                  : 'Pop-ups'}
+                  : 'Cajas y Pop-ups'}
                 )
               </span>
             </span>
@@ -1004,28 +1099,54 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-stone-300 mb-1">
-                    Textura / Imagen de Fondo Exterior (PNG o JPG URL):
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-stone-300">
+                      Textura / Imagen de Fondo Exterior (PNG o JPG):
+                    </label>
+                    <button
+                      type="button"
+                      data-testid="btn-upload-player-bg-png"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) => updateToken('sheetBgTextureUrl', dataUrl))
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir Archivo PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.sheetBgTextureUrl || ''}
                     onChange={(e) => updateToken('sheetBgTextureUrl', e.target.value)}
-                    placeholder="https://.../pergamino-oscuro.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-amber-300 mb-1">
-                    Marco PNG Transparente para la Plantilla Base (URL):
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-amber-300">
+                      Marco PNG Transparente para la Plantilla Base:
+                    </label>
+                    <button
+                      type="button"
+                      data-testid="btn-upload-player-frame-png"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('sheetBaseFrameCustomPngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir Archivo PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.sheetBaseFrameCustomPngUrl || ''}
                     onChange={(e) => updateToken('sheetBaseFrameCustomPngUrl', e.target.value)}
-                    placeholder="https://.../marco-hoja-completo.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
@@ -1128,15 +1249,28 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-amber-300 mb-1">
-                    Marco PNG del Retrato (ej. Engranajes Steampunk, Marco Glitch):
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-amber-300">
+                      Marco PNG del Retrato (ej. Engranajes Steampunk, Marco Glitch):
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('sheetPortraitFramePngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.sheetPortraitFramePngUrl || ''}
                     onChange={(e) => updateToken('sheetPortraitFramePngUrl', e.target.value)}
-                    placeholder="https://.../marco-retrato-steampunk.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
@@ -1203,15 +1337,28 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-amber-300 mb-1">
-                    PNG Global para Todas las Cajas de Stats:
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-amber-300">
+                      PNG Global para Todas las Cajas de Stats:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('sheetStatBoxCustomPngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.sheetStatBoxCustomPngUrl || ''}
                     onChange={(e) => updateToken('sheetStatBoxCustomPngUrl', e.target.value)}
-                    placeholder="https://.../caja-stat-global.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
@@ -1286,28 +1433,54 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-stone-300 mb-1">
-                    PNG Marco Exterior de la Barra de Vida:
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-stone-300">
+                      PNG Marco Exterior de la Barra de Vida:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('sheetHpBarCustomFramePngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.sheetHpBarCustomFramePngUrl || ''}
                     onChange={(e) => updateToken('sheetHpBarCustomFramePngUrl', e.target.value)}
-                    placeholder="https://.../marco-barra-vida.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-stone-300 mb-1">
-                    PNG Textura de Relleno Interior de Vida:
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-stone-300">
+                      PNG Textura de Relleno Interior de Vida:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('sheetHpBarCustomFillPngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.sheetHpBarCustomFillPngUrl || ''}
                     onChange={(e) => updateToken('sheetHpBarCustomFillPngUrl', e.target.value)}
-                    placeholder="https://.../textura-liquido-vida.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
@@ -1353,41 +1526,80 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-amber-300 mb-1">
-                    PNG Icono de Mochila (ej. Cofre, Alforja, Caja Táctica):
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-amber-300">
+                      PNG Icono de Mochila (ej. Cofre, Alforja, Caja Táctica):
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('sheetBackpackCustomPngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.sheetBackpackCustomPngUrl || ''}
                     onChange={(e) => updateToken('sheetBackpackCustomPngUrl', e.target.value)}
-                    placeholder="https://.../cofre-tesoro.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-amber-300 mb-1">
-                    PNG Icono de Diario (ej. Tableta Sci-Fi, Grimorio, Pergamino):
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-amber-300">
+                      PNG Icono de Diario (ej. Tableta Sci-Fi, Grimorio, Pergamino):
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('sheetJournalCustomPngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.sheetJournalCustomPngUrl || ''}
                     onChange={(e) => updateToken('sheetJournalCustomPngUrl', e.target.value)}
-                    placeholder="https://.../tablet-holografica.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-amber-300 mb-1">
-                    PNG Icono de Bolsa de Monedas:
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-amber-300">
+                      PNG Icono de Bolsa de Monedas:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('sheetCoinPouchCustomPngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.sheetCoinPouchCustomPngUrl || ''}
                     onChange={(e) => updateToken('sheetCoinPouchCustomPngUrl', e.target.value)}
-                    placeholder="https://.../bolsa-oro.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
@@ -1469,15 +1681,28 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-amber-300 mb-1">
-                    Marco PNG para las Cartas del Mazo:
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-amber-300">
+                      Marco PNG para las Cartas del Mazo:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('deckCardCustomPngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.deckCardCustomPngUrl || ''}
                     onChange={(e) => updateToken('deckCardCustomPngUrl', e.target.value)}
-                    placeholder="https://.../marco-carta-accion.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
@@ -1519,28 +1744,54 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-amber-300 mb-1">
-                    PNG Marco Frontal de la Carta Tarot:
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-amber-300">
+                      PNG Marco Frontal de la Carta Tarot:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('tarotCardCustomFramePngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.tarotCardCustomFramePngUrl || ''}
                     onChange={(e) => updateToken('tarotCardCustomFramePngUrl', e.target.value)}
-                    placeholder="https://.../tarot-front-frame.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-purple-300 mb-1">
-                    PNG Reverso de la Carta Tarot (Al girar en 3D):
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-purple-300">
+                      PNG Reverso de la Carta Tarot (Al girar en 3D):
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('tarotCardBackCustomPngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={t.tarotCardBackCustomPngUrl || ''}
                     onChange={(e) => updateToken('tarotCardBackCustomPngUrl', e.target.value)}
-                    placeholder="https://.../tarot-card-back.png"
+                    placeholder="Sube un archivo PNG o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-purple-500/50 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
@@ -1944,7 +2195,7 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
             {/* ============================================================= */}
             {/* DM SCOPE INSPECTOR (DM-0 to DM-9)                             */}
             {/* ============================================================= */}
-            {scope === 'dm' && activeDmLayer === 'DM-0' && (
+                {scope === 'dm' && activeDmLayer === 'DM-0' && (
               <div className="space-y-4">
                 <h4 className="font-cinzel font-bold text-red-300 text-sm">
                   Capa DM-0: Fondo y Plantilla de la Pantalla del DM
@@ -1969,15 +2220,30 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                     />
                   </div>
                 </div>
-                <div>
-                  <label className="block text-[11px] text-stone-300 mb-1">
-                    Textura de Fondo de Pantalla del DM (URL):
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-stone-300">
+                      Textura / Archivo PNG de Fondo de la Hoja del DM:
+                    </label>
+                    <button
+                      type="button"
+                      data-testid="btn-upload-dm-bg-png"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('dmScreenCustomBgTextureUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir Archivo PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
+                    data-testid="input-dm-bg-png-url"
                     value={t.dmScreenCustomBgTextureUrl || ''}
                     onChange={(e) => updateToken('dmScreenCustomBgTextureUrl', e.target.value)}
-                    placeholder="https://.../trono-obsidiana.png"
+                    placeholder="Sube un archivo PNG/imagen o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
@@ -2020,15 +2286,30 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
                 <p className="text-[11px] text-stone-400">
                   Este estandarte se muestra a todos los jugadores en el lobby y en la parte inferior del mapa táctico.
                 </p>
-                <div>
-                  <label className="block text-[11px] text-amber-300 mb-1">
-                    PNG Estandarte / Capucha del DM (URL):
-                  </label>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] text-amber-300">
+                      PNG Estandarte / Capucha del DM (Subir Archivo o URL):
+                    </label>
+                    <button
+                      type="button"
+                      data-testid="btn-upload-dm-hood-png"
+                      onClick={() =>
+                        uploadLocalImageFile((dataUrl) =>
+                          updateToken('dmScreenHoodCustomPngUrl', dataUrl)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Upload className="w-3 h-3" /> Subir Archivo PNG
+                    </button>
+                  </div>
                   <input
                     type="text"
+                    data-testid="input-dm-hood-png-url"
                     value={t.dmScreenHoodCustomPngUrl || ''}
                     onChange={(e) => updateToken('dmScreenHoodCustomPngUrl', e.target.value)}
-                    placeholder="https://.../estandarte-dm.png"
+                    placeholder="Sube un archivo PNG/imagen o pega URL (https://...)"
                     className="w-full bg-[#0b0d14] border border-stone-700 rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                 </div>
@@ -3413,28 +3694,337 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
             {scope === 'app' && activeAppSection === 'popup' && (
               <div className="space-y-4">
                 <h4 className="font-cinzel font-bold text-purple-300 text-sm">
-                  8. Ventanas Emergentes y Modales del Lobby
+                  8. Ventanas Emergentes y Modales 1:1 del Lobby (4 Pop-ups)
                 </h4>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] text-stone-300 mb-1">Fondo del Modal:</label>
-                    <input
-                      type="color"
-                      value={currentPopupConfig.visuals?.bgColor || '#141722'}
-                      onChange={(e) => updatePopupConfig({ visuals: { bgColor: e.target.value } })}
-                      className="w-full h-8 rounded bg-transparent border border-stone-700"
-                    />
+                <p className="text-[11px] text-stone-400">
+                  Elige un pop-up y arrastra o redimensiona cualquiera de sus piezas directamente en el lienzo interactivo 1:1:
+                </p>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { id: 'modal_forum_create', label: '1. Crear en el Foro', sub: 'Nueva Publicación' },
+                    { id: 'modal_friend_chat', label: '2. Mensajes de Amigos', sub: 'Chat Usuario Uno ↔ Dos' },
+                    { id: 'modal_account_settings', label: '3. Ajustes de Cuenta', sub: 'Perfil y Avatar' },
+                    { id: 'modal_join_room', label: '4. Unirse a Sala', sub: 'Código de Campaña' },
+                  ].map((pop) => (
+                    <button
+                      key={pop.id}
+                      type="button"
+                      data-testid={`lobby-popup-select-${pop.id}`}
+                      onClick={() => {
+                        setActivePopupId(pop.id);
+                        setSelectedLobbyPopupInnerId(null);
+                        setAppPreviewMode('popup');
+                      }}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        activePopupId === pop.id
+                          ? 'bg-purple-950/70 border-purple-400 text-purple-100 shadow-md'
+                          : 'bg-[#131620] border-stone-800 text-stone-300 hover:border-stone-700'
+                      }`}
+                    >
+                      <div className="font-cinzel font-bold text-[11px]">{pop.label}</div>
+                      <div className="text-[9px] text-stone-400">{pop.sub}</div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Inner Elements Selector Pills for the Active Lobby Pop-up */}
+                <div className="p-2.5 rounded-xl bg-stone-950/80 border border-stone-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-cinzel font-bold text-amber-300 uppercase">
+                      Piezas Internas Arrastrables del Pop-up
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLobbyPopupInnerId(null)}
+                      className={`px-2 py-0.5 rounded text-[9px] font-bold cursor-pointer ${
+                        !selectedLobbyPopupInnerId
+                          ? 'bg-purple-500 text-white'
+                          : 'bg-stone-800 text-stone-300'
+                      }`}
+                    >
+                      Marco Ventana
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-[11px] text-stone-300 mb-1">Borde del Modal:</label>
-                    <input
-                      type="color"
-                      value={currentPopupConfig.visuals?.borderColor || '#c8a45c'}
-                      onChange={(e) => updatePopupConfig({ visuals: { borderColor: e.target.value } })}
-                      className="w-full h-8 rounded bg-transparent border border-stone-700"
-                    />
+                  <div className="flex flex-wrap gap-1">
+                    {(activeLobbyPopupOverride.innerElementsOrder || []).map((elId) => {
+                      const el = activeLobbyPopupOverride.innerElementsConfig?.[elId];
+                      if (!el) return null;
+                      const isSel = selectedLobbyPopupInnerId === elId;
+                      return (
+                        <button
+                          key={elId}
+                          type="button"
+                          data-testid={`lobby-popup-inner-pill-${elId}`}
+                          onClick={() => setSelectedLobbyPopupInnerId(elId)}
+                          className={`px-2 py-1 rounded-lg text-[10px] border transition cursor-pointer ${
+                            isSel
+                              ? 'bg-cyan-950 border-cyan-400 text-cyan-100 font-bold'
+                              : 'bg-stone-900 border-stone-800 text-stone-300 hover:bg-stone-800'
+                          }`}
+                        >
+                          {el.label || elId}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
+
+                {/* Inspector for Selected Inner Piece OR Popup Window Frame */}
+                {selectedLobbyPopupInnerId &&
+                activeLobbyPopupOverride.innerElementsConfig?.[selectedLobbyPopupInnerId] ? (
+                  (() => {
+                    const el =
+                      activeLobbyPopupOverride.innerElementsConfig![selectedLobbyPopupInnerId];
+                    return (
+                      <div className="p-3 rounded-xl bg-stone-900/90 border border-cyan-500/40 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-cinzel font-bold text-cyan-300 uppercase">
+                            Editando Pieza: {el.label || el.id}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleUpdateLobbyPopupInner(el.id, {
+                                x: 0,
+                                y: 0,
+                                widthPx: 0,
+                                heightPx: 0,
+                              })
+                            }
+                            className="text-[9px] text-amber-300 hover:underline"
+                          >
+                            Reset Pos/Tam
+                          </button>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] text-stone-300 mb-1">
+                            Texto / Etiqueta Editable:
+                          </label>
+                          <input
+                            type="text"
+                            value={el.label || ''}
+                            onChange={(e) =>
+                              handleUpdateLobbyPopupInner(el.id, { label: e.target.value })
+                            }
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-[#0b0d14] border border-stone-700 text-xs text-white"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] text-stone-300 mb-1">
+                              Figura Geométrica:
+                            </label>
+                            <select
+                              value={el.shape || 'rounded'}
+                              onChange={(e) =>
+                                handleUpdateLobbyPopupInner(el.id, {
+                                  shape: e.target.value as GeometricShapeType,
+                                })
+                              }
+                              className="w-full px-2 py-1.5 rounded-lg bg-[#0b0d14] border border-stone-700 text-[11px] text-white"
+                            >
+                              <option value="rounded">Redondeado</option>
+                              <option value="square">Cuadrado Recto</option>
+                              <option value="circle">Círculo / Píldora</option>
+                              <option value="hexagon">Hexágono</option>
+                              <option value="octagon">Octágono</option>
+                              <option value="diamond">Rombo / Diamante</option>
+                              <option value="pentagon">Pentágono</option>
+                              <option value="triangle">Triángulo</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-stone-300 mb-1">
+                              Opacidad Fondo ({Math.round((el.bgOpacity ?? 0.92) * 100)}%)
+                            </label>
+                            <input
+                              type="range"
+                              min={0}
+                              max={1}
+                              step={0.05}
+                              value={el.bgOpacity ?? 0.92}
+                              onChange={(e) =>
+                                handleUpdateLobbyPopupInner(el.id, {
+                                  bgOpacity: parseFloat(e.target.value),
+                                })
+                              }
+                              className="w-full accent-cyan-400"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-[9px] text-stone-400 mb-1">Fondo:</label>
+                            <input
+                              type="color"
+                              value={el.bgColor || '#151924'}
+                              onChange={(e) =>
+                                handleUpdateLobbyPopupInner(el.id, { bgColor: e.target.value })
+                              }
+                              className="w-full h-7 rounded bg-stone-950 border border-stone-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-stone-400 mb-1">Borde:</label>
+                            <input
+                              type="color"
+                              value={el.borderColor || '#c8a45c'}
+                              onChange={(e) =>
+                                handleUpdateLobbyPopupInner(el.id, { borderColor: e.target.value })
+                              }
+                              className="w-full h-7 rounded bg-stone-950 border border-stone-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-stone-400 mb-1">Texto:</label>
+                            <input
+                              type="color"
+                              value={el.textColor || '#f5e4be'}
+                              onChange={(e) =>
+                                handleUpdateLobbyPopupInner(el.id, { textColor: e.target.value })
+                              }
+                              className="w-full h-7 rounded bg-stone-950 border border-stone-700"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-stone-300">PNG / Textura de esta Pieza:</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                uploadLocalImageFile((dataUrl) =>
+                                  handleUpdateLobbyPopupInner(el.id, { bgImageUrl: dataUrl })
+                                )
+                              }
+                              className="px-2 py-0.5 rounded bg-cyan-500/20 border border-cyan-500/40 text-cyan-200 text-[10px] font-bold"
+                            >
+                              Subir PNG
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            value={el.bgImageUrl || ''}
+                            onChange={(e) =>
+                              handleUpdateLobbyPopupInner(el.id, { bgImageUrl: e.target.value })
+                            }
+                            placeholder="https://... o sube archivo PNG"
+                            className="w-full bg-[#0b0d14] border border-stone-700 rounded-lg px-2 py-1 text-[10px] font-mono"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <div className="p-3 rounded-xl bg-stone-900/80 border border-stone-800 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-stone-300 mb-1">Fondo del Modal:</label>
+                        <input
+                          type="color"
+                          value={activeLobbyPopupOverride.bgColor || '#141722'}
+                          onChange={(e) =>
+                            handleUpdateLobbyPopupConfig({ bgColor: e.target.value })
+                          }
+                          className="w-full h-8 rounded bg-transparent border border-stone-700 cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-stone-300 mb-1">Borde del Modal:</label>
+                        <input
+                          type="color"
+                          value={activeLobbyPopupOverride.borderColor || '#c8a45c'}
+                          onChange={(e) =>
+                            handleUpdateLobbyPopupConfig({ borderColor: e.target.value })
+                          }
+                          className="w-full h-8 rounded bg-transparent border border-stone-700 cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-stone-300 mb-1">Figura Ventana:</label>
+                        <select
+                          value={activeLobbyPopupOverride.shape || 'rounded'}
+                          onChange={(e) =>
+                            handleUpdateLobbyPopupConfig({
+                              shape: e.target.value as GeometricShapeType,
+                            })
+                          }
+                          className="w-full px-2 py-1.5 rounded bg-[#0b0d14] border border-stone-700 text-[11px] text-white"
+                        >
+                          <option value="rounded">Redondeado</option>
+                          <option value="square">Cuadrado Recto</option>
+                          <option value="hexagon">Hexágono</option>
+                          <option value="octagon">Octágono</option>
+                          <option value="diamond">Rombo</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-stone-300 mb-1">Color Título:</label>
+                        <input
+                          type="color"
+                          value={activeLobbyPopupOverride.headerTextColor || '#f5e4be'}
+                          onChange={(e) =>
+                            handleUpdateLobbyPopupConfig({ headerTextColor: e.target.value })
+                          }
+                          className="w-full h-8 rounded bg-transparent border border-stone-700 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[10px] text-stone-300 mb-1">
+                        <span>Opacidad del Marco de Ventana</span>
+                        <span className="font-mono text-purple-300">
+                          {Math.round((activeLobbyPopupOverride.boxBgOpacity ?? 0.96) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={activeLobbyPopupOverride.boxBgOpacity ?? 0.96}
+                        onChange={(e) =>
+                          handleUpdateLobbyPopupConfig({
+                            boxBgOpacity: parseFloat(e.target.value),
+                          })
+                        }
+                        className="w-full accent-purple-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-stone-300">Imagen / Marco PNG de Fondo:</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            uploadLocalImageFile((dataUrl) =>
+                              handleUpdateLobbyPopupConfig({ customBgPngUrl: dataUrl })
+                            )
+                          }
+                          className="px-2 py-1 rounded bg-purple-500/20 border border-purple-500/40 text-purple-200 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Upload className="w-3 h-3" /> Subir PNG
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={activeLobbyPopupOverride.customBgPngUrl || ''}
+                        onChange={(e) =>
+                          handleUpdateLobbyPopupConfig({ customBgPngUrl: e.target.value })
+                        }
+                        placeholder="https://.../modal-bg.png"
+                        className="w-full bg-[#0b0d14] border border-stone-700 rounded-lg px-2 py-1 text-[10px] font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -4077,44 +4667,67 @@ export const VisualSkinDesignerStudio: React.FC<VisualSkinDesignerStudioProps> =
             )}
 
             {/* ============================================================= */}
-            {/* 6. UNIVERSAL POP-UP / MODAL LIVE PREVIEW                      */}
+            {/* 6. UNIVERSAL POP-UP / MODAL LIVE INTERACTIVE BUILDER          */}
             {/* ============================================================= */}
+            {scope === 'app' && appPreviewMode === 'popup' && (
+              <div className="w-full max-w-3xl">
+                <InteractivePopupBuilderCanvas
+                  modalId={(activePopupId as SkinModalTargetId) || 'modal_friend_chat'}
+                  modalTitle={
+                    activePopupId === 'modal_forum_create'
+                      ? 'Crear Publicación en el Foro'
+                      : activePopupId === 'modal_friend_chat'
+                      ? 'Mensajes de Amigos (Usuario Uno ↔ Usuario Dos)'
+                      : activePopupId === 'modal_account_settings'
+                      ? 'Ajustes de Cuenta y Perfil'
+                      : 'Unirse a Sala de Campaña'
+                  }
+                  config={activeLobbyPopupOverride}
+                  selectedInnerId={selectedLobbyPopupInnerId}
+                  onSelectInnerId={setSelectedLobbyPopupInnerId}
+                  onUpdateModalConfig={handleUpdateLobbyPopupConfig}
+                  onUpdateInnerElement={handleUpdateLobbyPopupInner}
+                />
+              </div>
+            )}
+
             {((scope === 'player' && playerPreviewMode === 'popup') ||
-              (scope === 'dm' && dmPreviewMode === 'popup') ||
-              (scope === 'app' && appPreviewMode === 'popup')) && (
+              (scope === 'dm' && dmPreviewMode === 'popup')) && (
               <div
                 style={{
                   backgroundColor: currentPopupConfig.visuals?.bgColor || '#141722',
                   borderColor: currentPopupConfig.visuals?.borderColor || '#c8a45c',
                   borderRadius: `${currentPopupConfig.geometry?.borderRadius ?? 18}px`,
+                  opacity: (currentPopupConfig.geometry?.opacity ?? 98) / 100,
+                  backgroundImage: currentPopupConfig.visuals?.customFramePngUrl
+                    ? `url("${currentPopupConfig.visuals.customFramePngUrl}")`
+                    : undefined,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
                 }}
-                className="w-full max-w-md border-2 p-4 space-y-3 shadow-2xl animate-fadeIn"
+                className="w-full max-w-md border-2 p-5 space-y-3 shadow-2xl animate-fadeIn"
               >
                 <div className="flex items-center justify-between pb-2 border-b border-stone-800">
-                  <h4 className="font-cinzel font-black text-sm text-[#f5e4be] uppercase">
-                    Vista Previa del Pop-up ({activePopupId})
+                  <h4
+                    style={{ color: currentPopupConfig.typography?.titleColor || '#f5e4be' }}
+                    className="font-cinzel font-black text-sm uppercase"
+                  >
+                    Vista Previa ({activePopupId})
                   </h4>
-                  <span className="text-[10px] font-mono text-amber-300">100% Skinneable</span>
+                  <span className="text-[10px] font-mono text-amber-300">Pop-up</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="p-2 rounded-lg bg-black/40 border border-stone-800 text-center text-[11px] text-amber-200">
-                    Carpeta Armas
-                  </div>
-                  <div className="p-2 rounded-lg bg-black/40 border border-stone-800 text-center text-[11px] text-cyan-200">
-                    Carpeta Pociones
-                  </div>
-                  <div className="p-2 rounded-lg bg-black/40 border border-stone-800 text-center text-[11px] text-yellow-300">
-                    🪙 250 PO
-                  </div>
-                </div>
-                <p className="text-xs text-stone-300">
-                  Cada botón que abre una ventana adapta sus colores, bordes, marcos PNG y sonido de apertura según tu configuración.
+                <p
+                  style={{ color: currentPopupConfig.typography?.bodyColor || '#e7e5e4' }}
+                  className="text-xs"
+                >
+                  Cada ventana emergente adapta sus colores, bordes, marcos PNG y opacidad según tu diseño.
                 </p>
               </div>
             )}
           </div>
         </main>
       </div>
+      )}
     </div>
   );
 };

@@ -294,47 +294,18 @@ export function getSpanishAbilityLabel(ability: string): string {
 }
 
 export type InventoryMainGroup = 'Armas' | 'Armaduras' | 'Objetos comunes';
+export type PlayerSheetItemCategory = 'Arma' | 'Armadura' | 'Objeto Común';
 
-export function classifyInventoryItemGroup(
-  categoryOrItem?: string | { itemGroup?: string; category?: string; name?: string } | null
-): InventoryMainGroup {
-  if (typeof categoryOrItem === 'object' && categoryOrItem !== null) {
-    const grp = (categoryOrItem.itemGroup || '').toLowerCase();
-    if (grp === 'weapon' || grp === 'armas' || grp === 'arma') return 'Armas';
-    if (grp === 'armor' || grp === 'armaduras' || grp === 'armadura') return 'Armaduras';
-    if (grp === 'common' || grp === 'objetos comunes') return 'Objetos comunes';
-    const combined = `${categoryOrItem.category || ''} ${categoryOrItem.name || ''}`.trim().toLowerCase();
-    if (
-      combined === 'arma' ||
-      combined.startsWith('arma ') ||
-      combined.startsWith('arma(') ||
-      combined.includes('espada') ||
-      combined.includes('arco') ||
-      combined.includes('daga') ||
-      combined.includes('hacha') ||
-      combined.includes('maza') ||
-      combined.includes('lanza') ||
-      combined.includes('ballesta') ||
-      combined.includes('martillo') ||
-      combined.includes('bastón')
-    ) {
-      return 'Armas';
-    }
-    if (
-      combined === 'armadura' ||
-      combined.startsWith('armadura') ||
-      combined.includes('escudo') ||
-      combined.includes('cota') ||
-      combined.includes('cuero tachonado') ||
-      combined.includes('placas')
-    ) {
-      return 'Armaduras';
-    }
-    return 'Objetos comunes';
-  }
+export const PLAYER_SHEET_ITEM_CATEGORIES: readonly PlayerSheetItemCategory[] = [
+  'Arma',
+  'Armadura',
+  'Objeto Común',
+] as const;
 
-  const norm = String(categoryOrItem || '').trim().toLowerCase();
-  if (
+function matchesWeaponKeywords(text: string): boolean {
+  const norm = text.trim().toLowerCase();
+  if (!norm) return false;
+  return (
     norm === 'weapon' ||
     norm === 'arma' ||
     norm === 'armas' ||
@@ -344,31 +315,109 @@ export function classifyInventoryItemGroup(
     norm.includes('arco') ||
     norm.includes('daga') ||
     norm.includes('hacha') ||
-    norm.includes('ballesta')
-  ) {
-    return 'Armas';
-  }
-  if (
+    norm.includes('maza') ||
+    norm.includes('lanza') ||
+    norm.includes('ballesta') ||
+    norm.includes('martillo') ||
+    norm.includes('bastón') ||
+    norm.includes('mandoble') ||
+    norm.includes('estoque')
+  );
+}
+
+function matchesArmorKeywords(text: string): boolean {
+  const norm = text.trim().toLowerCase();
+  if (!norm) return false;
+  return (
     norm === 'armor' ||
     norm === 'armadura' ||
     norm === 'armaduras' ||
     norm.startsWith('armadura') ||
     norm.includes('escudo') ||
-    norm.includes('cota')
-  ) {
-    return 'Armaduras';
+    norm.includes('cota') ||
+    norm.includes('cuero tachonado') ||
+    norm.includes('placas')
+  );
+}
+
+export function normalizePlayerSheetItemCategory(
+  categoryOrItem?: string | { itemGroup?: string; category?: string; name?: string } | null
+): {
+  category: PlayerSheetItemCategory;
+  itemGroup: 'weapon' | 'armor' | 'common';
+  mainGroup: InventoryMainGroup;
+} {
+  if (typeof categoryOrItem === 'object' && categoryOrItem !== null) {
+    const rawCat = String(categoryOrItem.category || '').trim();
+    const normCat = rawCat.toLowerCase();
+    const grp = String(categoryOrItem.itemGroup || '').trim().toLowerCase();
+
+    // If category was explicitly set to a custom/random value (e.g. "escamas de dragon") that is NOT a weapon or armor,
+    // treat it as Objeto Común even if itemGroup defaulted to 'weapon' in the form!
+    if (normCat) {
+      if (matchesArmorKeywords(normCat)) {
+        return { category: 'Armadura', itemGroup: 'armor', mainGroup: 'Armaduras' };
+      }
+      if (matchesWeaponKeywords(normCat)) {
+        return { category: 'Arma', itemGroup: 'weapon', mainGroup: 'Armas' };
+      }
+      if (
+        normCat === 'objeto común' ||
+        normCat === 'objeto comun' ||
+        normCat === 'objetos comunes' ||
+        normCat === 'common' ||
+        normCat === 'objeto'
+      ) {
+        return { category: 'Objeto Común', itemGroup: 'common', mainGroup: 'Objetos comunes' };
+      }
+      // Custom non-weapon, non-armor category (like "escamas de dragon", "tesoro", "poción") -> always Objeto Común
+      if (!matchesWeaponKeywords(String(categoryOrItem.name || '')) && !matchesArmorKeywords(String(categoryOrItem.name || ''))) {
+        return { category: 'Objeto Común', itemGroup: 'common', mainGroup: 'Objetos comunes' };
+      }
+    }
+
+    if (grp === 'weapon' || grp === 'armas' || grp === 'arma') {
+      return { category: 'Arma', itemGroup: 'weapon', mainGroup: 'Armas' };
+    }
+    if (grp === 'armor' || grp === 'armaduras' || grp === 'armadura') {
+      return { category: 'Armadura', itemGroup: 'armor', mainGroup: 'Armaduras' };
+    }
+    if (grp === 'common' || grp === 'objetos comunes') {
+      return { category: 'Objeto Común', itemGroup: 'common', mainGroup: 'Objetos comunes' };
+    }
+
+    const combined = `${categoryOrItem.category || ''} ${categoryOrItem.name || ''}`.trim().toLowerCase();
+    if (matchesArmorKeywords(combined)) {
+      return { category: 'Armadura', itemGroup: 'armor', mainGroup: 'Armaduras' };
+    }
+    if (matchesWeaponKeywords(combined)) {
+      return { category: 'Arma', itemGroup: 'weapon', mainGroup: 'Armas' };
+    }
+    return { category: 'Objeto Común', itemGroup: 'common', mainGroup: 'Objetos comunes' };
   }
-  return 'Objetos comunes';
+
+  const norm = String(categoryOrItem || '').trim().toLowerCase();
+  if (matchesArmorKeywords(norm)) {
+    return { category: 'Armadura', itemGroup: 'armor', mainGroup: 'Armaduras' };
+  }
+  if (matchesWeaponKeywords(norm)) {
+    return { category: 'Arma', itemGroup: 'weapon', mainGroup: 'Armas' };
+  }
+  return { category: 'Objeto Común', itemGroup: 'common', mainGroup: 'Objetos comunes' };
+}
+
+export function classifyInventoryItemGroup(
+  categoryOrItem?: string | { itemGroup?: string; category?: string; name?: string } | null
+): InventoryMainGroup {
+  return normalizePlayerSheetItemCategory(categoryOrItem).mainGroup;
 }
 
 export function classifyInventoryItemKey(
   categoryOrItem?: string | { itemGroup?: string; category?: string; name?: string } | null
 ): 'weapon' | 'armor' | 'common' {
-  const group = classifyInventoryItemGroup(categoryOrItem);
-  if (group === 'Armas') return 'weapon';
-  if (group === 'Armaduras') return 'armor';
-  return 'common';
+  return normalizePlayerSheetItemCategory(categoryOrItem).itemGroup;
 }
+
 
 export function formatWeaponAttackFormula(dice: string, bonus: number): string {
   const cleanDice = String(dice || '1d6').trim().replace(/\s+/g, '');
@@ -690,6 +739,17 @@ export function deriveAllCharacterActions(
             imageUrl?: string;
           }[];
         }[];
+        attacks?: {
+          id: string;
+          name: string;
+          type?: 'melee' | 'ranged' | 'spell';
+          attackBonus?: number;
+          damageDice?: string;
+          damageType?: string;
+          notes?: string;
+          description?: string;
+          imageUrl?: string;
+        }[];
         strScore?: number;
         dexScore?: number;
         profBonus?: number;
@@ -704,6 +764,7 @@ export function deriveAllCharacterActions(
   let inventory: any[] = [];
   let spells: any[] = [];
   let features: any[] = [];
+  let attacks: any[] = [];
   let strScore = 10;
   let dexScore = 10;
   let profBonus = 2;
@@ -719,6 +780,7 @@ export function deriveAllCharacterActions(
     inventory = paramsOrInventory.inventory || [];
     spells = paramsOrInventory.spells || [];
     features = paramsOrInventory.features || [];
+    attacks = paramsOrInventory.attacks || [];
     strScore = paramsOrInventory.strScore ?? 10;
     dexScore = paramsOrInventory.dexScore ?? 10;
     profBonus = paramsOrInventory.profBonus ?? 2;
@@ -844,6 +906,39 @@ export function deriveAllCharacterActions(
           isSpecialAction: true,
           imageUrl: act.imageUrl || feat.imageUrl,
         });
+      });
+    }
+  }
+
+  // 5. Custom Attacks added directly to character.attacks (not already covered by weaponAttacks)
+  if (Array.isArray(attacks)) {
+    const existingNames = new Set(result.map((r) => (r.name || '').trim().toLowerCase()));
+    for (const atk of attacks) {
+      if (!atk || !atk.name) continue;
+      const normName = String(atk.name).trim().toLowerCase();
+      if (existingNames.has(normName)) continue;
+      const cleanDice = String(atk.damageDice || '1d6').trim();
+      const hitBon = Number(atk.attackBonus) || 0;
+      result.push({
+        id: atk.id || `custom-atk-${normName}`,
+        sourceId: atk.id || normName,
+        sourceName: 'ATAQUE PERSONALIZADO',
+        sourceKind: 'weapon',
+        name: atk.name,
+        actionName: atk.name,
+        description: atk.notes || atk.description || '',
+        dice: cleanDice,
+        bonus: 0,
+        potenciador: 0,
+        formula: cleanDice,
+        damageFormula: cleanDice,
+        damageDice: cleanDice,
+        damageType: atk.damageType || 'Cortante',
+        actionType: atk.type || 'melee',
+        attackBonus: hitBon,
+        toHitBonus: hitBon,
+        isSpecialAction: false,
+        imageUrl: atk.imageUrl,
       });
     }
   }
@@ -1859,11 +1954,23 @@ export function getHeaderRoleButtonsVisibility(
   };
 }
 
+export function resolveMaxPortraitGalleryCount(
+  skinTokensOrCount?: { maxPortraitGalleryCount?: number } | number | null
+): number {
+  const raw =
+    typeof skinTokensOrCount === 'number'
+      ? skinTokensOrCount
+      : Number(skinTokensOrCount?.maxPortraitGalleryCount);
+  if (!Number.isFinite(raw) || raw < 1) return 4;
+  return Math.max(1, Math.min(24, Math.floor(raw)));
+}
+
 export function clampPortraitGallery(
   portraits: string[] | undefined | null,
   maxSlots: number = 4
 ): string[] {
   if (!Array.isArray(portraits)) return [];
+  const safeMax = Math.max(1, Math.min(24, Math.floor(Number(maxSlots) || 4)));
   const seen = new Set<string>();
   const cleaned: string[] = [];
   for (const raw of portraits) {
@@ -1871,9 +1978,160 @@ export function clampPortraitGallery(
     if (!trimmed || seen.has(trimmed)) continue;
     seen.add(trimmed);
     cleaned.push(trimmed);
-    if (cleaned.length >= maxSlots) break;
+    if (cleaned.length >= safeMax) break;
   }
   return cleaned;
+}
+
+export function getGeometricClipPath(shape?: string): string | undefined {
+  switch ((shape || '').toLowerCase()) {
+    case 'hexagon':
+      return 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)';
+    case 'triangle':
+      return 'polygon(50% 0%, 0% 100%, 100% 100%)';
+    case 'pentagon':
+      return 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)';
+    case 'octagon':
+      return 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)';
+    case 'diamond':
+      return 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)';
+    default:
+      return undefined;
+  }
+}
+
+export function getGeometricPolygonPoints(
+  shape?: string,
+  insetPct: number = 1.5
+): string | undefined {
+  const pad = Math.max(0, Math.min(15, Number(insetPct) || 0));
+  const mapCoord = (val: number): number => {
+    const ratio = (100 - pad * 2) / 100;
+    return Number((pad + val * ratio).toFixed(2));
+  };
+  const buildPts = (pairs: Array<[number, number]>): string =>
+    pairs.map(([x, y]) => `${mapCoord(x)},${mapCoord(y)}`).join(' ');
+
+  switch ((shape || '').toLowerCase()) {
+    case 'hexagon':
+      return buildPts([
+        [25, 0],
+        [75, 0],
+        [100, 50],
+        [75, 100],
+        [25, 100],
+        [0, 50],
+      ]);
+    case 'triangle':
+      return buildPts([
+        [50, 0],
+        [100, 100],
+        [0, 100],
+      ]);
+    case 'pentagon':
+      return buildPts([
+        [50, 0],
+        [100, 38],
+        [82, 100],
+        [18, 100],
+        [0, 38],
+      ]);
+    case 'octagon':
+      return buildPts([
+        [30, 0],
+        [70, 0],
+        [100, 30],
+        [100, 70],
+        [70, 100],
+        [30, 100],
+        [0, 70],
+        [0, 30],
+      ]);
+    case 'diamond':
+      return buildPts([
+        [50, 0],
+        [100, 50],
+        [50, 100],
+        [0, 50],
+      ]);
+    default:
+      return undefined;
+  }
+}
+
+export function getEdgeFadeMaskCss(fadePercent?: number): string | undefined {
+  const pct = Number(fadePercent) || 0;
+  if (pct <= 0) return undefined;
+  const clamped = Math.max(0, Math.min(100, pct));
+  const innerStop = Math.max(10, Math.round(100 - clamped * 0.85));
+  return `radial-gradient(circle, rgba(0,0,0,1) ${innerStop}%, rgba(0,0,0,0) 100%)`;
+}
+
+export function resolvePortraitAspectRatioCss(
+  preset?: string,
+  customW?: number,
+  customH?: number
+): string {
+  switch (preset) {
+    case '3:4':
+      return '3 / 4';
+    case '9:16':
+      return '9 / 16';
+    case '4:3':
+      return '4 / 3';
+    case '16:9':
+      return '16 / 9';
+    case 'custom': {
+      const w = Math.max(1, Math.min(32, Number(customW) || 1));
+      const h = Math.max(1, Math.min(32, Number(customH) || 1));
+      return `${w} / ${h}`;
+    }
+    case '1:1':
+    default:
+      return '1 / 1';
+  }
+}
+
+export const getAspectRatioCssValue = resolvePortraitAspectRatioCss;
+
+export function isTarotElementVisibleOnSide(
+  placementOrKey: string | undefined,
+  side: 'front' | 'back',
+  defaultPlacementOrSidesMap:
+    | 'front'
+    | 'back'
+    | 'both'
+    | 'hidden'
+    | Record<string, 'front' | 'back' | 'both' | 'hidden' | undefined> = 'front'
+): boolean {
+  let eff: string | undefined;
+  const isPlacementLiteral =
+    placementOrKey === 'front' ||
+    placementOrKey === 'back' ||
+    placementOrKey === 'both' ||
+    placementOrKey === 'hidden';
+
+  if (
+    defaultPlacementOrSidesMap &&
+    typeof defaultPlacementOrSidesMap === 'object' &&
+    placementOrKey
+  ) {
+    const defaultForKey =
+      placementOrKey === 'identity'
+        ? 'both'
+        : placementOrKey === 'loreQuote'
+        ? 'back'
+        : 'front';
+    eff = defaultPlacementOrSidesMap[placementOrKey] || (isPlacementLiteral ? placementOrKey : defaultForKey);
+  } else if (isPlacementLiteral) {
+    eff = placementOrKey;
+  } else {
+    eff = typeof defaultPlacementOrSidesMap === 'string' ? defaultPlacementOrSidesMap : 'front';
+  }
+
+  if (eff === 'hidden') return false;
+  if (eff === 'both') return true;
+  return eff === side;
 }
 
 export function resolveTarotCardAbilityScores(
@@ -1918,5 +2176,127 @@ export function resolveTarotCardAbilityScores(
   };
 }
 
+export function pickMostRecentRoll<
+  T extends { id?: string; timestamp?: number; total?: number }
+>(...sources: Array<T | T[] | null | undefined>): T | null {
+  const flat: T[] = [];
+  for (const src of sources) {
+    if (!src) continue;
+    if (Array.isArray(src)) {
+      for (const item of src) {
+        if (item && typeof item === 'object') flat.push(item);
+      }
+    } else if (typeof src === 'object') {
+      flat.push(src);
+    }
+  }
+  if (flat.length === 0) return null;
 
+  let best = flat[0];
+  let bestTs = Number(best?.timestamp) || 0;
 
+  for (let i = 1; i < flat.length; i++) {
+    const candidate = flat[i];
+    const ts = Number(candidate?.timestamp) || 0;
+    // Prefer strictly newer timestamp, or if timestamps are equal/missing, prefer later item in the list
+    if (ts >= bestTs) {
+      best = candidate;
+      bestTs = ts;
+    }
+  }
+  return best;
+}
+
+export function pickMostRecentRollForRoller<
+  T extends { id?: string; timestamp?: number; rollerName?: string; total?: number }
+>(params: {
+  characterName?: string;
+  playerName?: string;
+  rollFeed?: T[];
+  localBoxRoll?: T | null;
+  fallbackRoll?: T | null;
+}): T | undefined {
+  const charNorm = String(params.characterName || '').trim().toLowerCase();
+  const playerNorm = String(params.playerName || '').trim().toLowerCase();
+
+  const matchesRoller = (r?: T | null): boolean => {
+    if (!r) return false;
+    const rNorm = String(r.rollerName || '').trim().toLowerCase();
+    if (!rNorm) return true;
+    return (
+      (Boolean(charNorm) && rNorm === charNorm) ||
+      (Boolean(playerNorm) && rNorm === playerNorm)
+    );
+  };
+
+  const matchingFromFeed = (params.rollFeed || []).filter((r) => matchesRoller(r));
+  const candidates: Array<T | null | undefined> = [...matchingFromFeed];
+
+  if (params.fallbackRoll) {
+    candidates.push(params.fallbackRoll);
+  }
+  if (params.localBoxRoll && matchesRoller(params.localBoxRoll)) {
+    candidates.push(params.localBoxRoll);
+  }
+
+  return pickMostRecentRoll(...candidates) || undefined;
+}
+
+export function resolveAuthoritativePlayerHp(params: {
+  localCurrentHp: number;
+  localHpUpdatedAt?: number;
+  serverCurrentHp?: number;
+  serverHpUpdatedAt?: number;
+  serverDmModifiedAt?: number;
+  lastSeenDmModifiedAt?: number;
+}): {
+  currentHp: number;
+  shouldApplyServerToLocal: boolean;
+  nextLastSeenDmModifiedAt: number;
+  effectiveHpUpdatedAt: number;
+} {
+  const localHp = Number(params.localCurrentHp) || 0;
+  const localTs = Number(params.localHpUpdatedAt) || 0;
+  const serverHp =
+    typeof params.serverCurrentHp === 'number' ? params.serverCurrentHp : localHp;
+  const serverHpTs = Number(params.serverHpUpdatedAt) || 0;
+  const dmTs = Number(params.serverDmModifiedAt) || 0;
+  const seenDmTs = Number(params.lastSeenDmModifiedAt) || 0;
+
+  // 1. If the DM adjusted this player's HP more recently than both our lastSeenDmModifiedAt and our localHpUpdatedAt
+  if (dmTs > seenDmTs && dmTs > localTs) {
+    return {
+      currentHp: serverHp,
+      shouldApplyServerToLocal: true,
+      nextLastSeenDmModifiedAt: dmTs,
+      effectiveHpUpdatedAt: Math.max(dmTs, serverHpTs),
+    };
+  }
+
+  // 2. If the player has mutated HP locally at or after the server's recorded timestamp, keep local HP strictly
+  if (localTs > 0 && localTs >= Math.max(serverHpTs, dmTs)) {
+    return {
+      currentHp: localHp,
+      shouldApplyServerToLocal: false,
+      nextLastSeenDmModifiedAt: Math.max(seenDmTs, dmTs),
+      effectiveHpUpdatedAt: localTs,
+    };
+  }
+
+  // 3. If the server has a strictly newer player HP timestamp (e.g. from another tab of the same player)
+  if (serverHpTs > localTs) {
+    return {
+      currentHp: serverHp,
+      shouldApplyServerToLocal: serverHp !== localHp,
+      nextLastSeenDmModifiedAt: Math.max(seenDmTs, dmTs),
+      effectiveHpUpdatedAt: serverHpTs,
+    };
+  }
+
+  return {
+    currentHp: localHp,
+    shouldApplyServerToLocal: false,
+    nextLastSeenDmModifiedAt: Math.max(seenDmTs, dmTs),
+    effectiveHpUpdatedAt: Math.max(localTs, serverHpTs, dmTs),
+  };
+}

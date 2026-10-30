@@ -31,6 +31,7 @@ import {
 } from '../../types/dnd';
 import { DlcWorkspaceStudio } from './DlcWorkspaceStudio';
 import { VisualSkinDesignerStudio } from './VisualSkinDesignerStudio';
+import { PlayerSkinFourApartadosEditor } from './PlayerSkinFourApartadosEditor';
 
 interface CreatorStudioPanelProps {
   currentUserEmail: string;
@@ -334,6 +335,20 @@ export const CreatorStudioPanel: React.FC<CreatorStudioPanelProps> = ({
   const appSkins = skins.filter((s) => s.scope === 'app');
   const playerSkins = skins.filter((s) => s.scope === 'player');
   const dmSkins = skins.filter((s) => s.scope === 'dm');
+  const catalogPlayerSkins = playerSkins.filter(
+    (s) =>
+      !s.isOfficialDefault &&
+      !s.isDefault &&
+      s.id !== 'skin-player-default' &&
+      s.id !== activeOnlinePlayerSkinId
+  );
+  const catalogDmSkins = dmSkins.filter(
+    (s) =>
+      !s.isOfficialDefault &&
+      !s.isDefault &&
+      s.id !== 'skin-dm-default' &&
+      s.id !== activeOnlineDmSkinId
+  );
 
   const onlineLobbySkin =
     skins.find((s) => s.id === activeOnlineLobbySkinId) ||
@@ -985,7 +1000,7 @@ export const CreatorStudioPanel: React.FC<CreatorStudioPanelProps> = ({
           }`}
         >
           <Shield className="w-4 h-4" />
-          <span>Skins de Jugador ({playerSkins.length})</span>
+          <span>Skins de Jugador ({catalogPlayerSkins.length})</span>
         </button>
 
         <button
@@ -999,7 +1014,7 @@ export const CreatorStudioPanel: React.FC<CreatorStudioPanelProps> = ({
           }`}
         >
           <Crown className="w-4 h-4" />
-          <span>Skins de Dungeon Master ({dmSkins.length})</span>
+          <span>Skins de Dungeon Master ({catalogDmSkins.length})</span>
         </button>
 
         <button
@@ -1393,103 +1408,111 @@ export const CreatorStudioPanel: React.FC<CreatorStudioPanelProps> = ({
                     </div>
                   </div>
 
-                  {/* Sub-Section Selector inside Visual Editor (Strictly filtered by Scope) */}
-                  <div className="flex items-center gap-1.5 flex-wrap bg-[#11131c] p-2 rounded-2xl border border-stone-800">
-                    {editingSkinDraft.scope === 'player' && (
-                      <>
+                  {editingSkinDraft.scope === 'player' ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-2 flex-wrap bg-[#11131c] p-2.5 rounded-2xl border border-stone-800">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            data-testid="editor-subtab-player-sheet"
+                            onClick={() => setEditorSubSection('player_sheet')}
+                            className={`px-3 py-1.5 rounded-xl font-cinzel font-bold text-xs cursor-pointer transition ${
+                              editorSubSection !== 'credits'
+                                ? 'bg-amber-500 text-stone-950 font-black shadow'
+                                : 'text-stone-300 hover:bg-stone-800'
+                            }`}
+                          >
+                            ✨ Estudio Interactivo de 4 Apartados (Skin de Jugador)
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="editor-subtab-credits"
+                            onClick={() => setEditorSubSection('credits')}
+                            className={`px-3 py-1.5 rounded-xl font-cinzel font-bold text-xs cursor-pointer transition ${
+                              editorSubSection === 'credits'
+                                ? 'bg-rose-600 text-white font-black'
+                                : 'text-stone-300 hover:bg-stone-800'
+                            }`}
+                          >
+                            Créditos del Creador
+                          </button>
+                        </div>
                         <button
                           type="button"
-                          data-testid="editor-subtab-player-sheet"
-                          onClick={() => setEditorSubSection('player_sheet')}
-                          className={`px-3 py-1.5 rounded-xl font-cinzel font-bold text-xs cursor-pointer transition ${
-                            editorSubSection === 'player_sheet'
-                              ? 'bg-cyan-600 text-stone-950 font-black'
-                              : 'text-stone-300 hover:bg-stone-800'
-                          }`}
+                          data-testid="btn-launch-player-4-apartados"
+                          onClick={() => setIsVisualDesignerFullScreen(true)}
+                          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-amber-500 hover:from-cyan-400 hover:to-amber-400 text-stone-950 font-cinzel font-black text-xs flex items-center gap-1.5 shadow cursor-pointer"
                         >
-                          1. Hoja de Jugador (Player Sheet)
+                          <Palette className="w-3.5 h-3.5" />
+                          <span>Ampliar a Pantalla Completa</span>
                         </button>
-                        <button
-                          type="button"
-                          data-testid="editor-subtab-tarot-card"
-                          onClick={() => setEditorSubSection('tarot_card')}
-                          className={`px-3 py-1.5 rounded-xl font-cinzel font-bold text-xs cursor-pointer transition ${
-                            editorSubSection === 'tarot_card'
-                              ? 'bg-purple-600 text-white font-black'
-                              : 'text-stone-300 hover:bg-stone-800'
-                          }`}
-                        >
-                          2. Carta Tarot de Jugador (3D)
-                        </button>
+                      </div>
+
+                      {editorSubSection !== 'credits' && (
+                        <PlayerSkinFourApartadosEditor
+                          tokens={t}
+                          updateToken={updateThemeToken}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    /* Sub-Section Selector inside Visual Editor for DM & App */
+                    <div className="flex items-center gap-1.5 flex-wrap bg-[#11131c] p-2 rounded-2xl border border-stone-800">
+                      {editingSkinDraft.scope === 'dm' && (
                         <button
                           type="button"
                           data-testid="editor-subtab-map-mode"
                           onClick={() => setEditorSubSection('map_mode')}
                           className={`px-3 py-1.5 rounded-xl font-cinzel font-bold text-xs cursor-pointer transition ${
                             editorSubSection === 'map_mode'
-                              ? 'bg-amber-600 text-stone-950 font-black'
+                              ? 'bg-red-600 text-white font-black'
                               : 'text-stone-300 hover:bg-stone-800'
                           }`}
                         >
-                          3. Modo Mapa del Jugador
+                          1. Pantalla del DM, Carátula y Modo Mapa DM
                         </button>
-                      </>
-                    )}
+                      )}
 
-                    {editingSkinDraft.scope === 'dm' && (
+                      {editingSkinDraft.scope === 'app' && (
+                        <button
+                          type="button"
+                          data-testid="editor-subtab-lobby-app"
+                          onClick={() => setEditorSubSection('lobby_app')}
+                          className={`px-3 py-1.5 rounded-xl font-cinzel font-bold text-xs cursor-pointer transition ${
+                            editorSubSection === 'lobby_app'
+                              ? 'bg-emerald-600 text-stone-950 font-black'
+                              : 'text-stone-300 hover:bg-stone-800'
+                          }`}
+                        >
+                          1. Lobby, Foro, Tienda y Barra Superior
+                        </button>
+                      )}
+
                       <button
                         type="button"
-                        data-testid="editor-subtab-map-mode"
-                        onClick={() => setEditorSubSection('map_mode')}
+                        data-testid="editor-subtab-credits"
+                        onClick={() => setEditorSubSection('credits')}
                         className={`px-3 py-1.5 rounded-xl font-cinzel font-bold text-xs cursor-pointer transition ${
-                          editorSubSection === 'map_mode'
-                            ? 'bg-red-600 text-white font-black'
+                          editorSubSection === 'credits'
+                            ? 'bg-rose-600 text-white font-black'
                             : 'text-stone-300 hover:bg-stone-800'
                         }`}
                       >
-                        1. Pantalla del DM, Carátula y Modo Mapa DM
+                        Créditos del Creador
                       </button>
-                    )}
 
-                    {editingSkinDraft.scope === 'app' && (
                       <button
                         type="button"
-                        data-testid="editor-subtab-lobby-app"
-                        onClick={() => setEditorSubSection('lobby_app')}
-                        className={`px-3 py-1.5 rounded-xl font-cinzel font-bold text-xs cursor-pointer transition ${
-                          editorSubSection === 'lobby_app'
-                            ? 'bg-emerald-600 text-stone-950 font-black'
-                            : 'text-stone-300 hover:bg-stone-800'
-                        }`}
+                        onClick={() => setIsVisualDesignerFullScreen(true)}
+                        className="ml-auto px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-purple-600 text-white font-cinzel font-black text-xs cursor-pointer shadow"
                       >
-                        1. Lobby, Foro, Tienda y Barra Superior
+                        ✨ Abrir Editor Modular por Capas ({editingSkinDraft.scope.toUpperCase()})
                       </button>
-                    )}
+                    </div>
+                  )}
 
-                    <button
-                      type="button"
-                      data-testid="editor-subtab-credits"
-                      onClick={() => setEditorSubSection('credits')}
-                      className={`px-3 py-1.5 rounded-xl font-cinzel font-bold text-xs cursor-pointer transition ${
-                        editorSubSection === 'credits'
-                          ? 'bg-rose-600 text-white font-black'
-                          : 'text-stone-300 hover:bg-stone-800'
-                      }`}
-                    >
-                      Créditos del Creador
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsVisualDesignerFullScreen(true)}
-                      className="ml-auto px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-purple-600 text-white font-cinzel font-black text-xs cursor-pointer shadow"
-                    >
-                      ✨ Abrir Editor Modular por Capas ({editingSkinDraft.scope.toUpperCase()})
-                    </button>
-                  </div>
-
-                  {/* SUB-SECTION 1: PLAYER SHEET VISUAL EDITOR */}
-                  {editorSubSection === 'player_sheet' && (
+                  {/* SUB-SECTION 1: PLAYER SHEET VISUAL EDITOR (Only if non-player scope) */}
+                  {editingSkinDraft.scope !== 'player' && editorSubSection === 'player_sheet' && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                       {/* Tipografía, Iconos, Retrato y Fondo */}
                       <div className="p-3.5 rounded-xl bg-[#12141d] border border-stone-800 space-y-2.5">
@@ -2426,8 +2449,19 @@ export const CreatorStudioPanel: React.FC<CreatorStudioPanelProps> = ({
             </button>
           </div>
 
+          {(activeTab === 'player_skins' ? catalogPlayerSkins : catalogDmSkins).length === 0 && (
+            <div className="p-6 rounded-2xl bg-[#141724] border border-dashed border-stone-700 text-center space-y-2">
+              <p className="text-xs font-cinzel font-bold text-amber-300">
+                No hay skins permanentes o de evento registradas en esta categoría todavía.
+              </p>
+              <p className="text-[11px] text-stone-400 max-w-xl mx-auto">
+                Las skins Default Online se administran en la pestaña <strong>Skins de la App & Editor Visual</strong>. Aquí aparecerán únicamente las skins permanentes o de temporada (ej. Navidad, Halloween) que pueden regalarse o desbloquearse con código para que los jugadores las conserven para siempre.
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {(activeTab === 'player_skins' ? playerSkins : dmSkins).map((skin) => {
+            {(activeTab === 'player_skins' ? catalogPlayerSkins : catalogDmSkins).map((skin) => {
               const editable = canEditItem(skin.authorEmail, skin.isOfficialDefault);
               const isOnlineActive =
                 (skin.scope === 'player' && skin.id === onlinePlayerSkin?.id) ||

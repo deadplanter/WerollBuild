@@ -1,7 +1,7 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
 import type { DiceRollResult, PartyMemberLive, PresenceStatus, LiveCombatantMini, LiveRoomProjection, AutoBackupConfig, AutoBackupLog, PendingDmOffer, PlayerMessageToDM, UserRole, PlayerType, AppRole, ForumPost, ForumComment, FriendDirectMessage } from '../types/dnd.ts';
-import { buildPlayerMessageToDM, normalizeRoomIdentifier, buildLiveProjectionFromWorkspace } from '../utils/dnd-math.ts';
+import { buildPlayerMessageToDM, normalizeRoomIdentifier, buildLiveProjectionFromWorkspace, normalizePlayerSheetItemCategory } from '../utils/dnd-math.ts';
 import { dataStore, registerDataStoreMutationListener } from './dataStore.ts';
 
 export const apiRouter = express.Router();
@@ -2139,9 +2139,22 @@ apiRouter.post('/session/room/:roomCode/batch-events', (req, res) => {
 // 2a-bis. DM Shares an Item, Spell, or Ability with a Player in the SAME Room (Creates Pending Offer)
 apiRouter.post('/session/room/:roomCode/offer', (req, res) => {
   const normCode = req.params.roomCode.trim().toUpperCase();
-  const roomRecord = dataStore.getRoom(normCode);
+  let roomRecord = dataStore.getRoom(normCode);
   if (!roomRecord) {
-    return res.status(404).json({ error: 'La sala no existe o no está activa.' });
+    const matchingWorld = dataStore
+      .getWorldSheets()
+      .find((w) => normalizeRoomIdentifier(w.roomCode || w.name) === normalizeRoomIdentifier(normCode));
+    roomRecord = {
+      roomCode: normCode,
+      name: matchingWorld?.name || normCode,
+      dmEmail: matchingWorld?.ownerEmail || 'dm@weroll.app',
+      dmDisplayName: 'Dungeon Master',
+      password: matchingWorld?.roomPassword,
+      worldSheetId: matchingWorld?.id,
+      createdAt: Date.now(),
+      lastUpdated: Date.now(),
+    };
+    dataStore.setRoom(roomRecord);
   }
 
   const room = getOrCreateRoom(normCode);
@@ -2163,30 +2176,47 @@ apiRouter.post('/session/room/:roomCode/offer', (req, res) => {
     return res.status(400).json({ error: 'Faltan datos para compartir el elemento con el jugador.' });
   }
 
-  // Verify the player is currently connected in this same room!
+  // Match player in the room by characterId or characterName, with fallback to req.body target so offers never fail if a heartbeat was delayed
   const now = Date.now();
+  const targetNameNorm = String(targetCharacterName || '').trim().toLowerCase();
   const activeMember = Object.values(room.party).find(
-    (p) => p.characterId === targetCharacterId && now - p.lastPing < 15 * 60 * 1000
+    (p) =>
+      now - p.lastPing < 30 * 60 * 1000 &&
+      (p.characterId === targetCharacterId ||
+        (targetNameNorm && String(p.characterName || '').trim().toLowerCase() === targetNameNorm))
   );
 
-  if (!activeMember) {
-    return res.status(400).json({
-      error: `El personaje seleccionado (${targetCharacterName || targetCharacterId}) no se encuentra conectado actualmente en tu misma sala (${normCode}). Solo puedes compartir con jugadores que estén dentro de la misma sala.`,
+  let normalizedItem = item;
+  let normalizedOfferCategory = category;
+
+  if (kind === 'item' && item) {
+    const normClass = normalizePlayerSheetItemCategory({
+      category: item.category || category,
+      itemGroup: item.itemGroup,
+      name: item.name || title,
+      weaponAttacks: item.weaponAttacks,
     });
+    normalizedItem = {
+      ...item,
+      category: normClass.category,
+      itemGroup: normClass.itemGroup,
+      weaponAttacks: normClass.itemGroup === 'weapon' ? item.weaponAttacks : undefined,
+    };
+    normalizedOfferCategory = normClass.category;
   }
 
   const newOffer: PendingDmOffer = {
     id: `offer-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     roomCode: normCode,
-    targetCharacterId: activeMember.characterId,
-    targetCharacterName: activeMember.characterName || targetCharacterName || 'Aventurero',
-    targetPlayerName: activeMember.playerName || targetPlayerName || 'Jugador',
+    targetCharacterId: activeMember?.characterId || targetCharacterId,
+    targetCharacterName: activeMember?.characterName || targetCharacterName || 'Aventurero',
+    targetPlayerName: activeMember?.playerName || targetPlayerName || 'Jugador',
     kind,
     title,
     rarity,
-    category,
+    category: normalizedOfferCategory,
     description,
-    item,
+    item: normalizedItem,
     spell,
     ability,
     status: 'pending',
@@ -2229,18 +2259,21 @@ apiRouter.post('/session/room/:roomCode/offer/:offerId/respond', (req, res) => {
 
   if (offer.status === 'accepted') {
     const sheets = dataStore.getPlayerSheets();
+    const targetNameNorm = String(offer.targetCharacterName || '').trim().toLowerCase();
     let sheet = sheets.find(
       (s) =>
         s.id === offer.targetCharacterId ||
-        (s.character && s.character.id === offer.targetCharacterId)
+        (s.character && s.character.id === offer.targetCharacterId) ||
+        (targetNameNorm &&
+          String(s.character?.name || s.name || '').trim().toLowerCase() === targetNameNorm)
     );
 
     // If sheet isn't in vault yet but player passed their character in body, register/update it
-    if (!sheet && character && character.id === offer.targetCharacterId) {
+    if (!sheet && character) {
       sheet = {
-        id: character.id,
+        id: character.id || offer.targetCharacterId,
         ownerEmail: (character.ownerEmail || 'jugador@weroll.app').toLowerCase(),
-        name: character.name,
+        name: character.name || offer.targetCharacterName,
         character: { ...character },
         updatedAt: Date.now(),
       };
@@ -2249,9 +2282,21 @@ apiRouter.post('/session/room/:roomCode/offer/:offerId/respond', (req, res) => {
     if (sheet && sheet.character) {
       const char = sheet.character;
       if (offer.kind === 'item' && offer.item) {
+        const normClass = normalizePlayerSheetItemCategory({
+          category: offer.item.category || offer.category,
+          itemGroup: offer.item.itemGroup,
+          name: offer.item.name || offer.title,
+          weaponAttacks: offer.item.weaponAttacks,
+        });
+        const cleanItem = {
+          ...offer.item,
+          category: normClass.category,
+          itemGroup: normClass.itemGroup,
+          weaponAttacks: normClass.itemGroup === 'weapon' ? offer.item.weaponAttacks : undefined,
+        };
         if (!Array.isArray(char.inventory)) char.inventory = [];
-        if (!char.inventory.some((i) => i.id === offer.item!.id)) {
-          char.inventory.push(offer.item);
+        if (!char.inventory.some((i) => i.id === cleanItem.id)) {
+          char.inventory.push(cleanItem);
         }
       } else if (offer.kind === 'spell' && offer.spell) {
         if (!Array.isArray(char.spells)) char.spells = [];
@@ -2374,6 +2419,7 @@ apiRouter.post('/session/room/:roomCode/dm-adjust-player', (req, res) => {
       };
     }
     member.dmModifiedAt = now;
+    member.hpUpdatedAt = now;
     newHp = member.currentHp;
     newCurrency = member.currency;
     room.lastUpdated = now;
@@ -2545,6 +2591,7 @@ apiRouter.post('/session/room/:roomCode/heartbeat', (req, res) => {
     lastRoll,
     abilities,
     currency,
+    hpUpdatedAt,
   } = req.body;
 
   if (characterId) {
@@ -2555,10 +2602,39 @@ apiRouter.post('/session/room/:roomCode/heartbeat', (req, res) => {
     const resolvedTagId = playerTagId || foundUser?.userTagId || existing?.playerTagId || '123';
     const resolvedFullTag = playerFullTag || existing?.playerFullTag || `${resolvedPlayerName}@${resolvedTagId}`;
 
-    // If the DM adjusted this player's HP or currency within the last 6 seconds, preserve the DM's values so a stale player heartbeat doesn't overwrite them
+    const incomingHpUpdatedAt = Number(hpUpdatedAt) || 0;
+    const existingHpUpdatedAt = Number(existing?.hpUpdatedAt) || 0;
+    const existingDmModifiedAt = Number(existing?.dmModifiedAt) || 0;
+    const latestServerHpTs = Math.max(existingHpUpdatedAt, existingDmModifiedAt);
     const recentlyDmModified = Boolean(
-      existing?.dmModifiedAt && Date.now() - existing.dmModifiedAt < 6000
+      existingDmModifiedAt && Date.now() - existingDmModifiedAt < 6000
     );
+
+    let resolvedCurrentHp = Number(currentHp) || 0;
+    let resolvedHpUpdatedAt = incomingHpUpdatedAt;
+
+    if (existing) {
+      if (incomingHpUpdatedAt > 0) {
+        if (incomingHpUpdatedAt >= latestServerHpTs) {
+          resolvedCurrentHp = Number(currentHp) || 0;
+          resolvedHpUpdatedAt = incomingHpUpdatedAt;
+        } else {
+          // Stale out-of-order heartbeat or older than DM adjustment: preserve server HP
+          resolvedCurrentHp = existing.currentHp;
+          resolvedHpUpdatedAt = latestServerHpTs;
+        }
+      } else if (recentlyDmModified || existingHpUpdatedAt > 0) {
+        resolvedCurrentHp = existing.currentHp;
+        resolvedHpUpdatedAt = latestServerHpTs;
+      }
+    }
+
+    const resolvedLastRoll =
+      lastRoll &&
+      (!existing?.lastRoll ||
+        (Number(lastRoll.timestamp) || 0) >= (Number(existing.lastRoll.timestamp) || 0))
+        ? lastRoll
+        : existing?.lastRoll || lastRoll;
 
     room.party[characterId] = {
       characterId,
@@ -2571,7 +2647,7 @@ apiRouter.post('/session/room/:roomCode/heartbeat', (req, res) => {
       avatarCustomUrl: avatarCustomUrl !== undefined ? avatarCustomUrl : existing?.avatarCustomUrl,
       avatarIcon: avatarIcon !== undefined ? avatarIcon : existing?.avatarIcon,
       avatarUrl: avatarUrl !== undefined ? avatarUrl : existing?.avatarUrl,
-      currentHp: recentlyDmModified ? existing!.currentHp : Number(currentHp) || 0,
+      currentHp: resolvedCurrentHp,
       maxHp: Number(maxHp) || 10,
       ac: Number(ac) || 10,
       passivePerception: Number(passivePerception) || 10,
@@ -2584,11 +2660,15 @@ apiRouter.post('/session/room/:roomCode/heartbeat', (req, res) => {
       characterClass: characterClass || 'Aventurero',
       lastPing: Date.now(),
       dmModifiedAt: existing?.dmModifiedAt,
+      hpUpdatedAt: resolvedHpUpdatedAt || undefined,
       presenceStatus,
       idleSeconds,
-      lastRoll: lastRoll || existing?.lastRoll,
+      lastRoll: resolvedLastRoll,
       abilities: abilities || existing?.abilities,
-      currency: recentlyDmModified && existing?.currency ? existing.currency : currency || existing?.currency,
+      currency:
+        recentlyDmModified && incomingHpUpdatedAt < existingDmModifiedAt && existing?.currency
+          ? existing.currency
+          : currency || existing?.currency,
     };
     room.lastUpdated = Date.now();
   }
@@ -2597,6 +2677,7 @@ apiRouter.post('/session/room/:roomCode/heartbeat', (req, res) => {
   res.json({
     success: true,
     dmModifiedAt: savedMember?.dmModifiedAt,
+    hpUpdatedAt: savedMember?.hpUpdatedAt,
     currentHp: savedMember?.currentHp,
     currency: savedMember?.currency,
   });

@@ -37,6 +37,8 @@ export interface AvatarCustomizerModalProps {
   currentCustomUrl?: string;
   currentIconId?: string;
   currentPortraitGallery?: string[];
+  maxPortraits?: number;
+  aspectRatioCss?: string;
   category?: 'player' | 'npc' | 'monster' | 'item' | 'spell' | 'location' | 'journal';
   onSave: (data: {
     type: 'icon' | 'custom';
@@ -54,9 +56,12 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
   currentCustomUrl,
   currentIconId = 'anonymous',
   currentPortraitGallery = [],
+  maxPortraits = 4,
+  aspectRatioCss = '1 / 1',
   category = 'player',
   onSave,
 }) => {
+  const safeMaxPortraits = Math.max(1, Math.min(24, Math.round(Number(maxPortraits) || 4)));
   const [logoType, setLogoType] = useState<'icon' | 'custom'>(currentType);
   const [customUrl, setCustomUrl] = useState<string | undefined>(currentCustomUrl);
   const [selectedIconId, setSelectedIconId] = useState<string>(currentIconId);
@@ -65,7 +70,7 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
       currentCustomUrl
         ? [currentCustomUrl, ...(currentPortraitGallery || [])]
         : currentPortraitGallery || [],
-      4
+      safeMaxPortraits
     )
   );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -147,9 +152,9 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
     setLogoType('custom');
     setPortraitGallery((prev) => {
       if (prev.includes(dataUrl)) return prev;
-      if (prev.length < 4) return [...prev, dataUrl];
-      // Replace the last slot if already at 4
-      return [...prev.slice(0, 3), dataUrl];
+      if (prev.length < safeMaxPortraits) return [...prev, dataUrl];
+      // Replace the last slot if already at max capacity
+      return [...prev.slice(0, safeMaxPortraits - 1), dataUrl];
     });
   };
 
@@ -207,7 +212,7 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
       logoType === 'custom' && customUrl
         ? [customUrl, ...portraitGallery.filter((u) => u !== customUrl)]
         : portraitGallery,
-      4
+      safeMaxPortraits
     );
     onSave({
       type: logoType,
@@ -239,7 +244,7 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
                 {title}
               </h3>
               <p className="text-xs text-stone-400">
-                Personaliza hasta 4 retratos intercambiables y descargables
+                Personaliza hasta {safeMaxPortraits} retratos intercambiables y descargables
               </p>
             </div>
           </div>
@@ -293,7 +298,7 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
             }`}
           >
             <Upload className="w-4 h-4 text-purple-400" />
-            <span>Galería de Retratos ({portraitGallery.length}/4)</span>
+            <span>Galería de Retratos ({portraitGallery.length}/{safeMaxPortraits})</span>
           </button>
         </div>
 
@@ -327,19 +332,19 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
           </div>
         )}
 
-        {/* Mode B: Custom Upload & 4-Slot Portrait Gallery */}
+        {/* Mode B: Custom Upload & Dynamic Portrait Gallery (1 to 24 slots) */}
         {logoType === 'custom' && (
           <div className="space-y-3 bg-[#121316] border border-stone-800 rounded-2xl p-4 flex-1 overflow-y-auto">
             <div className="flex items-center justify-between">
               <div>
                 <span className="block text-xs font-cinzel font-bold text-stone-200">
-                  Galería de Retratos ({portraitGallery.length}/4 Máximo)
+                  Galería de Retratos ({portraitGallery.length}/{safeMaxPortraits} Máximo)
                 </span>
                 <span className="text-[11px] text-stone-400 block">
-                  Haz clic en cualquiera de tus 4 imágenes para activarla o descárgala cuando quieras.
+                  Haz clic en cualquiera de tus {safeMaxPortraits} imágenes para activarla o descárgala cuando quieras.
                 </span>
               </div>
-              {portraitGallery.length < 4 && (
+              {portraitGallery.length < safeMaxPortraits && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -347,14 +352,14 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
                   className="px-3 py-1.5 rounded-xl bg-purple-900/80 hover:bg-purple-800 border border-purple-400/60 text-purple-100 text-xs font-cinzel font-bold flex items-center gap-1.5 cursor-pointer shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Subir ({portraitGallery.length}/4)</span>
+                  <span>Subir ({portraitGallery.length}/{safeMaxPortraits})</span>
                 </button>
               )}
             </div>
 
-            {/* 4 Portrait Slots Grid */}
+            {/* Portrait Slots Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-              {[0, 1, 2, 3].map((slotIdx) => {
+              {Array.from({ length: safeMaxPortraits }, (_, slotIdx) => {
                 const slotUrl = portraitGallery[slotIdx];
                 const isCurrentActive = Boolean(slotUrl && customUrl === slotUrl);
                 if (slotUrl) {
@@ -372,7 +377,10 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
                           : 'border-stone-700 bg-[#181920] hover:border-purple-400'
                       }`}
                     >
-                      <div className="relative w-full aspect-square rounded-lg overflow-hidden bg-black/60">
+                      <div
+                        style={{ aspectRatio: aspectRatioCss }}
+                        className="relative w-full rounded-lg overflow-hidden bg-black/60"
+                      >
                         <img
                           src={slotUrl}
                           alt={`Retrato ${slotIdx + 1}`}
@@ -419,11 +427,12 @@ export const AvatarCustomizerModal: React.FC<AvatarCustomizerModalProps> = ({
                     type="button"
                     data-testid={`portrait-empty-${slotIdx}`}
                     onClick={() => fileInputRef.current?.click()}
-                    className="rounded-xl border-2 border-dashed border-stone-700 hover:border-purple-400 bg-[#181920]/70 p-3 flex flex-col items-center justify-center gap-1.5 aspect-square text-stone-400 hover:text-purple-200 transition cursor-pointer"
+                    style={{ aspectRatio: aspectRatioCss }}
+                    className="rounded-xl border-2 border-dashed border-stone-700 hover:border-purple-400 bg-[#181920]/70 p-3 flex flex-col items-center justify-center gap-1.5 text-stone-400 hover:text-purple-200 transition cursor-pointer"
                   >
                     <Upload className="w-5 h-5 text-purple-400" />
                     <span className="text-[10px] font-cinzel font-bold text-center">
-                      Espacio {slotIdx + 1}/4
+                      Espacio {slotIdx + 1}/{safeMaxPortraits}
                     </span>
                   </button>
                 );

@@ -1669,20 +1669,37 @@ export const DlcWorkspaceStudio: React.FC<DlcWorkspaceStudioProps> = ({
                       />
                     </div>
                     <div>
-                      <label className="font-bold text-stone-300 block mb-1">Categoría:</label>
+                      <label className="font-bold text-stone-300 block mb-1">Categoría (Ficha Jugador):</label>
                       <select
-                        value={it.category || 'Arma'}
-                        onChange={(e) => updateItem({ category: e.target.value })}
+                        value={
+                          it.kind === 'spell' || it.category === 'Conjuro'
+                            ? 'Conjuro'
+                            : it.category === 'Armadura' || it.itemGroup === 'armor'
+                            ? 'Armadura'
+                            : it.category === 'Objeto Común' || it.itemGroup === 'common'
+                            ? 'Objeto Común'
+                            : 'Arma'
+                        }
+                        onChange={(e) => {
+                          const nextCat = e.target.value;
+                          if (nextCat === 'Conjuro') {
+                            updateItem({ kind: 'spell', category: 'Conjuro', itemGroup: undefined });
+                          } else {
+                            const nextGroup =
+                              nextCat === 'Armadura'
+                                ? 'armor'
+                                : nextCat === 'Objeto Común'
+                                ? 'common'
+                                : 'weapon';
+                            updateItem({ kind: 'item', category: nextCat, itemGroup: nextGroup });
+                          }
+                        }}
                         className="w-full bg-[#0e1017] border border-stone-700 rounded-xl px-2.5 py-1.5"
                       >
                         <option value="Arma">Arma</option>
-                        <option value="Arma Mágica">Arma Mágica</option>
                         <option value="Armadura">Armadura</option>
-                        <option value="Objeto Mágico">Objeto Mágico</option>
-                        <option value="Poción">Poción</option>
-                        <option value="Conjuro">Conjuro</option>
-                        <option value="Truco">Truco</option>
                         <option value="Objeto Común">Objeto Común</option>
+                        <option value="Conjuro">Conjuro</option>
                       </select>
                     </div>
                     <div>
